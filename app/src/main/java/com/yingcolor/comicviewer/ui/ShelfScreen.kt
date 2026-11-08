@@ -121,7 +121,7 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
     /** Category chip selected on the shelf; empty means "all". */
     var filterGroup by mutableStateOf("")
 
-    /** Reading-state filter: 0 = all, 1 = finished, 2 = currently reading. */
+    /** Reading-state filter: 0 = all, 1 = finished, 2 = currently reading, 3 = favorites. */
     var readFilter by mutableStateOf(0)
 
     /**
@@ -259,6 +259,7 @@ fun ShelfScreen(
     var sortMenu by remember { mutableStateOf(false) }
     var groupMenu by remember { mutableStateOf(false) }
     var columnMenu by remember { mutableStateOf(false) }
+    var readFilterMenu by remember { mutableStateOf(false) }
     // Sorting with naturalCompare() is the expensive part of a big shelf. Do it
     // once per books/sort change, then only filter for each keystroke instead of
     // re-sorting the whole library on every character typed into search.
@@ -280,13 +281,14 @@ fun ShelfScreen(
     val groupFilter = vm.filterGroup.takeIf { it in groups } ?: ""
     val readFilter = vm.readFilter
     val favorites = settings.favorites
-    val displayed = remember(sorted, query, groupFilter, readFilter, refreshKey) {
+    val displayed = remember(sorted, query, groupFilter, readFilter, favorites, refreshKey) {
         val base = if (groupFilter.isEmpty()) sorted else sorted.filter { it.group == groupFilter }
         val q = query.trim()
         val searched = if (q.isEmpty()) base else base.filter { it.name.contains(q, ignoreCase = true) }
         // The "currently reading" tab already arrives pre-filtered; narrowing it
         // again with the shelf's progress filter would hide part of that list.
         if (mode == SHELF_MODE_READING || readFilter == 0) searched
+        else if (readFilter == 3) searched.filter { it.id in favorites }
         else searched.filter { book ->
             val page = prefs.progress(book.id)
             val total = prefs.pageCount(book.id)
@@ -459,6 +461,44 @@ fun ShelfScreen(
                         }
                     }
                 }
+                Spacer(Modifier.width(4.dp))
+                Box {
+                    MiniChip(
+                        text = S.readFilterOptions[readFilter.coerceIn(0, 3)],
+                        active = readFilter != 0,
+                        onClick = { readFilterMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = readFilterMenu,
+                        onDismissRequest = { readFilterMenu = false }
+                    ) {
+                        S.readFilterOptions.forEachIndexed { index, label ->
+                            DropdownMenuItem(
+                                leadingIcon = {
+                                    Text(
+                                        text = if (index == readFilter) "✓" else " ",
+                                        color = scheme.primary
+                                    )
+                                },
+                                trailingIcon = if (index == 3) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Filled.Favorite,
+                                            contentDescription = null,
+                                            tint = FavoritePink,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                } else null,
+                                text = { Text(label) },
+                                onClick = {
+                                    vm.readFilter = index
+                                    readFilterMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
                 IconButton(onClick = onRefresh) {
                     Icon(
                         imageVector = Icons.Filled.Refresh,
@@ -475,21 +515,9 @@ fun ShelfScreen(
                 }
             }
 
-            // A separate row rather than another toolbar chip: the search row is
-            // already full on a 3-column phone, and the three states read better
-            // as a visible segmented control than hidden inside a dropdown.
-            if (mode == SHELF_MODE_HOME && books.isNotEmpty()) {
-                Spacer(Modifier.height(2.dp))
-                SegmentedChoice(
-                    options = S.readFilterOptions,
-                    selected = readFilter,
-                    onSelect = { vm.readFilter = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp)
-                )
-                Spacer(Modifier.height(6.dp))
-            }
+            // The reading-state filter now lives as a toolbar chip that opens a
+            // dropdown (全部 / 已读完 / 正在读 / 收藏), so it no longer occupies a
+            // full-width row and never covers the covers.
 
             when {
                 error != null -> EmptyState(

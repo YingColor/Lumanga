@@ -61,7 +61,7 @@ object S {
     const val favorite = "收藏"
     const val unfavorite = "取消收藏"
     const val favoriteLabel = "已收藏"
-    val readFilterOptions = listOf("全部", "已读完", "正在读")
+    val readFilterOptions = listOf("全部", "已读完", "正在读", "收藏")
     const val errorTitle = "这一本打不开"
     const val errorCorrupt = "这个文件可能损坏，或者使用了加密 / 不支持的压缩方式。"
     const val errorUnsupported = "这个位置暂时不能直接跳着读取。把漫画移到手机内部存储的普通文件夹里再试。"
