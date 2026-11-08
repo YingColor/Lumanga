@@ -6,7 +6,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -144,4 +147,41 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = modifier.padding(bottom = 10.dp)
     )
+}
+
+/**
+ * Wrapping chip group. The zoom list has seven entries, which is unreadable as
+ * equal-width segments on a phone; chips wrap onto as many lines as needed.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ChoiceChips(
+    options: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scheme = MaterialTheme.colorScheme
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        options.forEachIndexed { index, label ->
+            val active = index == selected
+            Surface(
+                shape = CircleShape,
+                color = if (active) scheme.primary else scheme.surfaceContainerHigh,
+                contentColor = if (active) scheme.onPrimary else scheme.onSurfaceVariant,
+                modifier = Modifier.clickable { onSelect(index) }
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                )
+            }
+        }
+    }
 }

@@ -44,6 +44,9 @@ class UiSettings(private val prefs: Prefs) {
     private var stateFitMode by mutableStateOf(prefs.fitMode)
     val fitMode: Int get() = stateFitMode
 
+    private var stateZoomPercent by mutableStateOf(prefs.zoomPercent)
+    val zoomPercent: Int get() = stateZoomPercent
+
     private var stateAlignment by mutableStateOf(prefs.alignment)
     val alignment: Int get() = stateAlignment
 
@@ -100,9 +103,15 @@ class UiSettings(private val prefs: Prefs) {
     }
 
     fun setFitMode(value: Int) {
-        val safe = value.coerceIn(0, 2)
+        val safe = ZoomMode.coerce(value)
         stateFitMode = safe
         prefs.fitMode = safe
+    }
+
+    fun setZoomPercent(value: Int) {
+        val safe = value.coerceIn(40, 400)
+        stateZoomPercent = safe
+        prefs.zoomPercent = safe
     }
 
     fun setAlignment(value: Int) {

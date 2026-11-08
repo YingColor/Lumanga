@@ -16,7 +16,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -69,6 +71,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
@@ -91,6 +94,7 @@ import com.yingcolor.comicviewer.data.Book
 import com.yingcolor.comicviewer.data.PageDecoder
 import com.yingcolor.comicviewer.data.Prefs
 import com.yingcolor.comicviewer.data.UiSettings
+import com.yingcolor.comicviewer.data.ZoomMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -136,6 +140,11 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     /** Previews live apart from full pages so they can never evict (or be handed out as) a page. */
     private val thumbCache = object : LruCache<String, Bitmap>(8 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
+    }
+
+    /** Header-only page dimensions, used by the 1:1 "original size" zoom mode. */
+    private val sizeCache = object : LruCache<Int, Pair<Int, Int>>(256) {
+        override fun sizeOf(key: Int, value: Pair<Int, Int>): Int = 1
     }
 
     private data class Load(
@@ -368,6 +377,20 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         result
     }
 
+    /**
+     * Pixel size of one page, read from the image header only. Used by the
+     * "original size" zoom mode, which needs the real dimensions to decode at
+     * 1:1 instead of at screen size.
+     */
+    suspend fun sourceSize(index: Int): Pair<Int, Int>? = withContext(Dispatchers.IO) {
+        sizeCache.get(index)?.let { return@withContext it }
+        val archive = reader ?: return@withContext null
+        val header = runCatching { archive.readHeader(index) }.getOrNull()
+            ?: return@withContext null
+        val bounds = PageDecoder.bounds(header) ?: return@withContext null
+        if (bounds.first <= 0 || bounds.second <= 0) null else bounds.also { sizeCache.put(index, it) }
+    }
+
     fun tile(
         page: Int,
         slice: Int,
@@ -375,8 +398,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         bottom: Int,
         targetWidth: Int,
         active: () -> Boolean
-    ): Deferred<Bitmap?> {
-        val key = tileKey(page, slice, targetWidth)
+    ): Deferred<Bitmap?> {        val key = tileKey(page, slice, targetWidth)
         tileCache.get(key)?.let { return CompletableDeferred(it) }
         return synchronized(tileLock) {
             tileInFlight[key]?.let { return@synchronized it }
@@ -660,8 +682,13 @@ private fun ReaderContent(
         flashToken++
     }
 
-    LaunchedEffect(currentPage, pageCount) {
-        // Reading state follows the page you are on, not the furthest page you
+    // Changing the zoom mode changes what "1x" means, so any pinch state from the
+    // previous mode would be wrong.
+    LaunchedEffect(settings.fitMode, settings.zoomPercent) {
+        resetZoom()
+    }
+
+    LaunchedEffect(currentPage, pageCount) {        // Reading state follows the page you are on, not the furthest page you
         // ever reached. Page 0 means "unread": the record is deleted so the book
         // disappears from the reading tab and loses its shelf progress bar.
         // Merely opening a book therefore leaves no trace either.
@@ -755,9 +782,15 @@ private fun ReaderContent(
                     },
                 horizontalArrangement = Arrangement.Center
             ) {
-                PagePane(vm, first, targetW, targetH, quality, settings.smoothing, Modifier.weight(1f))
+                PagePane(
+                    vm, first, targetW, targetH, quality, settings.smoothing,
+                    settings.fitMode, settings.zoomPercent, Modifier.weight(1f)
+                )
                 if (showSecond) {
-                    PagePane(vm, second, targetW, targetH, quality, settings.smoothing, Modifier.weight(1f))
+                    PagePane(
+                        vm, second, targetW, targetH, quality, settings.smoothing,
+                        settings.fitMode, settings.zoomPercent, Modifier.weight(1f)
+                    )
                 }
             }
         }
@@ -1063,30 +1096,133 @@ private fun PagePane(
     targetH: Int,
     quality: Int,
     smoothing: Int,
+    zoomMode: Int,
+    zoomPercent: Int,
     modifier: Modifier = Modifier
 ) {
+    // "Original size" is the only mode that needs the real pixel dimensions of the
+    // artwork; every other mode is scaled from the viewport anyway.
+    var source by remember(index, zoomMode) { mutableStateOf<Pair<Int, Int>?>(null) }
+    LaunchedEffect(index, zoomMode) {
+        if (zoomMode == ZoomMode.ORIGINAL) source = vm.sourceSize(index)
+    }
+    val decodeW: Int
+    val decodeH: Int
+    when (zoomMode) {
+        ZoomMode.ORIGINAL -> {
+            decodeW = source?.first ?: targetW
+            decodeH = source?.second ?: targetH
+        }
+        ZoomMode.FIXED -> {
+            decodeW = (targetW.toLong() * zoomPercent / 100).toInt().coerceAtLeast(256)
+            decodeH = (targetH.toLong() * zoomPercent / 100).toInt().coerceAtLeast(256)
+        }
+        else -> {
+            decodeW = targetW
+            decodeH = targetH
+        }
+    }
+
     val bitmap by produceState<Bitmap?>(
         // Show the cached (possibly lower-resolution) bitmap immediately while
         // the sharper one loads, instead of blanking the screen with a spinner.
         initialValue = vm.peekPage(index, quality),
         key1 = index,
         key2 = quality,
-        key3 = "$targetW-$targetH"
+        key3 = "$decodeW-$decodeH"
     ) {
-        value = vm.page(index, targetW, targetH, quality)
+        value = vm.page(index, decodeW, decodeH, quality)
     }
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+
+    // Panning inside one page. Vertical only when the page is simply taller than
+    // the screen (horizontal swipes must keep turning pages); both axes once the
+    // page is wider than the screen, because then there is nothing else to reach
+    // the cropped side with.
+    var panX by remember(index, zoomMode, zoomPercent) { mutableStateOf(0f) }
+    var panY by remember(index, zoomMode, zoomPercent) { mutableStateOf(0f) }
+
+    BoxWithConstraints(
+        modifier = modifier.fillMaxSize().clipToBounds(),
+        contentAlignment = Alignment.Center
+    ) {
+        val viewportW = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+        val viewportH = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+        val density = LocalDensity.current
         val image = bitmap
-        if (image != null) {
+        if (image == null) {
+            CircularProgressIndicator(color = Color(0xFFD0BCFF))
+        } else {
+            val bw = image.width.toFloat().coerceAtLeast(1f)
+            val bh = image.height.toFloat().coerceAtLeast(1f)
+            val drawW: Float
+            val drawH: Float
+            when (zoomMode) {
+                ZoomMode.ORIGINAL -> {
+                    // 1 bitmap pixel = 1 screen pixel.
+                    drawW = bw
+                    drawH = bh
+                }
+                ZoomMode.FIT_WIDTH -> {
+                    val f = viewportW / bw
+                    drawW = viewportW
+                    drawH = bh * f
+                }
+                ZoomMode.FIT_HEIGHT -> {
+                    val f = viewportH / bh
+                    drawW = bw * f
+                    drawH = viewportH
+                }
+                ZoomMode.FIXED -> {
+                    val f = (viewportW * zoomPercent / 100f) / bw
+                    drawW = bw * f
+                    drawH = bh * f
+                }
+                ZoomMode.STRETCH -> {
+                    drawW = viewportW
+                    drawH = viewportH
+                }
+                ZoomMode.COVER -> {
+                    val f = maxOf(viewportW / bw, viewportH / bh)
+                    drawW = bw * f
+                    drawH = bh * f
+                }
+                else -> {
+                    val f = minOf(viewportW / bw, viewportH / bh)
+                    drawW = bw * f
+                    drawH = bh * f
+                }
+            }
+            val maxPanX = ((drawW - viewportW) / 2f).coerceAtLeast(0f)
+            val maxPanY = ((drawH - viewportH) / 2f).coerceAtLeast(0f)
+            val drag = when {
+                maxPanX > 1f -> Modifier.pointerInput(index, zoomMode, zoomPercent, maxPanX, maxPanY) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        panX = (panX + dragAmount.x).coerceIn(-maxPanX, maxPanX)
+                        panY = (panY + dragAmount.y).coerceIn(-maxPanY, maxPanY)
+                    }
+                }
+                maxPanY > 1f -> Modifier.pointerInput(index, zoomMode, zoomPercent, maxPanY) {
+                    detectVerticalDragGestures { change, dragAmount ->
+                        change.consume()
+                        panY = (panY + dragAmount).coerceIn(-maxPanY, maxPanY)
+                    }
+                }
+                else -> Modifier
+            }
             Image(
                 bitmap = image.asImageBitmap(),
                 contentDescription = null,
-                contentScale = ContentScale.Fit,
+                contentScale = ContentScale.FillBounds,
                 filterQuality = if (smoothing == 0) FilterQuality.High else FilterQuality.None,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .size(with(density) { drawW.toDp() }, with(density) { drawH.toDp() })
+                    .graphicsLayer {
+                        translationX = panX
+                        translationY = panY
+                    }
+                    .then(drag)
             )
-        } else {
-            CircularProgressIndicator(color = Color(0xFFD0BCFF))
         }
     }
 }

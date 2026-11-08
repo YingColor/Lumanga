@@ -62,6 +62,7 @@ import com.yingcolor.comicviewer.S
 import com.yingcolor.comicviewer.data.Book
 import com.yingcolor.comicviewer.data.Prefs
 import com.yingcolor.comicviewer.data.UiSettings
+import com.yingcolor.comicviewer.data.ZoomMode
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -90,24 +91,29 @@ private fun buildTiles(
     sizes: List<Pair<Int, Int>>,
     screenW: Int,
     screenH: Int,
-    fitMode: Int
+    zoomMode: Int,
+    zoomPercent: Int
 ): Pair<List<StripTile>, IntArray> {
     val tiles = ArrayList<StripTile>(sizes.size * 2)
     val starts = IntArray(sizes.size)
-    val sliceHeight = if (fitMode == 1) screenH.coerceAtLeast(256) else TILE_HEIGHT_PX
+    val maxWidth = (screenW * 1.6f).toInt()
     sizes.forEachIndexed { page, (rawW, rawH) ->
         starts[page] = tiles.size
         val srcW = rawW.coerceAtLeast(1)
         val srcH = rawH.coerceAtLeast(1)
-        // Fit width stretches to the screen; original size never upscales;
-        // fit screen uses one screen-tall slice per item (fewer, larger loads).
-        val displayW = when (fitMode) {
-            2 -> srcW.coerceAtMost(screenW)
+        // In a continuous strip only the width matters: "fit screen", "cover" and
+        // "stretch" all mean "use the whole width", while the others change how
+        // wide each page ends up.
+        val displayW = when (zoomMode) {
+            ZoomMode.ORIGINAL -> srcW.coerceIn(1, maxWidth)
+            ZoomMode.FIXED -> (screenW.toLong() * zoomPercent / 100).toInt()
+            ZoomMode.FIT_HEIGHT -> (srcW.toLong() * screenH / srcH).toInt()
+                .coerceIn((screenW * 0.25f).toInt().coerceAtLeast(1), screenW * 2)
             else -> screenW
         }.coerceAtLeast(1)
         val scale = displayW.toFloat() / srcW
         val shownH = (srcH * scale).toInt().coerceAtLeast(1)
-        val count = ((shownH + sliceHeight - 1) / sliceHeight)
+        val count = ((shownH + TILE_HEIGHT_PX - 1) / TILE_HEIGHT_PX)
             .coerceIn(1, MAX_SLICES_PER_PAGE)
         for (i in 0 until count) {
             val top = (i.toLong() * srcH / count).toInt()
@@ -165,8 +171,8 @@ fun WebtoonScreen(
                     }
                 }
             } else {
-                val plan = remember(ready, screenW, screenH, settings.fitMode) {
-                    buildTiles(ready, screenW, screenH, settings.fitMode)
+                val plan = remember(ready, screenW, screenH, settings.fitMode, settings.zoomPercent) {
+                    buildTiles(ready, screenW, screenH, settings.fitMode, settings.zoomPercent)
                 }
                 WebtoonContent(
                     book = book,

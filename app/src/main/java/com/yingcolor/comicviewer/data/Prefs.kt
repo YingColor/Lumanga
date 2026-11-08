@@ -5,6 +5,30 @@ import android.content.Context
 class Prefs(context: Context) {
     private val sp = context.applicationContext.getSharedPreferences("comic_viewer", Context.MODE_PRIVATE)
 
+    init {
+        migrateZoomMode()
+    }
+
+    /**
+     * Older builds stored only three scroll-mode values (0 = fit width, 1 = fit
+     * screen, 2 = original size). The list now has seven entries in a different
+     * order, so the stored index is translated once; otherwise a fit-width user
+     * would suddenly get 1:1 pixels after updating.
+     */
+    private fun migrateZoomMode() {
+        if (sp.getBoolean(KEY_ZOOM_MIGRATED, false)) return
+        val mapped = when (sp.getInt(KEY_FIT_MODE, -1)) {
+            0 -> ZoomMode.FIT_WIDTH
+            1 -> ZoomMode.FIT_SCREEN
+            2 -> ZoomMode.ORIGINAL
+            else -> ZoomMode.FIT_SCREEN
+        }
+        sp.edit()
+            .putInt(KEY_FIT_MODE, mapped)
+            .putBoolean(KEY_ZOOM_MIGRATED, true)
+            .apply()
+    }
+
     var folderUri: String?
         get() = sp.getString(KEY_FOLDER, null)
         set(value) = sp.edit().putString(KEY_FOLDER, value).apply()
@@ -46,10 +70,17 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_READ_MODE, 0).coerceIn(0, 1)
         set(value) = sp.edit().putInt(KEY_READ_MODE, value.coerceIn(0, 1)).apply()
 
-    /** Scroll mode: 0 = fit width, 1 = fit screen, 2 = original size. */
+    /** See [ZoomMode]; applies to both page mode and continuous scroll mode. */
     var fitMode: Int
-        get() = sp.getInt(KEY_FIT_MODE, 0).coerceIn(0, 2)
-        set(value) = sp.edit().putInt(KEY_FIT_MODE, value.coerceIn(0, 2)).apply()
+        get() = ZoomMode.coerce(sp.getInt(KEY_FIT_MODE, ZoomMode.FIT_SCREEN))
+        set(value) = sp.edit().putInt(KEY_FIT_MODE, ZoomMode.coerce(value)).apply()
+
+    /** Percentage of the screen width used by [ZoomMode.FIXED]. */
+    var zoomPercent: Int
+        get() = sp.getInt(KEY_ZOOM_PERCENT, 100).coerceIn(MIN_ZOOM_PERCENT, MAX_ZOOM_PERCENT)
+        set(value) = sp.edit()
+            .putInt(KEY_ZOOM_PERCENT, value.coerceIn(MIN_ZOOM_PERCENT, MAX_ZOOM_PERCENT))
+            .apply()
 
     /** Scroll mode horizontal alignment when a page is narrower than the screen. */
     var alignment: Int
@@ -145,9 +176,14 @@ class Prefs(context: Context) {
         const val KEY_TAP_TURN = "tap_to_turn"
         const val KEY_READ_MODE = "read_mode"
         const val KEY_FIT_MODE = "fit_mode"
+        const val KEY_ZOOM_MIGRATED = "fit_mode_migrated"
+        const val KEY_ZOOM_PERCENT = "zoom_percent"
         const val KEY_ALIGNMENT = "alignment"
         const val KEY_ORIENTATION = "screen_orientation"
         const val KEY_SMOOTHING = "smoothing"
         const val KEY_BRIGHTNESS = "brightness"
+
+        const val MIN_ZOOM_PERCENT = 40
+        const val MAX_ZOOM_PERCENT = 400
     }
 }

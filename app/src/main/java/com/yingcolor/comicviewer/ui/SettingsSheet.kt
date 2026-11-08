@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -33,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.yingcolor.comicviewer.S
 import com.yingcolor.comicviewer.data.UiSettings
+import com.yingcolor.comicviewer.data.ZoomMode
 
 @Composable
 fun SettingsSheet(
@@ -109,11 +111,42 @@ fun SettingsSheet(
                     Spacer(Modifier.height(18.dp))
 
                     SectionLabel(S.fitMode)
-                    SegmentedChoice(
+                    ChoiceChips(
                         options = S.fitOptions,
                         selected = settings.fitMode,
                         onSelect = settings::setFitMode,
                         modifier = Modifier.fillMaxWidth()
+                    )
+                    if (settings.fitMode == ZoomMode.FIXED) {
+                        Spacer(Modifier.height(14.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = S.zoomPercent,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = "${settings.zoomPercent}%",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = scheme.primary
+                            )
+                        }
+                        Slider(
+                            value = settings.zoomPercent.toFloat(),
+                            onValueChange = { settings.setZoomPercent(it.toInt()) },
+                            valueRange = 40f..400f,
+                            steps = 35,
+                            colors = SliderDefaults.colors(
+                                thumbColor = scheme.primary,
+                                activeTrackColor = scheme.primary
+                            )
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = S.zoomTip,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(18.dp))
 
