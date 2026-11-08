@@ -1,6 +1,7 @@
 package com.yingcolor.comicviewer.data
 
 import android.content.Context
+import org.json.JSONArray
 
 class Prefs(context: Context) {
     private val sp = context.applicationContext.getSharedPreferences("comic_viewer", Context.MODE_PRIVATE)
@@ -29,9 +30,50 @@ class Prefs(context: Context) {
             .apply()
     }
 
-    var folderUri: String?
-        get() = sp.getString(KEY_FOLDER, null)
-        set(value) = sp.edit().putString(KEY_FOLDER, value).apply()
+    /**
+     * The library can be spread over several folders (one per author, one per
+     * genre, internal storage plus an SD card). They are all scanned into a
+     * single shelf; the first folder below each root becomes its category.
+     */
+    var folderUris: List<String>
+        get() {
+            val stored = sp.getString(KEY_FOLDERS, null)
+            val parsed = if (stored.isNullOrBlank()) {
+                emptyList()
+            } else {
+                runCatching {
+                    val array = JSONArray(stored)
+                    (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) }
+                }.getOrDefault(emptyList())
+            }
+            if (parsed.isNotEmpty()) return parsed
+            // One-folder installs from older builds.
+            val legacy = sp.getString(KEY_FOLDER, null)
+            return if (legacy.isNullOrBlank()) emptyList() else listOf(legacy)
+        }
+        set(value) {
+            val clean = value.filter { it.isNotBlank() }.distinct()
+            sp.edit()
+                .putString(KEY_FOLDERS, JSONArray(clean).toString())
+                .putString(KEY_FOLDER, clean.firstOrNull())
+                .apply()
+        }
+
+    /** Kept for the single-folder call sites; returns the first library folder. */
+    val folderUri: String?
+        get() = folderUris.firstOrNull()
+
+    fun addFolder(uri: String): List<String> {
+        val next = (folderUris + uri).distinct()
+        folderUris = next
+        return next
+    }
+
+    fun removeFolder(uri: String): List<String> {
+        val next = folderUris.filter { it != uri }
+        folderUris = next
+        return next
+    }
 
     var themeMode: Int
         get() = sp.getInt(KEY_THEME, 0)
@@ -167,6 +209,7 @@ class Prefs(context: Context) {
 
     private companion object {
         const val KEY_FOLDER = "folder_uri"
+        const val KEY_FOLDERS = "folder_uris"
         const val KEY_THEME = "theme_mode"
         const val KEY_DIRECTION = "reading_direction"
         const val KEY_DOUBLE = "double_page"

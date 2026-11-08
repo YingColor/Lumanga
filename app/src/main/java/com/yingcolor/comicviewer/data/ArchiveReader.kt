@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class ArchiveReader private constructor(
     private val zip: ZipFile,
-    private val handles: List<Closeable>,
+    private val source: Closeable,
     val pages: List<ZipArchiveEntry>
 ) : PageSource {
 
@@ -107,17 +107,17 @@ class ArchiveReader private constructor(
 
     override fun close() {
         runCatching { zip.close() }
-        handles.forEach { runCatching { it.close() } }
+        runCatching { source.close() }
     }
 
     private class Candidate(
         val zip: ZipFile,
-        val handles: List<Closeable>,
+        val source: SeekableSource,
         val pages: List<ZipArchiveEntry>
     ) {
         fun closeQuietly() {
             runCatching { zip.close() }
-            handles.forEach { runCatching { it.close() } }
+            runCatching { source.close() }
         }
     }
 
@@ -143,7 +143,7 @@ class ArchiveReader private constructor(
             if (known != null) {
                 val quick = runCatching { tryOpen(context, uri, known) }.getOrNull()
                 if (quick != null && quick.pages.isNotEmpty()) {
-                    return ArchiveReader(quick.zip, quick.handles, quick.pages)
+                    return ArchiveReader(quick.zip, quick.source, quick.pages)
                 }
                 quick?.closeQuietly()
                 encodingCache.remove(key)
@@ -177,30 +177,13 @@ class ArchiveReader private constructor(
                 throw ArchiveException(ArchiveException.Kind.NO_IMAGES, "no images inside archive")
             }
             encodingCache[key] = winner.encoding
-            return ArchiveReader(winner.candidate.zip, winner.candidate.handles, winner.candidate.pages)
+            return ArchiveReader(winner.candidate.zip, winner.candidate.source, winner.candidate.pages)
         }
 
-        @Suppress("DEPRECATION")
         private fun tryOpen(context: Context, uri: Uri, encoding: String): Candidate {
-            // AssetFileDescriptor also carries startOffset, which some document providers set.
-            val assetFd = context.contentResolver.openAssetFileDescriptor(uri, "r")
-                ?: throw IOException("asset descriptor unavailable")
-            val fd = assetFd.fileDescriptor ?: run {
-                runCatching { assetFd.close() }
-                throw IOException("file descriptor unavailable")
-            }
-            val fis = try {
-                FileInputStream(fd)
-            } catch (e: Exception) {
-                runCatching { assetFd.close() }
-                throw e
-            }
+            val source = openSeekable(context, uri)
             return try {
-                val raw: FileChannel = fis.channel
-                val offset = assetFd.startOffset
-                val channel: SeekableByteChannel =
-                    if (offset != 0L) OffsetChannel(raw, offset) else raw
-                val zip = ZipFile(channel, encoding)
+                val zip = ZipFile(source.channel, encoding)
                 val pages = zip.entries.toList()
                     .asSequence()
                     .filter { !it.isDirectory }
@@ -208,10 +191,9 @@ class ArchiveReader private constructor(
                     .filter { !it.name.contains("__MACOSX", ignoreCase = true) }
                     .sortedWith { a, b -> naturalCompare(a.name, b.name) }
                     .toList()
-                Candidate(zip, listOf(fis, assetFd), pages)
+                Candidate(zip, source, pages)
             } catch (e: Exception) {
-                runCatching { fis.close() }
-                runCatching { assetFd.close() }
+                runCatching { source.close() }
                 throw e
             }
         }
@@ -235,22 +217,4 @@ class ArchiveReader private constructor(
             }
         }
     }
-}
-
-/** Wraps a FileChannel whose provider returned a non-zero start offset. */
-private class OffsetChannel(
-    private val delegate: FileChannel,
-    private val offset: Long
-) : SeekableByteChannel {
-    override fun read(dst: ByteBuffer): Int = delegate.read(dst)
-    override fun write(src: ByteBuffer): Int = throw UnsupportedOperationException()
-    override fun position(): Long = (delegate.position() - offset).coerceAtLeast(0L)
-    override fun position(newPosition: Long): SeekableByteChannel {
-        delegate.position(newPosition + offset)
-        return this
-    }
-    override fun size(): Long = (delegate.size() - offset).coerceAtLeast(0L)
-    override fun truncate(size: Long): SeekableByteChannel = throw UnsupportedOperationException()
-    override fun isOpen(): Boolean = delegate.isOpen
-    override fun close() = delegate.close()
 }

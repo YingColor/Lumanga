@@ -12,8 +12,8 @@ android {
         applicationId = "com.yingcolor.comicviewer"
         minSdk = 28
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.0.4"
+        versionCode = 12
+        versionName = "1.1.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -81,6 +81,16 @@ dependencies {
     implementation("androidx.compose.material3:material3")
 
     implementation("org.apache.commons:commons-compress:1.27.1")
+    // 7z needs these two at runtime: commons-io for its stream helpers and XZ for
+    // the LZMA/LZMA2 coders every .7z uses.
+    implementation("commons-io:commons-io:2.16.1")
+    implementation(files("libs/xz-1.10.jar"))
+
+    // RAR support (junrar). Bundled as jars instead of a Maven coordinate so the
+    // build stays reproducible offline; junrar only needs slf4j's API, and the
+    // NOP logger is enough for a reader.
+    implementation(files("libs/junrar-8.1.2.jar"))
+    implementation(files("libs/slf4j-api-2.0.17.jar"))
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

@@ -44,14 +44,28 @@ class ComicRepository(private val context: Context) {
     @OptIn(ExperimentalCoroutinesApi::class)
     private val coverDispatcher = Dispatchers.IO.limitedParallelism(2)
 
-    fun listBooks(treeUri: Uri): List<Book> {
-        val root = runCatching { DocumentFile.fromTreeUri(context, treeUri) }.getOrNull() ?: return emptyList()
+    fun listBooks(roots: List<Uri>): List<Book> {
         val found = mutableListOf<Book>()
-        runCatching { walk(root, 0, found) }
-        return found.sortedWith { a, b -> naturalCompare(a.name, b.name) }
+        for (root in roots) {
+            val dir = runCatching { DocumentFile.fromTreeUri(context, root) }.getOrNull() ?: continue
+            runCatching { walk(dir, 0, "", root.toString(), found) }
+            if (found.size >= MAX_BOOKS) break
+        }
+        // Overlapping roots (a folder and its parent both added) would list the
+        // same book twice; the first sighting wins.
+        val seen = HashSet<String>(found.size)
+        return found
+            .filter { seen.add(it.id) }
+            .sortedWith { a, b -> naturalCompare(a.name, b.name) }
     }
 
-    private fun walk(dir: DocumentFile, depth: Int, out: MutableList<Book>) {
+    private fun walk(
+        dir: DocumentFile,
+        depth: Int,
+        path: String,
+        rootId: String,
+        out: MutableList<Book>
+    ) {
         // Large collections are a first-class case: no aggressive 2000-book cap.
         if (depth > 12 || out.size >= MAX_BOOKS) return
         val children = runCatching { dir.listFiles() }.getOrDefault(emptyArray())
@@ -61,37 +75,63 @@ class ComicRepository(private val context: Context) {
         // this way: a library root with a few loose images must not collapse
         // into a single book.
         if (depth > 0) {
-            folderBook(dir, children)?.let { out.add(it); return }
+            folderBook(dir, children, path, rootId)?.let { out.add(it); return }
         }
 
         for (child in children) {
             if (child.isDirectory) {
+                val childName = child.name ?: ""
                 // Hidden system folders (.thumbnails and friends) are full of
                 // JPEGs and would otherwise show up as one-page "books".
-                if ((child.name ?: "").startsWith(".")) continue
-                walk(child, depth + 1, out)
+                if (childName.startsWith(".")) continue
+                walk(
+                    child,
+                    depth + 1,
+                    if (path.isEmpty()) childName else "$path/$childName",
+                    rootId,
+                    out
+                )
             } else {
                 val name = child.name ?: continue
-                if (!name.endsWith(".zip", ignoreCase = true) && !name.endsWith(".cbz", ignoreCase = true)) continue
+                val kind = kindOf(name) ?: continue
                 out.add(
                     Book(
                         id = child.uri.toString(),
                         uri = child.uri,
                         name = name.substringBeforeLast('.'),
                         sizeBytes = child.length(),
-                        lastModified = child.lastModified()
+                        lastModified = child.lastModified(),
+                        kind = kind,
+                        group = firstSegment(path),
+                        rootId = rootId
                     )
                 )
             }
         }
     }
 
+    /** `.zip` / `.cbz`, `.rar` and `.7z`; anything else is not a book. */
+    private fun kindOf(name: String): BookKind? = when {
+        name.endsWith(".zip", ignoreCase = true) || name.endsWith(".cbz", ignoreCase = true) -> BookKind.ARCHIVE
+        name.endsWith(".rar", ignoreCase = true) -> BookKind.RAR
+        name.endsWith(".7z", ignoreCase = true) -> BookKind.SEVEN_ZIP
+        else -> null
+    }
+
+    /** The shelf groups books by the first folder below the library root. */
+    private fun firstSegment(path: String): String = path.substringBefore('/')
+
     /**
      * Recognises "a folder of images" as a book. A lone image sitting next to
      * sub-folders is treated as a cover for a container directory
      * (`cover.jpg` + `第1话/`), so the chapters inside are still found.
      */
-    private fun folderBook(dir: DocumentFile, children: Array<DocumentFile>): Book? {
+    private fun folderBook(
+        dir: DocumentFile,
+        children: Array<DocumentFile>,
+        path: String,
+        rootId: String
+    ): Book? {
         var images = 0
         var subdirs = 0
         for (child in children) {
@@ -113,7 +153,11 @@ class ComicRepository(private val context: Context) {
             // "文件夹" in the grid instead of a made-up number.
             sizeBytes = 0L,
             lastModified = runCatching { dir.lastModified() }.getOrDefault(0L),
-            kind = BookKind.FOLDER
+            kind = BookKind.FOLDER,
+            // The category is the folder *above* this one: a folder book sitting
+            // directly under the root has no category of its own.
+            group = firstSegment(path.substringBeforeLast('/', "")),
+            rootId = rootId
         )
     }
 

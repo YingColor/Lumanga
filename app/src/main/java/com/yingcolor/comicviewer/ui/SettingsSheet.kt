@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yingcolor.comicviewer.S
 import com.yingcolor.comicviewer.data.UiSettings
@@ -56,6 +57,9 @@ object SettingsRoute {
 
     /** All reading options; the reader's gear button opens this page directly. */
     const val READING = 2
+
+    /** Library folders: add another root, drop one that is no longer needed. */
+    const val LIBRARIES = 3
 }
 
 /**
@@ -68,10 +72,14 @@ object SettingsRoute {
 fun SettingsDialog(
     route: Int,
     settings: UiSettings,
+    folders: List<Pair<String, String>>,
     onClose: () -> Unit,
     onOpenReading: () -> Unit,
+    onOpenLibraries: () -> Unit,
     onBackToRoot: () -> Unit,
-    onClearProgress: () -> Unit
+    onClearProgress: () -> Unit,
+    onAddFolder: () -> Unit,
+    onRemoveFolder: (String) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
 
@@ -127,14 +135,16 @@ fun SettingsDialog(
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (shown == SettingsRoute.READING) {
+                        if (shown != SettingsRoute.ROOT) {
                             PillButton(S.back, onBackToRoot, filled = false)
                             Spacer(Modifier.width(10.dp))
                         }
                         Text(
-                            text = if (shown == SettingsRoute.READING) {
-                                S.settings
-                            } else S.settingsRoot,
+                            text = when (shown) {
+                                SettingsRoute.READING -> S.settings
+                                SettingsRoute.LIBRARIES -> S.libraries
+                                else -> S.settingsRoot
+                            },
                             style = MaterialTheme.typography.headlineSmall,
                             modifier = Modifier.weight(1f)
                         )
@@ -148,12 +158,18 @@ fun SettingsDialog(
                         label = "settingsPage"
                     ) { page ->
                         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                            if (page == SettingsRoute.READING) {
-                                ReadingSettings(settings)
-                            } else {
-                                RootSettings(
+                            when (page) {
+                                SettingsRoute.READING -> ReadingSettings(settings)
+                                SettingsRoute.LIBRARIES -> LibrarySettings(
+                                    folders = folders,
+                                    onAddFolder = onAddFolder,
+                                    onRemoveFolder = onRemoveFolder
+                                )
+                                else -> RootSettings(
                                     settings = settings,
+                                    folderCount = folders.size,
                                     onOpenReading = onOpenReading,
+                                    onOpenLibraries = onOpenLibraries,
                                     onClearProgress = onClearProgress
                                 )
                             }
@@ -169,7 +185,9 @@ fun SettingsDialog(
 @Composable
 private fun RootSettings(
     settings: UiSettings,
+    folderCount: Int,
     onOpenReading: () -> Unit,
+    onOpenLibraries: () -> Unit,
     onClearProgress: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -178,6 +196,12 @@ private fun RootSettings(
         title = S.settings,
         subtitle = S.settingsReadingSummary,
         onClick = onOpenReading
+    )
+    Spacer(Modifier.height(10.dp))
+    MenuRow(
+        title = S.libraries,
+        subtitle = S.foldersCount(folderCount),
+        onClick = onOpenLibraries
     )
     Spacer(Modifier.height(22.dp))
 
@@ -214,6 +238,72 @@ private fun RootSettings(
         style = MaterialTheme.typography.bodySmall,
         color = scheme.onSurfaceVariant
     )
+}
+
+/**
+ * The library can live in more than one folder: one per author, one per genre,
+ * internal storage plus an SD card. Every root is scanned into the same shelf,
+ * and each root's first-level folders become the shelf's category chips.
+ */
+@Composable
+private fun LibrarySettings(
+    folders: List<Pair<String, String>>,
+    onAddFolder: () -> Unit,
+    onRemoveFolder: (String) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+
+    Text(
+        text = S.librariesHint,
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(14.dp))
+
+    folders.forEach { (uri, label) ->
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = scheme.surfaceContainerHigh.copy(alpha = 0.72f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 8.dp)
+                )
+                if (folders.size > 1) {
+                    Text(
+                        text = S.removeFolder,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = scheme.error,
+                        modifier = Modifier
+                            .clickable { onRemoveFolder(uri) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+
+    Spacer(Modifier.height(6.dp))
+    PillButton(S.addFolder, onAddFolder, filled = true, modifier = Modifier.fillMaxWidth())
+    if (folders.size <= 1) {
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = S.lastFolderTip,
+            style = MaterialTheme.typography.bodySmall,
+            color = scheme.onSurfaceVariant
+        )
+    }
 }
 
 @Composable

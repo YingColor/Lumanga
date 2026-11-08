@@ -99,7 +99,7 @@ private const val HEADER_SCROLL_RATIO = 0.6f
 class ShelfViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = ComicRepository(app)
     private val index = ShelfIndex(app)
-    private var loadedFolder: String? = null
+    private var loadedKey: String? = null
     private var loadJob: Job? = null
     private var lastVerifiedAt = 0L
 
@@ -113,33 +113,36 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
     var error by mutableStateOf<String?>(null)
         private set
 
+    /** Category chip selected on the shelf; empty means "all". */
+    var filterGroup by mutableStateOf("")
+
     /**
      * Show the remembered shelf first, then quietly verify the folder in the
      * background. Only a real add / remove / rename / size change rewrites the
      * list and the index, so a library of thousands needs no startup wait.
      */
-    fun load(treeUri: Uri?, force: Boolean = false) {
-        if (treeUri == null) {
+    fun load(roots: List<Uri>, force: Boolean = false) {
+        if (roots.isEmpty()) {
             loadJob?.cancel()
-            loadedFolder = null
+            loadedKey = null
             books = emptyList()
             loading = false
             return
         }
-        val folder = treeUri.toString()
-        val sameFolder = loadedFolder == folder
+        val folder = roots.joinToString("|") { it.toString() }
+        val sameFolder = loadedKey == folder
         if (sameFolder && loadJob?.isActive == true) return
         // Activity restarts (rotation, theme switch) must not walk the tree again.
         if (sameFolder && !force && books.isNotEmpty() &&
             System.currentTimeMillis() - lastVerifiedAt < VERIFY_INTERVAL_MS
         ) return
 
-        loadedFolder = folder
+        loadedKey = folder
         loadJob?.cancel()
         restoring = false
         loadJob = viewModelScope.launch {
             error = null
-            // Never delete the index here: a cold start also has loadedFolder == null,
+            // Never delete the index here: a cold start also has loadedKey == null,
             // and wiping it would force the full walk we are trying to avoid. A
             // different folder is handled by index.load()'s folder check and by
             // index.save() overwriting the file after a successful scan.
@@ -157,7 +160,7 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             val result = withContext(Dispatchers.IO) {
-                runCatching { repo.listBooks(treeUri) }
+                runCatching { repo.listBooks(roots) }
             }
             result.fold(
                 onSuccess = { scanned ->
@@ -183,9 +186,10 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The shelf's small "refresh" chip forces an immediate re-check. */
     fun refresh() {
-        val folder = loadedFolder ?: return
-        val uri = runCatching { Uri.parse(folder) }.getOrNull() ?: return
-        load(uri, force = true)
+        val folder = loadedKey ?: return
+        val roots = folder.split("|").mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }
+        if (roots.isEmpty()) return
+        load(roots, force = true)
     }
 
     private fun sameContent(current: List<Book>, scanned: List<Book>): Boolean {
@@ -197,7 +201,8 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
             if (old.name != book.name ||
                 old.sizeBytes != book.sizeBytes ||
                 old.lastModified != book.lastModified ||
-                old.kind != book.kind
+                old.kind != book.kind ||
+                old.group != book.group
             ) return false
         }
         return true
@@ -236,6 +241,7 @@ fun ShelfScreen(
     refreshKey: Int,
     gridState: LazyGridState,
     onPickFolder: () -> Unit,
+    onManageFolders: () -> Unit,
     onRefresh: () -> Unit,
     onOpenBook: (Book) -> Unit,
     onSettings: () -> Unit,
@@ -243,6 +249,7 @@ fun ShelfScreen(
 ) {
     var query by remember { mutableStateOf("") }
     var sortMenu by remember { mutableStateOf(false) }
+    var groupMenu by remember { mutableStateOf(false) }
     var columnMenu by remember { mutableStateOf(false) }
     // Sorting with naturalCompare() is the expensive part of a big shelf. Do it
     // once per books/sort change, then only filter for each keystroke instead of
@@ -250,9 +257,23 @@ fun ShelfScreen(
     val sorted = remember(books, settings.sortMode, refreshKey) {
         sortBooks(books, settings.sortMode, prefs)
     }
-    val displayed = remember(sorted, query) {
+    // Categories are the first folder below each library root, so a library
+    // organised as 作者 / 类型 / … can be narrowed down with one tap.
+    val groups = remember(sorted) {
+        sorted.asSequence()
+            .map { it.group }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .sortedWith { a, b -> naturalCompare(a, b) }
+            .toList()
+    }
+    // A saved category can disappear when its folder is removed; never leave the
+    // shelf filtered by something that no longer exists.
+    val groupFilter = vm.filterGroup.takeIf { it in groups } ?: ""
+    val displayed = remember(sorted, query, groupFilter) {
+        val base = if (groupFilter.isEmpty()) sorted else sorted.filter { it.group == groupFilter }
         val q = query.trim()
-        if (q.isEmpty()) sorted else sorted.filter { it.name.contains(q, ignoreCase = true) }
+        if (q.isEmpty()) base else base.filter { it.name.contains(q, ignoreCase = true) }
     }
     val scheme = MaterialTheme.colorScheme
     val columns = settings.gridColumns
@@ -328,6 +349,46 @@ fun ShelfScreen(
                     shape = CircleShape,
                     modifier = Modifier.weight(1f)
                 )
+                if (groups.isNotEmpty()) {
+                    Spacer(Modifier.width(6.dp))
+                    Box {
+                        MiniChip(
+                            text = groupFilter.ifEmpty { S.category },
+                            active = groupFilter.isNotEmpty(),
+                            onClick = { groupMenu = true }
+                        )
+                        DropdownMenu(expanded = groupMenu, onDismissRequest = { groupMenu = false }) {
+                            DropdownMenuItem(
+                                leadingIcon = {
+                                    Text(
+                                        text = if (groupFilter.isEmpty()) "✓" else " ",
+                                        color = scheme.primary
+                                    )
+                                },
+                                text = { Text(S.categoryAll) },
+                                onClick = {
+                                    vm.filterGroup = ""
+                                    groupMenu = false
+                                }
+                            )
+                            groups.forEach { name ->
+                                DropdownMenuItem(
+                                    leadingIcon = {
+                                        Text(
+                                            text = if (groupFilter == name) "✓" else " ",
+                                            color = scheme.primary
+                                        )
+                                    },
+                                    text = { Text(name) },
+                                    onClick = {
+                                        vm.filterGroup = name
+                                        groupMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
                 Spacer(Modifier.width(6.dp))
                 Box {
                     MiniChip(text = S.sort, onClick = { sortMenu = true })
@@ -471,9 +532,11 @@ fun ShelfScreen(
             }
         }
 
+        // With several library folders, "change folder" is the wrong promise:
+        // this opens the list where folders are added or removed.
         PillButton(
-            text = S.changeFolder,
-            onClick = onPickFolder,
+            text = S.manageFolders,
+            onClick = onManageFolders,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = 20.dp, bottom = 16.dp),
@@ -539,7 +602,7 @@ private fun CollapsingHeader(
 }
 
 @Composable
-private fun MiniChip(text: String, onClick: () -> Unit) {
+private fun MiniChip(text: String, onClick: () -> Unit, active: Boolean = false) {
     val scheme = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -554,8 +617,8 @@ private fun MiniChip(text: String, onClick: () -> Unit) {
             scaleY = scale
         },
         shape = CircleShape,
-        color = scheme.secondaryContainer,
-        contentColor = scheme.onSecondaryContainer
+        color = if (active) scheme.primary else scheme.secondaryContainer,
+        contentColor = if (active) scheme.onPrimary else scheme.onSecondaryContainer
     ) {
         Box(
             modifier = Modifier

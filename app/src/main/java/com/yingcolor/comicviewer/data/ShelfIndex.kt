@@ -35,7 +35,9 @@ class ShelfIndex(context: Context) {
                     name = item.optString(NAME),
                     sizeBytes = item.optLong(SIZE),
                     lastModified = item.optLong(MODIFIED),
-                    kind = if (item.optString(KIND) == KIND_FOLDER) BookKind.FOLDER else BookKind.ARCHIVE
+                    kind = kindOf(item.optString(KIND)),
+                    group = item.optString(GROUP),
+                    rootId = item.optString(ROOT)
                 )
             )
         }
@@ -53,7 +55,9 @@ class ShelfIndex(context: Context) {
                         .put(NAME, book.name)
                         .put(SIZE, book.sizeBytes)
                         .put(MODIFIED, book.lastModified)
-                        .put(KIND, if (book.kind == BookKind.FOLDER) KIND_FOLDER else KIND_ZIP)
+                        .put(KIND, kindName(book.kind))
+                        .put(GROUP, book.group)
+                        .put(ROOT, book.rootId)
                 )
             }
             val text = JSONObject()
@@ -65,6 +69,20 @@ class ShelfIndex(context: Context) {
             temp.writeText(text)
             if (!temp.renameTo(file)) temp.delete()
         }
+    }
+
+    private fun kindName(kind: BookKind): String = when (kind) {
+        BookKind.FOLDER -> "folder"
+        BookKind.RAR -> "rar"
+        BookKind.SEVEN_ZIP -> "7z"
+        BookKind.ARCHIVE -> "zip"
+    }
+
+    private fun kindOf(name: String): BookKind = when (name) {
+        "folder" -> BookKind.FOLDER
+        "rar" -> BookKind.RAR
+        "7z" -> BookKind.SEVEN_ZIP
+        else -> BookKind.ARCHIVE
     }
 
     fun clear() {
@@ -81,7 +99,7 @@ class ShelfIndex(context: Context) {
         const val SIZE = "size"
         const val MODIFIED = "modified"
         const val KIND = "kind"
-        const val KIND_FOLDER = "folder"
-        const val KIND_ZIP = "zip"
+        const val GROUP = "group"
+        const val ROOT = "root"
     }
 }

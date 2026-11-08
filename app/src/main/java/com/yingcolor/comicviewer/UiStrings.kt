@@ -13,6 +13,7 @@ object S {
     const val search = "搜索漫画"
     const val chooseFolder = "选择漫画文件夹"
     const val changeFolder = "更换文件夹"
+    const val manageFolders = "管理文件夹"
     const val emptyTitle = "还没有漫画"
     const val emptyBody = "选中存放漫画的文件夹，点一下就能看。压缩包（zip / cbz）和已经解压出来的图片文件夹都能读，混在一起也没关系。"
     const val emptyTip = "支持手机内部存储和 SD 卡，几个 GB 的大包和图片文件夹都能直接读"
@@ -92,6 +93,15 @@ object S {
     const val mb = "MB"
     const val unknownSize = "未知大小"
     const val folderType = "文件夹"
+    const val category = "分类"
+    const val categoryAll = "全部分类"
+    const val libraries = "漫画文件夹"
+    const val addFolder = "添加文件夹"
+    const val removeFolder = "移除"
+    const val lastFolderTip = "至少要保留一个文件夹"
+    const val librariesHint = "可以添加多个文件夹：不同作者、不同类型、机身存储和 SD 卡分开放的漫画都会出现在同一个书架上。分类自动取每个文件夹下的第一层目录名。"
+    const val folderRemoved = "已移除这个文件夹"
+    const val rarTip = "支持 zip / cbz / rar / 7z 和已解压的图片文件夹"
 
     val sortOptions = listOf(
         "名称 A → Z",
@@ -103,6 +113,8 @@ object S {
         "最近阅读"
     )
     val columnOptions = listOf("2 列", "3 列", "4 列", "5 列")
+
+    fun foldersCount(count: Int) = "$count 个文件夹"
 
     fun pageOf(cur: Int, total: Int) = "$cur / $total"
     fun pageProgress(page: Int, total: Int): String {

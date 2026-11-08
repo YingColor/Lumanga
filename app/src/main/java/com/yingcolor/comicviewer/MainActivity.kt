@@ -83,6 +83,7 @@ import com.yingcolor.comicviewer.ui.ShelfScreen
 import com.yingcolor.comicviewer.ui.ShelfViewModel
 import com.yingcolor.comicviewer.ui.motionTween
 import com.yingcolor.comicviewer.ui.selectionOf
+import com.yingcolor.comicviewer.util.folderLabel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -144,6 +145,7 @@ private fun ComicApp() {
     var screen by remember { mutableStateOf("shelf") }
     var currentBook by remember { mutableStateOf<Book?>(null) }
     var settingsRoute by remember { mutableIntStateOf(SettingsRoute.CLOSED) }
+    var folders by remember { mutableStateOf(prefs.folderUris) }
     var toast by remember { mutableStateOf<String?>(null) }
 
     val scope = rememberCoroutineScope()
@@ -160,15 +162,14 @@ private fun ComicApp() {
         if (uri != null) {
             val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
             runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
-            prefs.folderUri = uri.toString()
-            shelfVm.load(uri)
+            folders = prefs.addFolder(uri.toString())
+            shelfVm.load(folders.mapNotNull { runCatching { Uri.parse(it) }.getOrNull() })
         }
     }
 
     LaunchedEffect(Unit) {
-        val saved = prefs.folderUri
-        if (saved != null) {
-            runCatching { Uri.parse(saved) }.getOrNull()?.let { shelfVm.load(it) }
+        if (folders.isNotEmpty()) {
+            shelfVm.load(folders.mapNotNull { runCatching { Uri.parse(it) }.getOrNull() })
         }
     }
 
@@ -182,7 +183,8 @@ private fun ComicApp() {
         enabled = screen != "reader" && (settingsRoute != SettingsRoute.CLOSED || mainPage == 1)
     ) {
         when {
-            settingsRoute == SettingsRoute.READING -> settingsRoute = SettingsRoute.ROOT
+            settingsRoute == SettingsRoute.READING ||
+                settingsRoute == SettingsRoute.LIBRARIES -> settingsRoute = SettingsRoute.ROOT
             settingsRoute != SettingsRoute.CLOSED -> settingsRoute = SettingsRoute.CLOSED
             mainPage == 1 -> scope.launch { mainPagerState.animateScrollToPage(0) }
         }
@@ -270,6 +272,7 @@ private fun ComicApp() {
                                     refreshKey = progressVersion,
                                     gridState = if (readingMode) readingGridState else homeGridState,
                                     onPickFolder = { pickFolder.launch(null) },
+                                    onManageFolders = { settingsRoute = SettingsRoute.LIBRARIES },
                                     onRefresh = { shelfVm.refresh() },
                                     onOpenBook = { selected ->
                                         currentBook = selected
@@ -295,13 +298,23 @@ private fun ComicApp() {
             SettingsDialog(
                 route = settingsRoute,
                 settings = settings,
+                folders = folders.map { it to folderLabel(it) },
                 onClose = { settingsRoute = SettingsRoute.CLOSED },
                 onOpenReading = { settingsRoute = SettingsRoute.READING },
+                onOpenLibraries = { settingsRoute = SettingsRoute.LIBRARIES },
                 onBackToRoot = { settingsRoute = SettingsRoute.ROOT },
                 onClearProgress = {
                     prefs.clearProgress()
                     toast = S.cleared
                     progressVersion++
+                },
+                onAddFolder = { pickFolder.launch(null) },
+                onRemoveFolder = { uri ->
+                    val next = prefs.removeFolder(uri)
+                    if (next.isNotEmpty()) {
+                        folders = next
+                        shelfVm.load(next.mapNotNull { runCatching { Uri.parse(it) }.getOrNull() })
+                    }
                 }
             )
 
