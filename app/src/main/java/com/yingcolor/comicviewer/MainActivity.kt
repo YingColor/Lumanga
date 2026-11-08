@@ -51,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -76,7 +77,8 @@ import com.yingcolor.comicviewer.ui.ReaderScreen
 import com.yingcolor.comicviewer.ui.ReaderViewModel
 import com.yingcolor.comicviewer.ui.SHELF_MODE_HOME
 import com.yingcolor.comicviewer.ui.SHELF_MODE_READING
-import com.yingcolor.comicviewer.ui.SettingsSheet
+import com.yingcolor.comicviewer.ui.SettingsDialog
+import com.yingcolor.comicviewer.ui.SettingsRoute
 import com.yingcolor.comicviewer.ui.ShelfScreen
 import com.yingcolor.comicviewer.ui.ShelfViewModel
 import com.yingcolor.comicviewer.ui.motionTween
@@ -141,7 +143,7 @@ private fun ComicApp() {
     var progressVersion by remember { mutableStateOf(0) }
     var screen by remember { mutableStateOf("shelf") }
     var currentBook by remember { mutableStateOf<Book?>(null) }
-    var showSettings by remember { mutableStateOf(false) }
+    var settingsRoute by remember { mutableIntStateOf(SettingsRoute.CLOSED) }
     var toast by remember { mutableStateOf<String?>(null) }
 
     val scope = rememberCoroutineScope()
@@ -173,13 +175,15 @@ private fun ComicApp() {
     val allBooks = shelfVm.books
     val readingBooks = currentlyReading(allBooks, prefs, progressVersion)
 
-    BackHandler(enabled = screen == "reader" || showSettings || mainPage == 1) {
+    // The reader owns the back button while it is open: inside it, back first
+    // closes the settings window, then the tool bar, and only then leaves the
+    // book (see ReaderScreen). Here we only handle the shelf.
+    BackHandler(
+        enabled = screen != "reader" && (settingsRoute != SettingsRoute.CLOSED || mainPage == 1)
+    ) {
         when {
-            showSettings -> showSettings = false
-            screen == "reader" -> {
-                screen = "shelf"
-                progressVersion++
-            }
+            settingsRoute == SettingsRoute.READING -> settingsRoute = SettingsRoute.ROOT
+            settingsRoute != SettingsRoute.CLOSED -> settingsRoute = SettingsRoute.CLOSED
             mainPage == 1 -> scope.launch { mainPagerState.animateScrollToPage(0) }
         }
     }
@@ -221,7 +225,9 @@ private fun ComicApp() {
                             screen = "shelf"
                             progressVersion++
                         },
-                        onSettings = { showSettings = true },
+                        onSettings = { settingsRoute = SettingsRoute.READING },
+                        settingsOpen = settingsRoute != SettingsRoute.CLOSED,
+                        onCloseSettings = { settingsRoute = SettingsRoute.CLOSED },
                         onProgress = { page, total -> prefs.setProgress(book.id, page, total) },
                         onResetProgress = { prefs.clearProgress(book.id) }
                     )
@@ -270,7 +276,7 @@ private fun ComicApp() {
                                         screen = "reader"
                                         readerVm.open(selected)
                                     },
-                                    onSettings = { showSettings = true },
+                                    onSettings = { settingsRoute = SettingsRoute.ROOT },
                                     onGoHome = { scope.launch { mainPagerState.animateScrollToPage(0) } }
                                 )
                             }
@@ -286,10 +292,12 @@ private fun ComicApp() {
                 }
             }
 
-            SettingsSheet(
-                visible = showSettings,
+            SettingsDialog(
+                route = settingsRoute,
                 settings = settings,
-                onClose = { showSettings = false },
+                onClose = { settingsRoute = SettingsRoute.CLOSED },
+                onOpenReading = { settingsRoute = SettingsRoute.READING },
+                onBackToRoot = { settingsRoute = SettingsRoute.ROOT },
                 onClearProgress = {
                     prefs.clearProgress()
                     toast = S.cleared

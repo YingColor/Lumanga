@@ -477,11 +477,15 @@ fun ReaderScreen(
     settings: UiSettings,
     onBack: () -> Unit,
     onSettings: () -> Unit,
+    settingsOpen: Boolean,
+    onCloseSettings: () -> Unit,
     onProgress: (Int, Int) -> Unit,
     onResetProgress: () -> Unit
 ) {
     val activity = LocalContext.current as? Activity
-    BackHandler { onBack() }
+    // While the settings window is open it owns the back button; the content
+    // below installs its own handler that closes the window / tool bar first.
+    BackHandler(enabled = !settingsOpen) { onBack() }
 
     // Screen-level push animations are owned by the parent AnimatedContent.
     DisposableEffect(book.id, settings.keepAwake) {
@@ -522,6 +526,8 @@ fun ReaderScreen(
                         settings = settings,
                         onBack = onBack,
                         onSettings = onSettings,
+                        settingsOpen = settingsOpen,
+                        onCloseSettings = onCloseSettings,
                         onProgress = onProgress,
                         onResetProgress = onResetProgress
                     )
@@ -533,6 +539,8 @@ fun ReaderScreen(
                         settings = settings,
                         onBack = onBack,
                         onSettings = onSettings,
+                        settingsOpen = settingsOpen,
+                        onCloseSettings = onCloseSettings,
                         onProgress = onProgress,
                         onResetProgress = onResetProgress
                     )
@@ -579,6 +587,8 @@ private fun ReaderContent(
     settings: UiSettings,
     onBack: () -> Unit,
     onSettings: () -> Unit,
+    settingsOpen: Boolean,
+    onCloseSettings: () -> Unit,
     onProgress: (Int, Int) -> Unit,
     onResetProgress: () -> Unit
 ) {
@@ -596,6 +606,16 @@ private fun ReaderContent(
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { vm.releaseWebtoonCaches() }
     var showUi by remember { mutableStateOf(true) }
+
+    // Back inside the reader peels one layer at a time instead of jumping
+    // straight out to the shelf: settings window -> tool bar -> leave book.
+    BackHandler {
+        when {
+            settingsOpen -> onCloseSettings()
+            showUi -> showUi = false
+            else -> onBack()
+        }
+    }
     var scale by remember { mutableStateOf(1f) }
     var offsetX by remember { mutableStateOf(0f) }
     var offsetY by remember { mutableStateOf(0f) }

@@ -1,6 +1,7 @@
 package com.yingcolor.comicviewer.ui
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -141,6 +142,8 @@ fun WebtoonScreen(
     settings: UiSettings,
     onBack: () -> Unit,
     onSettings: () -> Unit,
+    settingsOpen: Boolean,
+    onCloseSettings: () -> Unit,
     onProgress: (Int, Int) -> Unit,
     onResetProgress: () -> Unit
 ) {
@@ -189,6 +192,8 @@ fun WebtoonScreen(
                     screenW = screenW,
                     onBack = onBack,
                     onSettings = onSettings,
+                    settingsOpen = settingsOpen,
+                    onCloseSettings = onCloseSettings,
                     onProgress = onProgress,
                     onResetProgress = onResetProgress
                 )
@@ -209,6 +214,8 @@ private fun WebtoonContent(
     screenW: Int,
     onBack: () -> Unit,
     onSettings: () -> Unit,
+    settingsOpen: Boolean,
+    onCloseSettings: () -> Unit,
     onProgress: (Int, Int) -> Unit,
     onResetProgress: () -> Unit
 ) {
@@ -220,6 +227,15 @@ private fun WebtoonContent(
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialTile)
     val scope = rememberCoroutineScope()
     var showUi by remember { mutableStateOf(true) }
+
+    // Back peels one layer at a time: settings window -> tool bar -> leave book.
+    BackHandler {
+        when {
+            settingsOpen -> onCloseSettings()
+            showUi -> showUi = false
+            else -> onBack()
+        }
+    }
     var sliderPage by remember { mutableFloatStateOf(savedPage.toFloat()) }
 
     // When a strip is wider than the screen (fixed zoom above 100 %, or a page
