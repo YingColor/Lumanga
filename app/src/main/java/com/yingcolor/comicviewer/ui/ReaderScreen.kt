@@ -24,6 +24,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemGestures
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -84,6 +87,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -585,6 +589,7 @@ private fun ErrorPane(message: String, onBack: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ReaderContent(
     book: Book,
@@ -803,12 +808,23 @@ private fun ReaderContent(
         val density = LocalDensity.current
         val targetW = with(density) { maxWidth.toPx().toInt() }
         val targetH = with(density) { maxHeight.toPx().toInt() }
-        // A tap is only a tap when the finger stays put. Close to the edges the
-        // tolerance is tighter still, so the system's swipe-back gesture cannot
-        // be mistaken for an edge tap that turns a page.
+        // A tap is only a tap when the finger stays put.
         val tapTolerancePx = with(density) { 2.dp.toPx() }
-        val edgeGuardPx = with(density) { 28.dp.toPx() }
-        val edgeTolerancePx = with(density) { 1.dp.toPx() }
+        // Ask the OS how wide its swipe-back zones are instead of guessing:
+        // they differ between phones and navigation modes. Everything inside
+        // them is ignored, because on some phones that gesture reaches the app
+        // as DOWN followed by an immediate cancel, with no movement at all.
+        val gestureInsets = WindowInsets.systemGestures
+        val leftGuard = gestureInsets.getLeft(density, LayoutDirection.Ltr)
+        val rightGuard = gestureInsets.getRight(density, LayoutDirection.Ltr)
+        val gestureGuardPx = maxOf(
+            leftGuard.toFloat(),
+            rightGuard.toFloat(),
+            // Fallback for ROMs that fail to report the gesture insets. A narrow
+            // strip is always reserved; the tappable left/right zones are far
+            // wider than this, so normal edge paging is unaffected.
+            with(density) { 20.dp.toPx() }
+        ) + with(density) { 4.dp.toPx() }
 
         LaunchedEffect(currentPage, targetW, targetH) {
             // Warm the two adjacent pages at low priority; no suspended callers,
@@ -864,12 +880,12 @@ private fun ReaderContent(
                 // from the back keeps swipes, pinch-zoom and taps independent.
                 .pointerInput(
                     rtl, zoomed, tapToTurn, logicalCount,
-                    tapTolerancePx, edgeGuardPx, edgeTolerancePx
+                    tapTolerancePx, gestureGuardPx
                 ) {
                     var lastTapAt = 0L
                     var lastTapX = 0f
                     var lastTapY = 0f
-                    observeTaps(tapTolerancePx, edgeGuardPx, edgeTolerancePx) { pos ->
+                    observeTaps(tapTolerancePx, gestureGuardPx) { pos ->
                         val x = pos.x
                         val y = pos.y
                         val now = SystemClock.uptimeMillis()

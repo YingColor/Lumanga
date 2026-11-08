@@ -19,15 +19,16 @@ import androidx.compose.ui.input.pointer.PointerInputScope
  *    position, not frame-to-frame: a slow scroll moves only 1-2 px per frame,
  *    so per-frame deltas never exceed touchSlop and the scroll used to be
  *    mistaken for a tap (which popped the toolbar open).
- *  - Near the screen edges a much stricter distance is used. Android's back
- *    gesture starts there and the system cancels the stream after only a few
- *    pixels on some phones; that must not become a page turn. An ordinary,
- *    stationary tap in that strip still works.
+ *  - Near the screen edges the system back gesture lives. On many phones the
+ *    app receives only DOWN followed immediately by ACTION_CANCEL, with no move
+ *    events at all, so the distance stays zero and a "tighter tolerance" is not
+ *    enough to reject it. The whole system-gesture strip is therefore ignored
+ *    outright, using the width the OS actually reports. A press that ends
+ *    inside one frame is rejected too, as a second line of defence.
  */
 internal suspend fun PointerInputScope.observeTaps(
     tolerancePx: Float,
-    edgeGuardPx: Float,
-    edgeTolerancePx: Float,
+    gestureGuardPx: Float,
     onTap: (Offset) -> Unit
 ) {
     awaitPointerEventScope {
@@ -44,9 +45,12 @@ internal suspend fun PointerInputScope.observeTaps(
             val id = first.id
             val start = first.position
             val startedAt = SystemClock.uptimeMillis()
-            val nearEdge = start.x < edgeGuardPx || start.x > size.width - edgeGuardPx
-            val limit = if (nearEdge) edgeTolerancePx else tolerancePx
-            var abandoned = false
+            // Ignore the strip the OS reserves for swipe-back. A real tap there
+            // is impossible to tell apart from "DOWN, then the system cancelled
+            // us before any move", which is exactly what used to turn a page.
+            val inGestureStrip = gestureGuardPx > 0f &&
+                (start.x < gestureGuardPx || start.x > size.width - gestureGuardPx)
+            var abandoned = inGestureStrip
             var finished = false
             while (!finished) {
                 val event = awaitPointerEvent(PointerEventPass.Final)
@@ -58,11 +62,26 @@ internal suspend fun PointerInputScope.observeTaps(
                     finished = true
                     abandoned = true
                 } else {
-                    if ((change.position - start).getDistance() > limit) abandoned = true
+                    val distance = (change.position - start).getDistance()
+                    if (distance > tolerancePx) abandoned = true
                     if (!change.pressed) {
                         finished = true
-                        val heldTooLong = SystemClock.uptimeMillis() - startedAt > 1200L
-                        if (!abandoned && !heldTooLong) onTap(change.position)
+                        val held = SystemClock.uptimeMillis() - startedAt
+                        // A press that ends within one frame is the system
+                        // cancelling our stream, not a human tapping.
+                        val accepted = !abandoned && held >= 25L && held <= 1200L
+                        if (accepted) {
+                            onTap(change.position)
+                        } else {
+                            // Kept deliberately: if a phone still turns a page
+                            // on swipe-back, `adb logcat -s ReaderTap` shows the
+                            // exact down position, guard width and press length.
+                            android.util.Log.d(
+                                "ReaderTap",
+                                "ignored x=${start.x.toInt()} guard=${gestureGuardPx.toInt()} " +
+                                    "heldMs=$held distPx=${distance.toInt()}"
+                            )
+                        }
                     }
                 }
             }

@@ -15,8 +15,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemGestures
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -59,6 +62,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yingcolor.comicviewer.S
@@ -200,6 +204,7 @@ fun WebtoonScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun WebtoonContent(
     book: Book,
@@ -220,12 +225,22 @@ private fun WebtoonContent(
     if (tiles.isEmpty()) return
     // A scroll gesture must never be mistaken for a tap on the middle of the
     // screen. Distance is measured from the down position (not per frame), so
-    // even a slow, few-pixel drag is rejected. The edges use a tighter limit
-    // because Android's swipe-back gesture starts there.
+    // even a slow, few-pixel drag is rejected.
     val density = LocalDensity.current
     val tapTolerancePx = with(density) { 2.dp.toPx() }
-    val edgeGuardPx = with(density) { 28.dp.toPx() }
-    val edgeTolerancePx = with(density) { 1.dp.toPx() }
+    // The OS reports the width of its swipe-back zones; ignore those strips
+    // entirely. On some phones that gesture arrives as DOWN + immediate cancel
+    // with zero movement, which no distance threshold can catch.
+    val gestureInsets = WindowInsets.systemGestures
+    val leftGuard = gestureInsets.getLeft(density, LayoutDirection.Ltr)
+    val rightGuard = gestureInsets.getRight(density, LayoutDirection.Ltr)
+    val gestureGuardPx = maxOf(
+        leftGuard.toFloat(),
+        rightGuard.toFloat(),
+        // Fallback for ROMs that fail to report the insets; the tappable
+        // left/right zones are much wider than this narrow strip.
+        with(density) { 20.dp.toPx() }
+    ) + with(density) { 4.dp.toPx() }
     val pageCount = vm.pageCount.coerceAtLeast(1)
     val savedPage = remember(book.id) { prefs.progress(book.id) }
         .coerceIn(0, pageCount - 1)
@@ -299,9 +314,9 @@ private fun WebtoonContent(
                 // drag / fling behaviour. A stationary single finger is a tap;
                 // any real movement is a scroll and is ignored here.
                 .pointerInput(
-                    settings.tapToTurn, tapTolerancePx, edgeGuardPx, edgeTolerancePx
+                    settings.tapToTurn, tapTolerancePx, gestureGuardPx
                 ) {
-                    observeTaps(tapTolerancePx, edgeGuardPx, edgeTolerancePx) { pos ->
+                    observeTaps(tapTolerancePx, gestureGuardPx) { pos ->
                         val x = pos.x
                         val width = size.width.toFloat()
                         when {
