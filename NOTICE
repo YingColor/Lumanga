@@ -1,0 +1,14 @@
+ComicViewer
+Copyright (c) 2026 ComicViewer contributors
+
+This product is licensed under the MIT License. See LICENSE.
+
+Runtime library:
+  Apache Commons Compress - https://commons.apache.org/proper/commons-compress/
+  Apache License, Version 2.0
+
+Build/runtime libraries:
+  AndroidX, Jetpack Compose, Kotlin, AndroidX ProfileInstaller
+  - Apache License, Version 2.0
+
+See THIRD_PARTY_NOTICES.md for details.

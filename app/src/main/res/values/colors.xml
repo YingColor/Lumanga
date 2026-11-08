@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="window_light">#FFFBFE</color>
+    <color name="window_dark">#1D1B20</color>
+    <color name="seed_purple">#6750A4</color>
+    <!-- Sampled from the launcher artwork itself, so the adaptive icon's
+         background layer matches the illustration's own paper colour. -->
+    <color name="ic_launcher_background">#EBD0F3</color>
+</resources>
