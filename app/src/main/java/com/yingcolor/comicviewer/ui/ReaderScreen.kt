@@ -1042,6 +1042,9 @@ private fun ReaderContent(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // The app locks its orientation by default, so give the reader a
+                // one-tap way to open a landscape spread without leaving the book.
+                val lockedLandscape = settings.screenOrientation == 2
                 PillButton(S.back, onBack, filled = false)
                 Spacer(Modifier.width(12.dp))
                 Text(
@@ -1050,6 +1053,14 @@ private fun ReaderContent(
                     color = Color.White,
                     maxLines = 1,
                     modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                PillButton(
+                    text = if (lockedLandscape) S.rotateToPortrait else S.rotateToLandscape,
+                    onClick = {
+                        settings.setScreenOrientation(if (lockedLandscape) 1 else 2)
+                    },
+                    filled = false
                 )
             }
         }

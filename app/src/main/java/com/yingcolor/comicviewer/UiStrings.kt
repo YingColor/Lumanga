@@ -73,6 +73,9 @@ object S {
     const val zoomPercent = "固定缩放比例"
     const val zoomTip = "除「伸展」会把画面拉满变形外，其余六种都按原比例缩放，不会把画面拉长或压扁。超长条漫建议卷轴模式配符合宽度或固定缩放。"
     const val screenOrientation = "屏幕方向"
+    const val orientationTip = "默认锁定直立：侧躺、躺着看时不会跟着手机重力变成横屏。想横屏看双页，点阅读器右上角的「切横屏」或在这里选「横屏」；「跟随系统」会恢复随手机自动旋转。"
+    const val rotateToLandscape = "切横屏"
+    const val rotateToPortrait = "切竖屏"
     const val smoothing = "图像平滑方式"
     const val brightness = "背光控制"
     const val brightnessSystem = "跟随系统亮度"
@@ -80,7 +83,10 @@ object S {
     const val webtoonNoImage = "这一页暂时无法显示"
     val fitOptions = listOf("原始尺寸", "符合屏幕", "符合宽度", "符合高度", "固定缩放", "伸展", "覆盖")
     val alignOptions = listOf("水平置中", "靠左", "靠右")
-    val orientationOptions = listOf("跟随系统", "直立", "横屏")
+    // Display order puts the locked-portrait default first. The stored values
+    // are unchanged: 0 = follow system, 1 = portrait, 2 = landscape.
+    val orientationOptions = listOf("直立", "横屏", "跟随系统")
+    val orientationValues = listOf(1, 2, 0)
     val smoothOptions = listOf("平滑", "锐利")
     val readModeOptions = listOf(modePage, modeScroll)
     const val folderError = "文件夹授权失效了，请重新选一次"

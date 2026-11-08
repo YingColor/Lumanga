@@ -583,9 +583,15 @@ private fun ReadingSettings(settings: UiSettings) {
     SectionLabel(S.screenOrientation)
     SegmentedChoice(
         options = S.orientationOptions,
-        selected = settings.screenOrientation,
-        onSelect = settings::setScreenOrientation,
+        selected = S.orientationValues.indexOf(settings.screenOrientation).coerceAtLeast(0),
+        onSelect = { settings.setScreenOrientation(S.orientationValues[it]) },
         modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = S.orientationTip,
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant
     )
     Spacer(Modifier.height(18.dp))
 

@@ -123,7 +123,9 @@ private fun ComicApp() {
 
     // Rotation and an app-only brightness override are global settings: they
     // apply to the shelf as well as the reader, and never change the system's
-    // own brightness setting.
+    // own brightness setting. Portrait is the default: requesting an explicit
+    // orientation overrides the system's auto-rotate, so lying on one side no
+    // longer turns the whole app sideways.
     LaunchedEffect(settings.screenOrientation) {
         activity?.requestedOrientation = when (settings.screenOrientation) {
             1 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT

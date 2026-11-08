@@ -17,6 +17,7 @@ extracting any image to disk**.
   one shelf, plus a **category filter** built from each root's first-level
   folders (author, genre, series)
 - UTF-8 / GBK / Shift_JIS entry names, natural page ordering
+- **Locked portrait by default**: the app fixes its own orientation instead of following the phone's gravity sensor, so lying on your side no longer flips the whole UI into landscape. Tap "Landscape" in the reader's top bar for a two-page spread, then "Portrait" to switch back; "Follow system" is still available in the reading settings
 - Right-to-left manga mode, single/double page, **rapid consecutive** edge taps or swipes to turn pages, pinch zoom, reading progress
 - Reader control bar: scrollable page-thumbnail preview (tap to jump), mirrored page seek bar with page numbers in manga mode, first/previous/next/last shortcuts, single-vs-double page and direction switches, collapse button; thumbnails use a dedicated small-bitmap cache
 - Reading state follows the page you are on: turning back to the first page clears all progress and marks the book unread; merely opening a cover leaves no record

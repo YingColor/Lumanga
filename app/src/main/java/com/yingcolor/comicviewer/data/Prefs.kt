@@ -8,6 +8,7 @@ class Prefs(context: Context) {
 
     init {
         migrateZoomMode()
+        migrateOrientation()
     }
 
     /**
@@ -27,6 +28,23 @@ class Prefs(context: Context) {
         sp.edit()
             .putInt(KEY_FIT_MODE, mapped)
             .putBoolean(KEY_ZOOM_MIGRATED, true)
+            .apply()
+    }
+
+    /**
+     * "Follow system" used to be the default. With auto-rotate on, lying on one
+     * side makes the phone report a landscape orientation and the whole app
+     * turns sideways, which is jarring while reading. Lock to portrait once, for
+     * both new installs and existing users who never changed this setting.
+     * Users who deliberately chose landscape keep their choice, and anyone can
+     * still pick "follow system" again — the flag stops this from running twice.
+     */
+    private fun migrateOrientation() {
+        if (sp.getBoolean(KEY_ORIENTATION_MIGRATED, false)) return
+        val stored = sp.getInt(KEY_ORIENTATION, 0)
+        sp.edit()
+            .putInt(KEY_ORIENTATION, if (stored == 0) 1 else stored)
+            .putBoolean(KEY_ORIENTATION_MIGRATED, true)
             .apply()
     }
 
@@ -139,10 +157,13 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_ALIGNMENT, 0).coerceIn(0, 2)
         set(value) = sp.edit().putInt(KEY_ALIGNMENT, value.coerceIn(0, 2)).apply()
 
-    /** 0 = follow system, 1 = portrait, 2 = landscape. */
+    /** 0 = follow system, 1 = portrait (default), 2 = landscape. */
     var screenOrientation: Int
-        get() = sp.getInt(KEY_ORIENTATION, 0).coerceIn(0, 2)
-        set(value) = sp.edit().putInt(KEY_ORIENTATION, value.coerceIn(0, 2)).apply()
+        get() = sp.getInt(KEY_ORIENTATION, 1).coerceIn(0, 2)
+        set(value) = sp.edit()
+            .putInt(KEY_ORIENTATION, value.coerceIn(0, 2))
+            .putBoolean(KEY_ORIENTATION_MIGRATED, true)
+            .apply()
 
     /** 0 = smooth (bilinear), 1 = sharp (nearest neighbour). */
     var smoothing: Int
@@ -235,6 +256,7 @@ class Prefs(context: Context) {
         const val KEY_ZOOM_PERCENT = "zoom_percent"
         const val KEY_ALIGNMENT = "alignment"
         const val KEY_ORIENTATION = "screen_orientation"
+        const val KEY_ORIENTATION_MIGRATED = "screen_orientation_migrated"
         const val KEY_SMOOTHING = "smoothing"
         const val KEY_BRIGHTNESS = "brightness"
 
