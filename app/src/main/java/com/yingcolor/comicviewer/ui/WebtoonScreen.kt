@@ -11,7 +11,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -55,7 +54,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
@@ -220,6 +218,14 @@ private fun WebtoonContent(
     onResetProgress: () -> Unit
 ) {
     if (tiles.isEmpty()) return
+    // A scroll gesture must never be mistaken for a tap on the middle of the
+    // screen. Distance is measured from the down position (not per frame), so
+    // even a slow, few-pixel drag is rejected. The edges use a tighter limit
+    // because Android's swipe-back gesture starts there.
+    val density = LocalDensity.current
+    val tapTolerancePx = with(density) { 2.dp.toPx() }
+    val edgeGuardPx = with(density) { 28.dp.toPx() }
+    val edgeTolerancePx = with(density) { 1.dp.toPx() }
     val pageCount = vm.pageCount.coerceAtLeast(1)
     val savedPage = remember(book.id) { prefs.progress(book.id) }
         .coerceIn(0, pageCount - 1)
@@ -288,12 +294,15 @@ private fun WebtoonContent(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer { translationX = panX }
-                // Tap recognition that only OBSERVES the pointer stream and never
-                // consumes a down event. A plain detectTapGestures() consumes it,
-                // which can starve the list's own drag detector — a bug this app
-                // already hit once in page mode. Flinging the strip stays intact.
-                .pointerInput(settings.tapToTurn) {
-                    fun onTap(x: Float) {
+                // Tap recognition only OBSERVES the pointer stream on the FINAL
+                // pass and never consumes an event, so the list keeps its normal
+                // drag / fling behaviour. A stationary single finger is a tap;
+                // any real movement is a scroll and is ignored here.
+                .pointerInput(
+                    settings.tapToTurn, tapTolerancePx, edgeGuardPx, edgeTolerancePx
+                ) {
+                    observeTaps(tapTolerancePx, edgeGuardPx, edgeTolerancePx) { pos ->
+                        val x = pos.x
                         val width = size.width.toFloat()
                         when {
                             x < width * 0.30f -> {
@@ -307,26 +316,6 @@ private fun WebtoonContent(
                                 } else showUi = !showUi
                             }
                             else -> showUi = !showUi
-                        }
-                    }
-                    while (true) {
-                        awaitPointerEventScope {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            var moved = false
-                            var tapX: Float? = null
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                if (event.changes.size > 1) moved = true
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                if (change.positionChangeIgnoreConsumed().getDistance() >
-                                    viewConfiguration.touchSlop
-                                ) moved = true
-                                if (!change.pressed) {
-                                    if (!moved) tapX = change.position.x
-                                    break
-                                }
-                            }
-                            tapX?.let(::onTap)
                         }
                     }
                 }
