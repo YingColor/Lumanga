@@ -25,9 +25,8 @@ import com.yingcolor.comicviewer.ui.motionTween
 import com.yingcolor.comicviewer.ui.rememberMotionScale
 
 /**
- * Material 3 Expressive inspired palettes. The default accent is the "purple"
- * preset of m3e-canvas (seed #6750A4); the other accents live in [Palettes].
- * Generous corner radii and springy motion are the defining traits.
+ * Material 3 Expressive shapes and motion, with the light accent palettes in
+ * [Palettes]. Generous corner radii and springy motion are the defining traits.
  */
 private val BaseTypography = Typography()
 

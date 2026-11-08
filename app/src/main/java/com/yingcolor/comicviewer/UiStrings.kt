@@ -106,12 +106,12 @@ object S {
     const val personalize = "个性化"
     const val personalizeSummary = "主题颜色、明暗模式、翻页动画"
     const val themeColor = "主题颜色"
-    const val themeColorTip = "整套界面（按钮、进度条、选中态）都跟着换色，深浅色各有一套对应配色"
+    const val themeColorTip = "清新低饱和的六套配色，按钮、进度条、选中态都跟着换色；明暗模式各有一套对应配色"
     const val pageAnim = "翻页动画"
     const val pageAnimTip = "只影响单页翻页；卷轴模式是连续滚动，没有翻页动画"
     const val pageAnimPreview = "点两侧翻页试试效果"
 
-    val themeColors = listOf("紫罗兰", "海蓝", "青碧", "森林", "暖橙", "玫瑰")
+    val themeColors = listOf("抹茶绿", "湖水青", "晴空蓝", "薰衣草", "樱花粉", "蜜桔橙")
 
     val pageAnimOptions = listOf("滑动", "淡入淡出", "翻书", "缩放")
 

@@ -68,6 +68,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -85,6 +86,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.AndroidViewModel
@@ -512,7 +514,7 @@ fun ReaderScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(16.dp))
-                    Text(S.loading, color = Color(0xFFB9B3C4), style = MaterialTheme.typography.bodyMedium)
+                    Text(S.loading, color = Color(0xFFC2CCC7), style = MaterialTheme.typography.bodyMedium)
                 }
             }
             vm.error != null -> ErrorPane(message = errorMessage(vm.error), onBack = onBack)
@@ -651,6 +653,11 @@ private fun ReaderContent(
     // recompose the whole reader (including the preview strip and slider) 60 times
     // a second while pinching. derivedStateOf only invalidates at the thresholds.
     val zoomed by remember { derivedStateOf { scale > 1.02f } }
+    val pageTurnMode = settings.pageAnim
+    // The non-sliding animations replace the pager's own travel with an in-place
+    // turn. They are switched off while the page is zoomed, where the pager's
+    // normal swipe/pan behaviour must stay untouched.
+    val useTurnLayer = pageTurnMode != PageAnimation.SLIDE && !zoomed
     val quality by remember {
         derivedStateOf {
             when {
@@ -705,6 +712,21 @@ private fun ReaderContent(
         }
     }
 
+    // The page that was on screen before the current turn began. During a turn
+    // it is drawn as a solid plate behind the pager: a fade or a flip then
+    // always has a real page underneath it, instead of exposing the black
+    // reader background in the middle of the animation. It only advances once
+    // the pager has fully settled, so the swap is invisible.
+    var settledPage by remember { mutableIntStateOf(initialPage) }
+    LaunchedEffect(Unit) {
+        snapshotFlow {
+            !pagerState.isScrollInProgress &&
+                abs(pagerState.currentPageOffsetFraction) < 0.02f
+        }.collect { settled ->
+            if (settled) settledPage = pagerState.currentPage
+        }
+    }
+
     fun turn(delta: Int, side: Int) {
         go(delta)
         flashSide = side
@@ -743,6 +765,25 @@ private fun ReaderContent(
                 .forEach { neighbour ->
                     vm.prefetch(firstImageIndex(neighbour), targetW, targetH)
                 }
+        }
+
+        // Opaque underlay for the animated turn. Without it, both the outgoing
+        // and the incoming page are partly transparent (or edge-on) halfway
+        // through a page change, so the dark reader background shows through as
+        // a large black frame. This plate keeps one fully drawn page on screen
+        // at every instant.
+        if (useTurnLayer) {
+            val baseFirst = firstImageIndex(settledPage)
+            PageRow(
+                vm = vm,
+                first = baseFirst,
+                showSecond = doublePage && baseFirst + 1 < pageCount,
+                targetW = targetW,
+                targetH = targetH,
+                quality = quality,
+                settings = settings,
+                modifier = Modifier.fillMaxSize()
+            )
         }
 
         HorizontalPager(
@@ -798,63 +839,85 @@ private fun ReaderContent(
             userScrollEnabled = !zoomed
         ) { pagerPage ->
             val first = firstImageIndex(pagerPage)
-            val second = first + 1
-            val showSecond = doublePage && second < pageCount
-            // Distance from the viewport in page widths (0 = on screen). This is
-            // the same formula as PagerState.getOffsetDistanceInPages: the pager
-            // subtracts its offset fraction, so getting the sign wrong here
-            // doubles the page's travel instead of cancelling it. The animations
-            // below cancel that shift so the page turns in place.
-            val away = ((pagerPage - pagerState.currentPage) -
+            val showSecond = doublePage && first + 1 < pageCount
+            // Signed distance from the viewport centre, in page widths. reversing
+            // the layout flips the pager's own placement, so the sign is flipped
+            // here too. `progress` runs 0 -> 1 as a page travels towards the
+            // centre, and stays continuous when currentPage flips at the halfway
+            // point of a turn.
+            val pos = ((pagerPage - pagerState.currentPage) -
                 pagerState.currentPageOffsetFraction) * if (rtl) -1f else 1f
-            val turn = settings.pageAnim
+            val progress = (1f - abs(pos)).coerceIn(0f, 1f)
+            val isBase = pagerPage == settledPage
+            val inRange = abs(pos) <= 1.02f
+            // zIndex is a modifier (not a graphicsLayer property): it lifts the
+            // incoming page above the settled one, whichever index the pager
+            // happens to compose first.
+            val layerZ = if (useTurnLayer && !isBase && inRange) 1f else 0f
             // Captured here: inside graphicsLayer the bare name `density` does not
             // resolve to a number (it picks up a function of the same name).
             val screenDensity = LocalDensity.current.density
-            Row(
+            PageRow(
+                vm = vm,
+                first = first,
+                showSecond = showSecond,
+                targetW = targetW,
+                targetH = targetH,
+                quality = quality,
+                settings = settings,
                 modifier = Modifier
                     .fillMaxSize()
+                    .zIndex(layerZ)
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale
                         translationX = offsetX
                         translationY = offsetY
-                        if (turn != PageAnimation.SLIDE && !zoomed) {
-                            val d = away.coerceIn(-1f, 1f)
-                            val distance = abs(d)
-                            translationX -= d * size.width
-                            when (turn) {
-                                PageAnimation.FADE -> alpha = 1f - distance
-                                PageAnimation.FLIP -> {
-                                    // Rotate away from the spine: right-to-left
-                                    // books fold from the right edge.
-                                    rotationY = d * 90f
-                                    cameraDistance = 18f * screenDensity
-                                    transformOrigin = TransformOrigin(if (rtl) 1f else 0f, 0.5f)
-                                    alpha = (1f - distance * 0.9f).coerceIn(0f, 1f)
-                                }
-                                PageAnimation.ZOOM -> {
-                                    val shrink = 1f - 0.16f * distance
-                                    scaleX *= shrink
-                                    scaleY *= shrink
-                                    alpha = 1f - distance * 0.85f
+                        // Reset everything the turn can touch, so switching back
+                        // to "slide" or pinching a page cannot leave a rotated or
+                        // transparent layer behind.
+                        alpha = 1f
+                        rotationY = 0f
+                        transformOrigin = TransformOrigin.Center
+                        cameraDistance = 8f * screenDensity
+                        if (useTurnLayer) {
+                            // Cancel the pager's travel with the UNCLAMPED value:
+                            // clamping here used to leave pages half a screen off
+                            // to the side whenever a jump skipped more than one
+                            // page, which is exactly the black gap.
+                            translationX -= pos * size.width
+                            if (isBase) {
+                                // The settled page stays solid; it is the page the
+                                // new one turns over.
+                                alpha = 1f
+                            } else {
+                                if (!inRange) {
+                                    alpha = 0f
+                                } else when (pageTurnMode) {
+                                    PageAnimation.FADE -> alpha = progress
+                                    PageAnimation.FLIP -> {
+                                        // Fold in from the spine. Only the incoming
+                                        // page rotates; the old page underneath
+                                        // keeps the screen filled.
+                                        rotationY = (1f - progress) * 68f *
+                                            if (pos >= 0f) 1f else -1f
+                                        cameraDistance = 12f * screenDensity
+                                        transformOrigin = TransformOrigin(
+                                            if (pos >= 0f) 0f else 1f, 0.5f
+                                        )
+                                        alpha = (progress * 1.7f).coerceIn(0f, 1f)
+                                    }
+                                    PageAnimation.ZOOM -> {
+                                        val s = 0.90f + 0.10f * progress
+                                        scaleX *= s
+                                        scaleY *= s
+                                        alpha = progress
+                                    }
                                 }
                             }
                         }
-                    },
-                horizontalArrangement = Arrangement.Center
-            ) {
-                PagePane(
-                    vm, first, targetW, targetH, quality, settings.smoothing,
-                    settings.fitMode, settings.zoomPercent, Modifier.weight(1f)
-                )
-                if (showSecond) {
-                    PagePane(
-                        vm, second, targetW, targetH, quality, settings.smoothing,
-                        settings.fitMode, settings.zoomPercent, Modifier.weight(1f)
-                    )
-                }
-            }
+                    }
+            )
         }
 
         // Direction feedback for edge taps. No overlay is used here (tap detection
@@ -1150,6 +1213,38 @@ fun SmallAction(
     }
 }
 
+/**
+ * One logical page (one image, or two side by side). Shared by the pager and by
+ * the opaque underlay, so both always show exactly the same fit / zoom / decode.
+ */
+@Composable
+private fun PageRow(
+    vm: ReaderViewModel,
+    first: Int,
+    showSecond: Boolean,
+    targetW: Int,
+    targetH: Int,
+    quality: Int,
+    settings: UiSettings,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxSize(),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        PagePane(
+            vm, first, targetW, targetH, quality, settings.smoothing,
+            settings.fitMode, settings.zoomPercent, Modifier.weight(1f)
+        )
+        if (showSecond) {
+            PagePane(
+                vm, first + 1, targetW, targetH, quality, settings.smoothing,
+                settings.fitMode, settings.zoomPercent, Modifier.weight(1f)
+            )
+        }
+    }
+}
+
 @Composable
 private fun PagePane(
     vm: ReaderViewModel,
@@ -1212,7 +1307,7 @@ private fun PagePane(
         val density = LocalDensity.current
         val image = bitmap
         if (image == null) {
-            CircularProgressIndicator(color = Color(0xFFD0BCFF))
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         } else {
             val bw = image.width.toFloat().coerceAtLeast(1f)
             val bh = image.height.toFloat().coerceAtLeast(1f)
