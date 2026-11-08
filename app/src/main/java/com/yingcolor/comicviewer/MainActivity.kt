@@ -58,6 +58,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
@@ -198,9 +200,20 @@ private fun ComicApp() {
         ) {
             // A horizontal push with parallax, rather than a cross-fade: the new
             // screen arrives from the right while the old one drifts left slowly.
+            //
+            // While the settings window is open its backdrop is blurred, so the
+            // text sits on a soft frosted surface instead of on top of artwork.
+            // The blur is live (not a snapshot), so changing the zoom mode still
+            // updates the page visible around the window. Below Android 12 the
+            // modifier is a no-op and the window simply stays denser.
             AnimatedContent(
                 targetState = screen,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(
+                        radius = if (settingsRoute == SettingsRoute.CLOSED) 0.dp else 24.dp,
+                        edgeTreatment = BlurredEdgeTreatment.Unbounded
+                    ),
                 transitionSpec = {
                     if (targetState == "reader") {
                         (slideInHorizontally(slideSpec) { it } + fadeIn(fadeSpec))

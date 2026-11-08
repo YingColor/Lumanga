@@ -1,5 +1,6 @@
 package com.yingcolor.comicviewer.ui
 
+import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -63,6 +64,25 @@ object SettingsRoute {
 }
 
 /**
+ * Frosted glass needs a real blur behind the window, and Compose only draws that
+ * from Android 12 on. Below it the window has to stay denser: with no blur the
+ * artwork underneath competes with the small text of the tips and labels.
+ */
+private val frostSupported: Boolean
+    get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
+/** Window body tint, top to bottom. Thin over a blurred backdrop, solid without one. */
+private fun glassTop(): Float = if (frostSupported) 0.60f else 0.92f
+
+private fun glassBottom(): Float = if (frostSupported) 0.48f else 0.84f
+
+/** Cards and rows sit on top of the window body. */
+private fun rowFill(): Float = if (frostSupported) 0.55f else 0.72f
+
+/** Dimming behind the window: a blurred backdrop needs far less of it. */
+private fun scrimAlpha(): Float = if (frostSupported) 0.16f else 0.38f
+
+/**
  * A floating settings window rather than a full-screen sheet: the page stays
  * visible around it, so a change can be judged without closing the window.
  * Reading options live on their own page, reachable from the menu and opened
@@ -107,11 +127,12 @@ fun SettingsDialog(
         Box(modifier = Modifier.fillMaxSize()) {
             // Only a light scrim: the window itself is translucent, so the page
             // behind it has to stay visible — that is the whole point of a
-            // floating window rather than a full-screen panel.
+            // floating window rather than a full-screen panel. With the backdrop
+            // already blurred, barely any dimming is needed.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.38f))
+                    .background(Color.Black.copy(alpha = scrimAlpha()))
                     .clickable(onClick = onClose)
             )
             val shape = RoundedCornerShape(28.dp)
@@ -125,10 +146,13 @@ fun SettingsDialog(
                     .clip(shape)
                     // A vertical fade instead of one flat alpha: slightly denser
                     // at the top where the title sits, thinner at the bottom so
-                    // the artwork keeps showing through.
+                    // the blurred artwork keeps showing through.
                     .background(
                         Brush.verticalGradient(
-                            listOf(glass.copy(alpha = 0.88f), glass.copy(alpha = 0.74f))
+                            listOf(
+                                glass.copy(alpha = glassTop()),
+                                glass.copy(alpha = glassBottom())
+                            )
                         )
                     )
                     .border(1.dp, scheme.onSurface.copy(alpha = 0.10f), shape)
@@ -263,7 +287,7 @@ private fun LibrarySettings(
     folders.forEach { (uri, label) ->
         Surface(
             shape = RoundedCornerShape(18.dp),
-            color = scheme.surfaceContainerHigh.copy(alpha = 0.72f),
+            color = scheme.surfaceContainerHigh.copy(alpha = rowFill()),
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
@@ -477,7 +501,7 @@ private fun MenuRow(
     val scheme = MaterialTheme.colorScheme
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = scheme.surfaceContainerHigh.copy(alpha = 0.72f),
+        color = scheme.surfaceContainerHigh.copy(alpha = rowFill()),
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
