@@ -199,7 +199,7 @@ private fun ComicApp() {
     // Changing the palette repaints everything under the card, which would leave
     // the frozen snapshot in the previous theme's colours. The card falls back to
     // its denser look until it is opened again.
-    LaunchedEffect(settings.themeMode) {
+    LaunchedEffect(settings.themeMode, settings.themeColor) {
         if (settingsRoute != SettingsRoute.CLOSED) backdrop = null
     }
 
@@ -220,7 +220,7 @@ private fun ComicApp() {
         }
     }
 
-    ComicTheme(mode = settings.themeMode) {
+    ComicTheme(mode = settings.themeMode, accent = settings.themeColor) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -333,6 +333,7 @@ private fun ComicApp() {
                 onClose = { settingsRoute = SettingsRoute.CLOSED },
                 onOpenReading = { settingsRoute = SettingsRoute.READING },
                 onOpenLibraries = { settingsRoute = SettingsRoute.LIBRARIES },
+                onOpenPersonalize = { settingsRoute = SettingsRoute.PERSONALIZE },
                 onBackToRoot = { settingsRoute = SettingsRoute.ROOT },
                 onClearProgress = {
                     prefs.clearProgress()

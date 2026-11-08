@@ -76,6 +76,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -91,6 +92,7 @@ import androidx.lifecycle.viewModelScope
 import com.yingcolor.comicviewer.S
 import com.yingcolor.comicviewer.data.ArchiveException
 import com.yingcolor.comicviewer.data.Book
+import com.yingcolor.comicviewer.data.PageAnimation
 import com.yingcolor.comicviewer.data.PageDecoder
 import com.yingcolor.comicviewer.data.PageSource
 import com.yingcolor.comicviewer.data.Prefs
@@ -105,6 +107,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.abs
 
 /**
  * One archive, one worker, three priority queues.
@@ -680,11 +683,16 @@ private fun ReaderContent(
     var requestedPage by remember { mutableIntStateOf(initialPage) }
     var jumpJob by remember { mutableStateOf<Job?>(null) }
 
+    // The visual turn is animated; `requestedPage` is what keeps rapid taps
+    // correct, because it advances synchronously and never reads the pager's
+    // (deliberately lagging) currentPage.
+    val turnSpec = motionTween<Float>(MotionSpec.MEDIUM)
+
     fun goTo(target: Int) {
         val safe = target.coerceIn(0, logicalCount - 1)
         requestedPage = safe
         jumpJob?.cancel()
-        jumpJob = scope.launch { pagerState.scrollToPage(safe) }
+        jumpJob = scope.launch { pagerState.animateScrollToPage(safe, animationSpec = turnSpec) }
     }
 
     fun go(delta: Int) = goTo(requestedPage + delta)
@@ -792,6 +800,17 @@ private fun ReaderContent(
             val first = firstImageIndex(pagerPage)
             val second = first + 1
             val showSecond = doublePage && second < pageCount
+            // Distance from the viewport in page widths (0 = on screen). This is
+            // the same formula as PagerState.getOffsetDistanceInPages: the pager
+            // subtracts its offset fraction, so getting the sign wrong here
+            // doubles the page's travel instead of cancelling it. The animations
+            // below cancel that shift so the page turns in place.
+            val away = ((pagerPage - pagerState.currentPage) -
+                pagerState.currentPageOffsetFraction) * if (rtl) -1f else 1f
+            val turn = settings.pageAnim
+            // Captured here: inside graphicsLayer the bare name `density` does not
+            // resolve to a number (it picks up a function of the same name).
+            val screenDensity = LocalDensity.current.density
             Row(
                 modifier = Modifier
                     .fillMaxSize()
@@ -800,6 +819,28 @@ private fun ReaderContent(
                         scaleY = scale
                         translationX = offsetX
                         translationY = offsetY
+                        if (turn != PageAnimation.SLIDE && !zoomed) {
+                            val d = away.coerceIn(-1f, 1f)
+                            val distance = abs(d)
+                            translationX -= d * size.width
+                            when (turn) {
+                                PageAnimation.FADE -> alpha = 1f - distance
+                                PageAnimation.FLIP -> {
+                                    // Rotate away from the spine: right-to-left
+                                    // books fold from the right edge.
+                                    rotationY = d * 90f
+                                    cameraDistance = 18f * screenDensity
+                                    transformOrigin = TransformOrigin(if (rtl) 1f else 0f, 0.5f)
+                                    alpha = (1f - distance * 0.9f).coerceIn(0f, 1f)
+                                }
+                                PageAnimation.ZOOM -> {
+                                    val shrink = 1f - 0.16f * distance
+                                    scaleX *= shrink
+                                    scaleY *= shrink
+                                    alpha = 1f - distance * 0.85f
+                                }
+                            }
+                        }
                     },
                 horizontalArrangement = Arrangement.Center
             ) {

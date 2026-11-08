@@ -79,6 +79,16 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_THEME, 0)
         set(value) = sp.edit().putInt(KEY_THEME, value).apply()
 
+    /** Accent palette index; see `theme/Palettes.kt`. */
+    var themeColor: Int
+        get() = sp.getInt(KEY_THEME_COLOR, 0)
+        set(value) = sp.edit().putInt(KEY_THEME_COLOR, value).apply()
+
+    /** Page-turn animation; see [PageAnimation]. */
+    var pageAnim: Int
+        get() = sp.getInt(KEY_PAGE_ANIM, 0)
+        set(value) = sp.edit().putInt(KEY_PAGE_ANIM, value).apply()
+
     /** 0 = left to right, 1 = right to left (manga) */
     var readingDirection: Int
         get() = sp.getInt(KEY_DIRECTION, 1)
@@ -211,6 +221,8 @@ class Prefs(context: Context) {
         const val KEY_FOLDER = "folder_uri"
         const val KEY_FOLDERS = "folder_uris"
         const val KEY_THEME = "theme_mode"
+        const val KEY_THEME_COLOR = "theme_color"
+        const val KEY_PAGE_ANIM = "page_anim"
         const val KEY_DIRECTION = "reading_direction"
         const val KEY_DOUBLE = "double_page"
         const val KEY_AWAKE = "keep_awake"

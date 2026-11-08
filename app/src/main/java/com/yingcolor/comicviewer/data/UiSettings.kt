@@ -1,6 +1,9 @@
 package com.yingcolor.comicviewer.data
 
+import com.yingcolor.comicviewer.theme.Palettes
+
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
@@ -19,6 +22,12 @@ import androidx.compose.runtime.setValue
 class UiSettings(private val prefs: Prefs) {
     private var stateThemeMode by mutableStateOf(prefs.themeMode)
     val themeMode: Int get() = stateThemeMode
+
+    private var stateThemeColor by mutableIntStateOf(Palettes.coerce(prefs.themeColor))
+    val themeColor: Int get() = stateThemeColor
+
+    private var statePageAnim by mutableIntStateOf(PageAnimation.coerce(prefs.pageAnim))
+    val pageAnim: Int get() = statePageAnim
 
     private var stateReadingDirection by mutableStateOf(prefs.readingDirection)
     val readingDirection: Int get() = stateReadingDirection
@@ -62,6 +71,18 @@ class UiSettings(private val prefs: Prefs) {
     fun setThemeMode(value: Int) {
         stateThemeMode = value
         prefs.themeMode = value
+    }
+
+    fun setThemeColor(value: Int) {
+        val safe = Palettes.coerce(value)
+        stateThemeColor = safe
+        prefs.themeColor = safe
+    }
+
+    fun setPageAnim(value: Int) {
+        val safe = PageAnimation.coerce(value)
+        statePageAnim = safe
+        prefs.pageAnim = safe
     }
 
     fun setReadingDirection(value: Int) {

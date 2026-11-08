@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,10 +22,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -32,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -58,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.round
 import com.yingcolor.comicviewer.S
 import com.yingcolor.comicviewer.data.UiSettings
+import com.yingcolor.comicviewer.theme.Palettes
 import com.yingcolor.comicviewer.data.ZoomMode
 
 /** Which page of the settings window is shown. */
@@ -72,6 +81,9 @@ object SettingsRoute {
 
     /** Library folders: add another root, drop one that is no longer needed. */
     const val LIBRARIES = 3
+
+    /** Accent colour, light/dark mode and the page-turn animation. */
+    const val PERSONALIZE = 4
 }
 
 /**
@@ -93,6 +105,7 @@ internal fun SettingsDialog(
     onClose: () -> Unit,
     onOpenReading: () -> Unit,
     onOpenLibraries: () -> Unit,
+    onOpenPersonalize: () -> Unit,
     onBackToRoot: () -> Unit,
     onClearProgress: () -> Unit,
     onAddFolder: () -> Unit,
@@ -199,49 +212,58 @@ internal fun SettingsDialog(
                         )
                 )
 
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (shown != SettingsRoute.ROOT) {
-                            PillButton(S.back, onBackToRoot, filled = false)
-                            Spacer(Modifier.width(10.dp))
-                        }
-                        Text(
-                            text = when (shown) {
-                                SettingsRoute.READING -> S.settings
-                                SettingsRoute.LIBRARIES -> S.libraries
-                                else -> S.settingsRoot
-                            },
-                            style = MaterialTheme.typography.headlineSmall,
-                            modifier = Modifier.weight(1f)
-                        )
-                        PillButton(S.close, onClose, filled = false)
-                    }
-                    Spacer(Modifier.height(16.dp))
-
-                    AnimatedContent(
-                        targetState = shown,
-                        transitionSpec = { fadeIn(pageFade) togetherWith fadeOut(pageFade) },
-                        label = "settingsPage"
-                    ) { page ->
-                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                            when (page) {
-                                SettingsRoute.READING -> ReadingSettings(settings)
-                                SettingsRoute.LIBRARIES -> LibrarySettings(
-                                    folders = folders,
-                                    rowAlpha = rowAlpha,
-                                    onAddFolder = onAddFolder,
-                                    onRemoveFolder = onRemoveFolder
-                                )
-                                else -> RootSettings(
-                                    settings = settings,
-                                    folderCount = folders.size,
-                                    rowAlpha = rowAlpha,
-                                    onOpenReading = onOpenReading,
-                                    onOpenLibraries = onOpenLibraries,
-                                    onClearProgress = onClearProgress
-                                )
+                // The card is a plain Box (a Surface would be opaque), so the
+                // default text colour has to be provided here — otherwise every
+                // Text without an explicit colour falls back to black and turns
+                // invisible in the dark theme.
+                CompositionLocalProvider(LocalContentColor provides scheme.onSurface) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (shown != SettingsRoute.ROOT) {
+                                PillButton(S.back, onBackToRoot, filled = false)
+                                Spacer(Modifier.width(10.dp))
                             }
-                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = when (shown) {
+                                    SettingsRoute.READING -> S.settings
+                                    SettingsRoute.LIBRARIES -> S.libraries
+                                    SettingsRoute.PERSONALIZE -> S.personalize
+                                    else -> S.settingsRoot
+                                },
+                                style = MaterialTheme.typography.headlineSmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            PillButton(S.close, onClose, filled = false)
+                        }
+                        Spacer(Modifier.height(16.dp))
+
+                        AnimatedContent(
+                            targetState = shown,
+                            transitionSpec = { fadeIn(pageFade) togetherWith fadeOut(pageFade) },
+                            label = "settingsPage"
+                        ) { page ->
+                            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                                when (page) {
+                                    SettingsRoute.READING -> ReadingSettings(settings)
+                                    SettingsRoute.PERSONALIZE -> PersonalizeSettings(settings)
+                                    SettingsRoute.LIBRARIES -> LibrarySettings(
+                                        folders = folders,
+                                        rowAlpha = rowAlpha,
+                                        onAddFolder = onAddFolder,
+                                        onRemoveFolder = onRemoveFolder
+                                    )
+                                    else -> RootSettings(
+                                        settings = settings,
+                                        folderCount = folders.size,
+                                        rowAlpha = rowAlpha,
+                                        onOpenReading = onOpenReading,
+                                        onOpenLibraries = onOpenLibraries,
+                                        onClearProgress = onClearProgress,
+                                        onOpenPersonalize = onOpenPersonalize
+                                    )
+                                }
+                                Spacer(Modifier.height(8.dp))
+                            }
                         }
                     }
                 }
@@ -265,6 +287,7 @@ private fun RootSettings(
     rowAlpha: Float,
     onOpenReading: () -> Unit,
     onOpenLibraries: () -> Unit,
+    onOpenPersonalize: () -> Unit,
     onClearProgress: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -282,14 +305,12 @@ private fun RootSettings(
         rowAlpha = rowAlpha,
         onClick = onOpenLibraries
     )
-    Spacer(Modifier.height(22.dp))
-
-    SectionLabel(S.appearance)
-    SegmentedChoice(
-        options = listOf(S.themeSystem, S.themeLight, S.themeDark),
-        selected = settings.themeMode,
-        onSelect = settings::setThemeMode,
-        modifier = Modifier.fillMaxWidth()
+    Spacer(Modifier.height(10.dp))
+    MenuRow(
+        title = S.personalize,
+        subtitle = S.personalizeSummary,
+        rowAlpha = rowAlpha,
+        onClick = onOpenPersonalize
     )
     Spacer(Modifier.height(22.dp))
 
@@ -383,6 +404,93 @@ private fun LibrarySettings(
             style = MaterialTheme.typography.bodySmall,
             color = scheme.onSurfaceVariant
         )
+    }
+}
+
+/**
+ * Personalisation: the accent colour repaints the whole UI, the light/dark mode
+ * picks the side of each palette, and the page animation changes how the reader
+ * travels between pages.
+ */
+@Composable
+private fun PersonalizeSettings(settings: UiSettings) {
+    val scheme = MaterialTheme.colorScheme
+
+    SectionLabel(S.appearance)
+    SegmentedChoice(
+        options = listOf(S.themeSystem, S.themeLight, S.themeDark),
+        selected = settings.themeMode,
+        onSelect = settings::setThemeMode,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(20.dp))
+
+    SectionLabel(S.themeColor)
+    SwatchRow(selected = settings.themeColor, onSelect = settings::setThemeColor)
+    Spacer(Modifier.height(10.dp))
+    Text(
+        text = S.themeColors.getOrElse(settings.themeColor) { "" },
+        style = MaterialTheme.typography.labelLarge,
+        color = scheme.primary,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(6.dp))
+    Text(
+        text = S.themeColorTip,
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(20.dp))
+
+    SectionLabel(S.pageAnim)
+    SegmentedChoice(
+        options = S.pageAnimOptions,
+        selected = settings.pageAnim,
+        onSelect = settings::setPageAnim,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = S.pageAnimTip + "，" + S.pageAnimPreview,
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant
+    )
+}
+
+/** One circle per accent; the selected one gets a ring and a tick. */
+@Composable
+private fun SwatchRow(selected: Int, onSelect: (Int) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        for (index in 0 until Palettes.COUNT) {
+            val active = index == selected
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(Palettes.accent(index))
+                    .border(
+                        width = if (active) 3.dp else 1.dp,
+                        color = if (active) scheme.onSurface else scheme.onSurface.copy(alpha = 0.15f),
+                        shape = CircleShape
+                    )
+                    .clickable { onSelect(index) },
+                contentAlignment = Alignment.Center
+            ) {
+                if (active) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        }
     }
 }
 

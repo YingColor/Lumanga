@@ -38,7 +38,7 @@ object S {
     const val pageMode = "页面模式"
     const val single = "单页"
     const val double = "双页"
-    const val appearance = "外观"
+    const val appearance = "明暗模式"
     const val themeSystem = "跟随系统"
     const val themeLight = "浅色"
     const val themeDark = "深色"
@@ -102,6 +102,18 @@ object S {
     const val librariesHint = "可以添加多个文件夹：不同作者、不同类型、机身存储和 SD 卡分开放的漫画都会出现在同一个书架上。分类自动取每个文件夹下的第一层目录名。"
     const val folderRemoved = "已移除这个文件夹"
     const val rarTip = "支持 zip / cbz / rar / 7z 和已解压的图片文件夹"
+
+    const val personalize = "个性化"
+    const val personalizeSummary = "主题颜色、明暗模式、翻页动画"
+    const val themeColor = "主题颜色"
+    const val themeColorTip = "整套界面（按钮、进度条、选中态）都跟着换色，深浅色各有一套对应配色"
+    const val pageAnim = "翻页动画"
+    const val pageAnimTip = "只影响单页翻页；卷轴模式是连续滚动，没有翻页动画"
+    const val pageAnimPreview = "点两侧翻页试试效果"
+
+    val themeColors = listOf("紫罗兰", "海蓝", "青碧", "森林", "暖橙", "玫瑰")
+
+    val pageAnimOptions = listOf("滑动", "淡入淡出", "翻书", "缩放")
 
     val sortOptions = listOf(
         "名称 A → Z",

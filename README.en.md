@@ -24,6 +24,12 @@ extracting any image to disk**.
 - "Shelf / Currently reading" tabs, 2–5 covers per row, 7 sort modes, live search
 - Persistent shelf index: a private JSON file of paths/metadata restores the shelf instantly on cold start, then a quiet background pass applies only real additions/removals. A "Refresh" chip forces an immediate re-check; up to 100,000 books are supported
 - Material 3 Expressive styling: continuous gesture-driven indicators, shape morphing and horizontal page pushes
+- **Six accent colours** (violet, blue, teal, green, orange, rose) in a new
+  "Personalise" settings page — each recolours the whole UI and has its own light
+  and dark palette, with an animated transition between them
+- **Four page-turn animations**: slide, cross-fade, 3D book flip and zoom-fade,
+  all applied to tap, swipe and seek-bar turns (scroll mode is continuous and
+  has no page turns)
 - Cover thumbnails cached in the app's private cache for instant re-opening; comic pages themselves are decoded in memory only
 - No permissions declared in the manifest, no network access
 
