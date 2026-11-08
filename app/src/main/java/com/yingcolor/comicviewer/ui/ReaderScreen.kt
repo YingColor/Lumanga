@@ -718,7 +718,13 @@ private fun ReaderContent(
         }
     }
 
-    fun go(delta: Int) = goTo(requestedPage + delta)
+    // Base the turn on the pager's real current page. animateScrollToPage() sets
+    // currentPage to the target immediately, so every tap advances exactly one page
+    // and rapid taps each land on the next one. The old requestedPage counter was
+    // re-synced by LaunchedEffects that could run while currentPage was still
+    // lagging, pulling the next tap's target back onto the current page — exactly
+    // the "needs two taps" symptom.
+    fun go(delta: Int) = goTo(pagerState.currentPage + delta)
 
     // A finger swipe (or a slider drag) changes the page without goTo(); adopt it
     // once the pager settles, but never while our own jump is still in flight,
@@ -739,6 +745,21 @@ private fun ReaderContent(
         if (jumpJob?.isActive != true && !pagerState.isScrollInProgress) {
             requestedPage = currentPage
         }
+    }
+
+    // A manual swipe (or slider drag) ends when isScrollInProgress flips to false.
+    // currentPage has already advanced by then, but the two sync effects above
+    // react to currentPage / lastTurnAt and can miss that exact settle moment,
+    // leaving requestedPage stuck on the PRE-swipe page. Re-align here as well:
+    // without it, the first tap after a swipe computes its target from the old
+    // page and effectively turns nothing, so the page looks like it needs two taps.
+    LaunchedEffect(Unit) {
+        snapshotFlow { pagerState.isScrollInProgress }
+            .collect { scrolling ->
+                if (!scrolling && jumpJob?.isActive != true) {
+                    requestedPage = pagerState.currentPage.coerceIn(0, logicalCount - 1)
+                }
+            }
     }
 
     // The page that was on screen before the current turn began. During a turn
@@ -819,83 +840,26 @@ private fun ReaderContent(
             state = pagerState,
             modifier = Modifier
                 .fillMaxSize()
-                // Both detectors live on the pager's own modifier chain, in the same
-                // order as before. A separate full-screen tap overlay intercepts
-                // drags and kills swipe paging, so it must not be used here.
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        if (zoom != 1f) {
-                            scale = (scale * zoom).coerceIn(1f, 5f)
-                            if (scale <= 1.02f) {
-                                offsetX = 0f
-                                offsetY = 0f
-                            }
-                        } else if (scale > 1.02f) {
-                            offsetX += pan.x
-                            offsetY += pan.y
+            // Tap-to-turn is handled by a separate transparent overlay placed ABOVE
+            // the pager (see the Box right after HorizontalPager), not on this
+            // modifier chain. Co-locating the tap detector with detectTransformGestures
+            // made the two trade off ownership of every other single-finger tap — the
+            // "needs two taps" bug. The overlay only claims single-finger taps, so
+            // drags and pinches fall through to the pager for swiping / zooming.
+            .pointerInput(Unit) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    if (zoom != 1f) {
+                        scale = (scale * zoom).coerceIn(1f, 5f)
+                        if (scale <= 1.02f) {
+                            offsetX = 0f
+                            offsetY = 0f
                         }
+                    } else if (scale > 1.02f) {
+                        offsetX += pan.x
+                        offsetY += pan.y
                     }
                 }
-                .pointerInput(rtl, zoomed, tapToTurn, logicalCount) {
-                    if (zoomed) {
-                        // Zoomed in: taps only toggle the toolbar; double tap restores.
-                        detectTapGestures(
-                            onTap = { showUi = !showUi },
-                            onDoubleTap = { resetZoom() }
-                        )
-                    } else {
-                        // detectTapGestures groups presses into gesture rounds with
-                        // awaitEachGesture; a burst of very fast taps can be folded
-                        // into one round and some of them never reach onTap, which
-                        // is exactly why rapid edge paging used to skip pages.
-                        // Handle every physical down -> up pair directly instead:
-                        // each tap turns exactly one page, and a drag past the
-                        // touch slop is left alone for the pager to swipe.
-                        val slop = viewConfiguration.touchSlop
-                        awaitPointerEventScope {
-                            while (true) {
-                                var down: PointerInputChange? = null
-                                while (down == null) {
-                                    val event = awaitPointerEvent(PointerEventPass.Main)
-                                    down = event.changes.firstOrNull {
-                                        it.pressed && !it.previousPressed
-                                    }
-                                }
-                                val firstDown = down ?: continue
-                                val downId = firstDown.id
-                                val start = firstDown.position
-                                var up: PointerInputChange? = null
-                                var moved = false
-                                while (up == null && !moved) {
-                                    val event = awaitPointerEvent(PointerEventPass.Main)
-                                    val change = event.changes.firstOrNull {
-                                        it.id == downId
-                                    } ?: break
-                                    if (!change.pressed) {
-                                        up = change
-                                    } else if ((change.position - start).getDistance() > slop) {
-                                        moved = true
-                                    }
-                                }
-                                val tapped = up
-                                if (tapped != null && !moved) {
-                                    val x = tapped.position.x
-                                    when {
-                                        x < size.width * 0.32f -> {
-                                            if (tapToTurn) turn(if (rtl) 1 else -1, -1)
-                                            else showUi = !showUi
-                                        }
-                                        x > size.width * 0.68f -> {
-                                            if (tapToTurn) turn(if (rtl) -1 else 1, 1)
-                                            else showUi = !showUi
-                                        }
-                                        else -> showUi = !showUi
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
+            },
             reverseLayout = rtl,
             userScrollEnabled = !zoomed
         ) { pagerPage ->
@@ -997,10 +961,83 @@ private fun ReaderContent(
             )
         }
 
-        // Direction feedback for edge taps. No overlay is used here (tap detection
-        // lives on the pager itself), and the badge exists in the tree ONLY while
-        // its animation runs: showFlash is turned off unconditionally at the end,
-        // so a grey circle can never be left behind on the page.
+        // Transparent tap layer ABOVE the pager. Single-finger taps are claimed here
+        // for edge paging / toolbar toggle. Drags and two-finger gestures are NOT
+        // consumed by detectTapGestures, so they fall through to the pager for
+        // swiping / pinch-zoom — this is what keeps tap and transform from fighting
+        // over the same gesture (the old "needs two taps" bug).
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+            .pointerInput(rtl, zoomed, tapToTurn, logicalCount) {
+                // Single-tap detection runs on the INITIAL dispatch pass, ABOVE the
+                // pager's own detectTransformGestures. A single-finger tap is claimed
+                // and consumed here, so it can never be stolen by the transform
+                // detector (that was the "needs two taps" bug). A drag or a two-finger
+                // gesture is left un-consumed and falls through to the pager for
+                // swiping / pinch-zoom.
+                val slop = viewConfiguration.touchSlop
+                var lastTapTime = 0L
+                var lastTapX = 0f
+                var lastTapY = 0f
+                awaitPointerEventScope {
+                    while (true) {
+                        var firstDown: PointerInputChange? = null
+                        while (firstDown == null) {
+                            val e = awaitPointerEvent(PointerEventPass.Initial)
+                            firstDown = e.changes.firstOrNull { it.pressed && !it.previousPressed }
+                        }
+                        val firstId = firstDown!!.id
+                        val startPos = firstDown!!.position
+                        var up: PointerInputChange? = null
+                        var moved = false
+                        var multitouch = false
+                        while (up == null && !moved) {
+                            val e = awaitPointerEvent(PointerEventPass.Initial)
+                            val c = e.changes.firstOrNull { it.id == firstId } ?: break
+                            if (e.changes.any { it.pressed && !it.previousPressed && it.id != firstId }) {
+                                multitouch = true
+                            }
+                            if (!c.pressed) {
+                                up = c
+                            } else if ((c.position - startPos).getDistance() > slop) {
+                                moved = true
+                            }
+                        }
+                        if (up != null && !moved && !multitouch) {
+                            up!!.consume()
+                            val x = up!!.position.x
+                            val y = up!!.position.y
+                            val now = SystemClock.uptimeMillis()
+                            val isDouble = now - lastTapTime < 300L &&
+                                abs(x - lastTapX) < 50f && abs(y - lastTapY) < 50f
+                            lastTapTime = now
+                            lastTapX = x
+                            lastTapY = y
+                            if (zoomed) {
+                                // Double tap restores zoom; the extra showUi flip below
+                                // cancels the single-tap flip from the first tap.
+                                if (isDouble) { resetZoom(); showUi = !showUi }
+                                else showUi = !showUi
+                            } else if (tapToTurn) {
+                                when {
+                                    x < size.width * 0.32f -> turn(if (rtl) 1 else -1, -1)
+                                    x > size.width * 0.68f -> turn(if (rtl) -1 else 1, 1)
+                                    else -> showUi = !showUi
+                                }
+                            } else {
+                                showUi = !showUi
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+        // Direction feedback for edge taps. The tap layer above handles detection;
+        // the badge exists in the tree ONLY while its animation runs: showFlash is
+        // turned off unconditionally at the end, so a grey circle can never be left
+        // behind on the page.
         if (showFlash) {
             Box(
                 modifier = Modifier
