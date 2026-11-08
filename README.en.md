@@ -31,7 +31,10 @@ extracting any image to disk**.
 - **Four page-turn animations** (in the reading settings): slide, cross-fade,
   3D book flip and zoom-in, all applied to tap, swipe and seek-bar turns. The
   book flip keeps its spine on one fixed edge and reverses the fold when going
-  back, instead of mirroring the animation to the other side. The settled page
+  back, instead of mirroring the animation to the other side. Switching to
+  right-to-left moves the spine to the right but keeps the same visual rule in
+  both directions: turning forward rises from the bottom, turning back settles
+  from the top. The settled page
   stays as an opaque underlay, so a turn never flashes a black frame (scroll
   mode is continuous and has no page turns)
 - Cover thumbnails cached in the app's private cache for instant re-opening; comic pages themselves are decoded in memory only

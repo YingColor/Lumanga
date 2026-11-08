@@ -907,7 +907,18 @@ private fun ReaderContent(
                                         val spineX = if (rtl) 1f else 0f
                                         val towardsNext = if (rtl) pos < 0f else pos > 0f
                                         val fold = (1f - progress) * 68f
-                                        rotationY = if (towardsNext) fold else -fold
+                                        // Flipping the spine to the other edge
+                                        // mirrors the perspective too, so the sign
+                                        // has to flip with it. Otherwise a
+                                        // right-to-left book would "fold down"
+                                        // when going forward and "fold up" when
+                                        // going back — the exact opposite of a
+                                        // left-to-right book. With this factor,
+                                        // forward always rises from the bottom
+                                        // and back always settles from the top,
+                                        // in BOTH reading directions.
+                                        val side = if (rtl) -1f else 1f
+                                        rotationY = (if (towardsNext) fold else -fold) * side
                                         cameraDistance = 12f * screenDensity
                                         transformOrigin = TransformOrigin(spineX, 0.5f)
                                         alpha = (progress * 1.7f).coerceIn(0f, 1f)
