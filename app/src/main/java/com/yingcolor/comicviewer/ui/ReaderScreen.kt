@@ -1453,14 +1453,12 @@ private fun PageSpread(
                     f to f
                 }
                 ZoomMode.FIT_HEIGHT -> {
-                    // A two-page spread on a portrait phone is wider than the
-                    // screen. Cap "fit height" by the width so the whole spread
-                    // stays visible and horizontal swipes keep turning pages
-                    // instead of being swallowed by panning. Single pages keep
-                    // the original, uncapped behaviour.
-                    val f = if (indices.size > 1) {
-                        minOf(viewportH / commonH, viewportW / totalW)
-                    } else viewportH / commonH
+                    // "Fit to height" means the combined picture fills the
+                    // screen height. On a portrait phone a two-page spread then
+                    // becomes wider than the screen; that overflow is panned,
+                    // exactly like Fit-to-width overflows vertically. Capping
+                    // this by the width would silently turn it into Fit-to-width.
+                    val f = viewportH / commonH
                     f to f
                 }
                 ZoomMode.FIXED -> {
