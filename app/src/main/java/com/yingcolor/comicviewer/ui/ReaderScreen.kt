@@ -681,7 +681,19 @@ private fun ReaderContent(
     // The non-sliding animations replace the pager's own travel with an in-place
     // turn. They are switched off while the page is zoomed, where the pager's
     // normal swipe/pan behaviour must stay untouched.
-    val useTurnLayer = pageTurnMode != PageAnimation.SLIDE && !zoomed
+    //
+    // An edge pull (dragging past the side of an oversized spread) is a REAL
+    // page turn: the pager has to be allowed to travel with the finger. Fade /
+    // flip / zoom cancel that travel, so they are suspended for the whole
+    // gesture and the settle animation that follows it.
+    var edgeSliding by remember { mutableStateOf(false) }
+    val useTurnLayer = pageTurnMode != PageAnimation.SLIDE && !zoomed && !edgeSliding
+    // Which side of a freshly turned spread to show first: +1 = left edge,
+    // -1 = right edge, 0 = keep the old centred behaviour. A spread wider than
+    // the screen must open on the edge the reader arrives from, not on the seam
+    // between its two pages.
+    var entrySide by remember { mutableIntStateOf(0) }
+    var edgeGen by remember { mutableIntStateOf(0) }
     val quality by remember {
         derivedStateOf {
             when {
@@ -798,6 +810,9 @@ private fun ReaderContent(
     }
 
     fun turn(delta: Int, side: Int) {
+        // reverseLayout flips the visual side of "forward", so the edge a new
+        // spread opens on has to be flipped with it.
+        entrySide = delta * if (rtl) -1 else 1
         go(delta)
         flashSide = side
         flashToken++
@@ -826,6 +841,80 @@ private fun ReaderContent(
         val density = LocalDensity.current
         val targetW = with(density) { maxWidth.toPx().toInt() }
         val targetH = with(density) { maxHeight.toPx().toInt() }
+
+        // ---- Dragging past the edge of an oversized spread ------------------
+        // Instead of counting the drag and then JUMPING to the next page, the
+        // leftover finger movement is fed into the pager itself. The pager then
+        // moves both spreads with the finger and lays out the incoming one,
+        // exactly as it does for a normal swipe. On release we finish (or
+        // spring back) with its own settle animation.
+        val maxEdgePull = targetW.toFloat().coerceAtLeast(1f)
+        var edgePull by remember { mutableStateOf(0f) }
+        var edgeDir by remember { mutableIntStateOf(0) }
+        var edgeStartPage by remember { mutableIntStateOf(0) }
+
+        fun edgeDragStart() {
+            jumpJob?.cancel()
+            edgeGen++
+            edgePull = 0f
+            edgeDir = 0
+            edgeStartPage = pagerState.currentPage
+            edgeSliding = true
+        }
+
+        fun edgeDrag(dx: Float) {
+            if (dx == 0f) return
+            if (edgeDir == 0) edgeDir = if (dx < 0f) -1 else 1
+            // One gesture may turn at most one page. Dragging back cancels the
+            // pull (and follows the finger back) but cannot flip to the other
+            // page mid-gesture.
+            val wanted = edgePull + dx
+            val next = if (edgeDir < 0) {
+                wanted.coerceIn(-maxEdgePull, 0f)
+            } else wanted.coerceIn(0f, maxEdgePull)
+            val applied = next - edgePull
+            if (applied == 0f) return
+            // Pager scroll delta has the opposite sign to finger movement.
+            pagerState.dispatchRawDelta(-applied)
+            edgePull = next
+        }
+
+        fun edgeDragEnd(commit: Boolean) {
+            val gen = edgeGen
+            val distance = abs(edgePull)
+            // A cancelled stream (system back gesture, incoming call, ...) must
+            // only spring back, never turn a page.
+            val wantTurn = commit && distance > maxEdgePull * 0.22f
+            // Derive the direction from what the pager actually did. This stays
+            // correct for reverseLayout (RTL) without guessing any signs.
+            val off = pagerState.currentPageOffsetFraction
+            val dir = when {
+                pagerState.currentPage != edgeStartPage ->
+                    (pagerState.currentPage - edgeStartPage).coerceIn(-1, 1)
+                off > 0f -> 1
+                off < 0f -> -1
+                else -> 0
+            }
+            val target = if (wantTurn && dir != 0) {
+                (edgeStartPage + dir).coerceIn(0, logicalCount - 1)
+            } else edgeStartPage
+            entrySide = if (target != edgeStartPage) dir * (if (rtl) -1 else 1) else 0
+            requestedPage = target
+            lastTurnAt = SystemClock.uptimeMillis()
+            jumpJob = scope.launch {
+                try {
+                    pagerState.animateScrollToPage(target, animationSpec = turnSpec)
+                } finally {
+                    // A newer gesture may have started while this one was
+                    // settling; only the latest one may restore the turn layer.
+                    if (edgeGen == gen) {
+                        edgeSliding = false
+                        edgePull = 0f
+                    }
+                }
+            }
+        }
+
         // A tap is only a tap when the finger stays put.
         val tapTolerancePx = with(density) { 2.dp.toPx() }
         // Ask the OS how wide its swipe-back zones are instead of guessing:
@@ -958,7 +1047,10 @@ private fun ReaderContent(
                 targetH = targetH,
                 quality = quality,
                 settings = settings,
-                onEdgeTurn = { d -> turn(d, if (d > 0) 1 else -1) },
+                entrySide = entrySide,
+                onEdgeDragStart = { edgeDragStart() },
+                onEdgeDrag = { dx -> edgeDrag(dx) },
+                onEdgeDragEnd = { commit -> edgeDragEnd(commit) },
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(layerZ)
@@ -1354,7 +1446,10 @@ private fun PageRow(
     targetH: Int,
     quality: Int,
     settings: UiSettings,
-    onEdgeTurn: (Int) -> Unit = {},
+    entrySide: Int = 0,
+    onEdgeDragStart: () -> Unit = {},
+    onEdgeDrag: (Float) -> Unit = {},
+    onEdgeDragEnd: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // One logical page is ONE picture. In double-page mode the two images are
@@ -1374,8 +1469,10 @@ private fun PageRow(
         smoothing = settings.smoothing,
         zoomMode = settings.fitMode,
         zoomPercent = settings.zoomPercent,
-        rtl = settings.readingDirection == 1,
-        onEdgeTurn = onEdgeTurn,
+        entrySide = entrySide,
+        onEdgeDragStart = onEdgeDragStart,
+        onEdgeDrag = onEdgeDrag,
+        onEdgeDragEnd = onEdgeDragEnd,
         modifier = modifier
     )
 }
@@ -1444,8 +1541,10 @@ private fun PageSpread(
     smoothing: Int,
     zoomMode: Int,
     zoomPercent: Int,
-    rtl: Boolean,
-    onEdgeTurn: (Int) -> Unit,
+    entrySide: Int,
+    onEdgeDragStart: () -> Unit,
+    onEdgeDrag: (Float) -> Unit,
+    onEdgeDragEnd: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var panX by remember(indices, zoomMode, zoomPercent) { mutableStateOf(0f) }
@@ -1511,41 +1610,55 @@ private fun PageSpread(
             val spreadH = commonH * scaleH
             val maxPanX = ((spreadW - viewportW) / 2f).coerceAtLeast(0f)
             val maxPanY = ((spreadH - viewportH) / 2f).coerceAtLeast(0f)
+
+            // A spread wider than the screen is a continuous strip, not two
+            // pictures with a seam in the middle of the viewport. On arrival it
+            // opens on the edge the reader comes FROM (the left page when
+            // turning forward in an LTR book). Only a freshly turned spread is
+            // affected: panX is left alone for the rest of that page's life.
+            var appliedFor by remember { mutableStateOf<List<Int>?>(null) }
+            LaunchedEffect(indices, maxPanX, entrySide) {
+                if (appliedFor != indices) {
+                    appliedFor = indices
+                    panX = entrySide * maxPanX
+                    panY = 0f
+                } else {
+                    panX = panX.coerceIn(-maxPanX, maxPanX)
+                    panY = panY.coerceIn(-maxPanY, maxPanY)
+                }
+            }
+
             val drag = when {
                 maxPanX > 1f -> Modifier.pointerInput(
-                    indices, zoomMode, zoomPercent, rtl, maxPanX, maxPanY
+                    indices, zoomMode, zoomPercent, maxPanX, maxPanY
                 ) {
-                    // Dragging pans the oversized spread. Once it reaches the
-                    // edge, keep dragging the SAME way a little further and it
-                    // turns the page instead of dead-ending at the boundary.
-                    var overscroll = 0f
-                    var turned = false
-                    val turnThreshold = 64.dp.toPx()
+                    // Phase 1: pan inside the spread.
+                    // Phase 2: once an edge is reached, hand EVERY further
+                    // horizontal pixel to the pager. The current spread moves
+                    // away and the next one slides in under the finger; nothing
+                    // jumps. Dragging back retracts the pull instead of turning
+                    // the other way mid-gesture.
+                    var turning = false
                     detectDragGestures(
-                        onDragStart = { overscroll = 0f; turned = false },
-                        onDragEnd = { overscroll = 0f },
-                        onDragCancel = { overscroll = 0f }
+                        onDragStart = { turning = false },
+                        onDragEnd = { if (turning) onEdgeDragEnd(true) },
+                        onDragCancel = { if (turning) onEdgeDragEnd(false) }
                     ) { change, dragAmount ->
                         change.consume()
-                        val wanted = panX + dragAmount.x
-                        val clamped = wanted.coerceIn(-maxPanX, maxPanX)
-                        panX = clamped
                         panY = (panY + dragAmount.y).coerceIn(-maxPanY, maxPanY)
-                        val excess = wanted - clamped
-                        if (!turned && abs(dragAmount.x) > abs(dragAmount.y) && excess != 0f) {
-                            overscroll += excess
-                            if (abs(overscroll) > turnThreshold) {
-                                turned = true
-                                // Moving further left reveals the right side of
-                                // the spread, i.e. the next page in LTR books.
-                                val forward = overscroll < 0f
-                                val delta = when {
-                                    forward && !rtl -> 1
-                                    forward && rtl -> -1
-                                    !forward && !rtl -> -1
-                                    else -> 1
-                                }
-                                onEdgeTurn(delta)
+                        if (turning) {
+                            if (abs(dragAmount.x) > abs(dragAmount.y)) {
+                                onEdgeDrag(dragAmount.x)
+                            }
+                        } else {
+                            val wanted = panX + dragAmount.x
+                            val clamped = wanted.coerceIn(-maxPanX, maxPanX)
+                            panX = clamped
+                            val excess = wanted - clamped
+                            if (abs(dragAmount.x) > abs(dragAmount.y) && excess != 0f) {
+                                turning = true
+                                onEdgeDragStart()
+                                onEdgeDrag(excess)
                             }
                         }
                     }
