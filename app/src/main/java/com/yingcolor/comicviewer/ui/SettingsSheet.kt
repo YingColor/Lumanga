@@ -1,5 +1,10 @@
 package com.yingcolor.comicviewer.ui
 
+import android.os.SystemClock
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import kotlinx.coroutines.delay
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -292,6 +297,50 @@ private fun RootSettings(
 ) {
     val scheme = MaterialTheme.colorScheme
 
+    // Three deliberate taps, then a warning that must stay on screen for three
+    // full seconds, keep a stray tap from wiping the whole reading history.
+    var clearTaps by remember { mutableIntStateOf(0) }
+    var lastClearTapAt by remember { mutableStateOf(0L) }
+    var showClearWarning by remember { mutableStateOf(false) }
+    var clearSecondsLeft by remember { mutableIntStateOf(3) }
+
+    LaunchedEffect(showClearWarning) {
+        if (!showClearWarning) return@LaunchedEffect
+        clearSecondsLeft = 3
+        while (clearSecondsLeft > 0) {
+            delay(1000L)
+            clearSecondsLeft--
+        }
+    }
+
+    if (showClearWarning) {
+        AlertDialog(
+            onDismissRequest = { showClearWarning = false; clearTaps = 0 },
+            title = { Text(S.clearWarningTitle) },
+            text = { Text(S.clearWarningBody) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearWarning = false
+                        clearTaps = 0
+                        onClearProgress()
+                    },
+                    enabled = clearSecondsLeft == 0
+                ) {
+                    Text(
+                        if (clearSecondsLeft > 0) S.clearConfirmCount(clearSecondsLeft)
+                        else S.clearConfirm
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearWarning = false; clearTaps = 0 }) {
+                    Text(S.cancel)
+                }
+            }
+        )
+    }
+
     MenuRow(
         title = S.settings,
         subtitle = S.settingsReadingSummary,
@@ -324,10 +373,25 @@ private fun RootSettings(
     Spacer(Modifier.height(22.dp))
 
     PillButton(
-        S.clearProgress,
-        onClearProgress,
+        text = if (clearTaps > 0) S.clearProgressTapHint(3 - clearTaps) else S.clearProgress,
+        onClick = {
+            val now = SystemClock.uptimeMillis()
+            // A pause of more than two seconds starts a fresh count.
+            clearTaps = if (now - lastClearTapAt > 2000L) 1 else clearTaps + 1
+            lastClearTapAt = now
+            if (clearTaps >= 3) {
+                clearTaps = 0
+                showClearWarning = true
+            }
+        },
         filled = false,
         modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(6.dp))
+    Text(
+        text = S.clearProgressHint,
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant
     )
     Spacer(Modifier.height(20.dp))
 

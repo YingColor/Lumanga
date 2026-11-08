@@ -9,11 +9,13 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.yingcolor.comicviewer"
+        // The public identity of the app. The Kotlin namespace stays put so the
+        // source tree and resource references do not need to move.
+        applicationId = "com.yingcolor.lumanga"
         minSdk = 28
         targetSdk = 36
-        versionCode = 20
-        versionName = "1.2.5"
+        versionCode = 1
+        versionName = "1.0.0"
         vectorDrawables { useSupportLibrary = true }
     }
 

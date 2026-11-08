@@ -20,6 +20,10 @@ import androidx.compose.runtime.setValue
  * the explicit `setXxx` methods below.
  */
 class UiSettings(private val prefs: Prefs) {
+    /** Favourites live here too, so a long-press repaints the cover at once. */
+    private var stateFavorites by mutableStateOf(prefs.favorites)
+    val favorites: Set<String> get() = stateFavorites
+
     private var stateThemeMode by mutableStateOf(prefs.themeMode)
     val themeMode: Int get() = stateThemeMode
 
@@ -67,6 +71,13 @@ class UiSettings(private val prefs: Prefs) {
 
     private var stateBrightness by mutableStateOf(prefs.brightness)
     val brightness: Int get() = stateBrightness
+
+    fun toggleFavorite(bookId: String) {
+        val next = stateFavorites.toMutableSet()
+        if (!next.add(bookId)) next.remove(bookId)
+        stateFavorites = next
+        prefs.favorites = next
+    }
 
     fun setThemeMode(value: Int) {
         stateThemeMode = value

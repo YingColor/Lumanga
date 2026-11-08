@@ -107,6 +107,21 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_PAGE_ANIM, 0)
         set(value) = sp.edit().putInt(KEY_PAGE_ANIM, value).apply()
 
+    /** Book ids marked as favourites from a cover's long-press menu. */
+    var favorites: Set<String>
+        get() {
+            val stored = sp.getString(KEY_FAVORITES, null) ?: return emptySet()
+            return runCatching {
+                val array = JSONArray(stored)
+                (0 until array.length())
+                    .mapNotNull { array.optString(it).takeIf(String::isNotBlank) }
+                    .toSet()
+            }.getOrDefault(emptySet())
+        }
+        set(value) = sp.edit()
+            .putString(KEY_FAVORITES, JSONArray(value.sorted()).toString())
+            .apply()
+
     /** 0 = left to right, 1 = right to left (manga) */
     var readingDirection: Int
         get() = sp.getInt(KEY_DIRECTION, 1)
@@ -257,6 +272,7 @@ class Prefs(context: Context) {
         const val KEY_ALIGNMENT = "alignment"
         const val KEY_ORIENTATION = "screen_orientation"
         const val KEY_ORIENTATION_MIGRATED = "screen_orientation_migrated"
+        const val KEY_FAVORITES = "favorites"
         const val KEY_SMOOTHING = "smoothing"
         const val KEY_BRIGHTNESS = "brightness"
 

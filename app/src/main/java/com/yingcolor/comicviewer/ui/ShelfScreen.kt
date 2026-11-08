@@ -8,6 +8,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +35,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -63,6 +66,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -95,6 +99,7 @@ const val SHELF_MODE_READING = 1
 
 private val ExpandableHeaderHeight = 116.dp
 private const val HEADER_SCROLL_RATIO = 0.6f
+private val FavoritePink = Color(0xFFFF4D87)
 
 class ShelfViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = ComicRepository(app)
@@ -115,6 +120,9 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Category chip selected on the shelf; empty means "all". */
     var filterGroup by mutableStateOf("")
+
+    /** Reading-state filter: 0 = all, 1 = finished, 2 = currently reading. */
+    var readFilter by mutableStateOf(0)
 
     /**
      * Show the remembered shelf first, then quietly verify the folder in the
@@ -270,10 +278,21 @@ fun ShelfScreen(
     // A saved category can disappear when its folder is removed; never leave the
     // shelf filtered by something that no longer exists.
     val groupFilter = vm.filterGroup.takeIf { it in groups } ?: ""
-    val displayed = remember(sorted, query, groupFilter) {
+    val readFilter = vm.readFilter
+    val favorites = settings.favorites
+    val displayed = remember(sorted, query, groupFilter, readFilter, refreshKey) {
         val base = if (groupFilter.isEmpty()) sorted else sorted.filter { it.group == groupFilter }
         val q = query.trim()
-        if (q.isEmpty()) base else base.filter { it.name.contains(q, ignoreCase = true) }
+        val searched = if (q.isEmpty()) base else base.filter { it.name.contains(q, ignoreCase = true) }
+        // The "currently reading" tab already arrives pre-filtered; narrowing it
+        // again with the shelf's progress filter would hide part of that list.
+        if (mode == SHELF_MODE_READING || readFilter == 0) searched
+        else searched.filter { book ->
+            val page = prefs.progress(book.id)
+            val total = prefs.pageCount(book.id)
+            val finished = total > 0 && page >= total - 1
+            if (readFilter == 1) finished else page > 0 && !finished
+        }
     }
     val scheme = MaterialTheme.colorScheme
     val columns = settings.gridColumns
@@ -456,6 +475,22 @@ fun ShelfScreen(
                 }
             }
 
+            // A separate row rather than another toolbar chip: the search row is
+            // already full on a 3-column phone, and the three states read better
+            // as a visible segmented control than hidden inside a dropdown.
+            if (mode == SHELF_MODE_HOME && books.isNotEmpty()) {
+                Spacer(Modifier.height(2.dp))
+                SegmentedChoice(
+                    options = S.readFilterOptions,
+                    selected = readFilter,
+                    onSelect = { vm.readFilter = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp)
+                )
+                Spacer(Modifier.height(6.dp))
+            }
+
             when {
                 error != null -> EmptyState(
                     title = S.folderError,
@@ -504,6 +539,8 @@ fun ShelfScreen(
                             prefs = prefs,
                             vm = vm,
                             refreshKey = refreshKey,
+                            favorite = book.id in favorites,
+                            onToggleFavorite = { settings.toggleFavorite(book.id) },
                             onClick = { onOpenBook(book) }
                         )
                     }
@@ -635,6 +672,7 @@ private fun MiniChip(text: String, onClick: () -> Unit, active: Boolean = false)
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BookCard(
     book: Book,
@@ -642,8 +680,11 @@ private fun BookCard(
     prefs: Prefs,
     vm: ShelfViewModel,
     refreshKey: Int,
+    favorite: Boolean,
+    onToggleFavorite: () -> Unit,
     onClick: () -> Unit
 ) {
+    var coverMenu by remember { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
     val compact = columns >= 4
     val pad = when {
@@ -710,7 +751,13 @@ private fun BookCard(
                     .fillMaxWidth()
                     .aspectRatio(0.72f)
                     .clip(RoundedCornerShape(if (compact) 12.dp else 18.dp))
-                    .background(scheme.primaryContainer),
+                    .background(scheme.primaryContainer)
+                    .combinedClickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onClick,
+                        onLongClick = { coverMenu = true }
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 val bitmap = cover
@@ -726,6 +773,48 @@ private fun BookCard(
                         text = book.name.take(1).ifEmpty { "漫" },
                         style = MaterialTheme.typography.displayLarge,
                         color = scheme.onPrimaryContainer
+                    )
+                }
+
+                // A favourite shows a pink heart on the cover's top-right corner.
+                if (favorite) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(if (compact) 5.dp else 8.dp)
+                            .size(if (compact) 22.dp else 28.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.9f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Favorite,
+                            contentDescription = S.favoriteLabel,
+                            tint = FavoritePink,
+                            modifier = Modifier.size(if (compact) 14.dp else 18.dp)
+                        )
+                    }
+                }
+
+                // Long-press menu anchored to the cover itself.
+                DropdownMenu(
+                    expanded = coverMenu,
+                    onDismissRequest = { coverMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.Favorite,
+                                contentDescription = null,
+                                tint = FavoritePink,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        },
+                        text = { Text(if (favorite) S.unfavorite else S.favorite) },
+                        onClick = {
+                            coverMenu = false
+                            onToggleFavorite()
+                        }
                     )
                 }
             }

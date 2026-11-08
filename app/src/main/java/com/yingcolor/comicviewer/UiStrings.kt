@@ -51,6 +51,17 @@ object S {
     const val sortTitle = "排序方式"
     const val clearProgress = "清除所有阅读进度"
     const val cleared = "阅读进度已清除"
+    const val clearProgressHint = "防误触：需连续点 3 次，弹出警告后再看完 3 秒才能确认"
+    fun clearProgressTapHint(remaining: Int) = "清除所有阅读进度（再点 $remaining 次）"
+    const val clearWarningTitle = "确定清除所有阅读进度？"
+    const val clearWarningBody = "这会清空全部漫画的阅读进度、在读记录和最近阅读时间，且无法撤销。收藏不会被清除。请确认后再继续。"
+    const val clearConfirm = "确认清除"
+    fun clearConfirmCount(seconds: Int) = "请看完警告（$seconds 秒）"
+
+    const val favorite = "收藏"
+    const val unfavorite = "取消收藏"
+    const val favoriteLabel = "已收藏"
+    val readFilterOptions = listOf("全部", "已读完", "正在读")
     const val errorTitle = "这一本打不开"
     const val errorCorrupt = "这个文件可能损坏，或者使用了加密 / 不支持的压缩方式。"
     const val errorUnsupported = "这个位置暂时不能直接跳着读取。把漫画移到手机内部存储的普通文件夹里再试。"
