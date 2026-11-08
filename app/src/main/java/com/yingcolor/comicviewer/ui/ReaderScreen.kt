@@ -527,33 +527,51 @@ fun ReaderScreen(
             // page halves the page count, and keeping the old pager index would
             // point past the end of the new range.
             else -> key(book.id, vm.pageCount, settings.readMode, settings.doublePage, settings.readingDirection) {
-                if (settings.readMode == 1) {
-                    // Continuous-scroll mode for long Webtoon strips.
-                    WebtoonScreen(
-                        book = book,
-                        vm = vm,
-                        prefs = prefs,
-                        settings = settings,
-                        onBack = onBack,
-                        onSettings = onSettings,
-                        settingsOpen = settingsOpen,
-                        onCloseSettings = onCloseSettings,
-                        onProgress = onProgress,
-                        onResetProgress = onResetProgress
-                    )
-                } else {
-                    ReaderContent(
-                        book = book,
-                        vm = vm,
-                        prefs = prefs,
-                        settings = settings,
-                        onBack = onBack,
-                        onSettings = onSettings,
-                        settingsOpen = settingsOpen,
-                        onCloseSettings = onCloseSettings,
-                        onProgress = onProgress,
-                        onResetProgress = onResetProgress
-                    )
+                when (settings.readMode) {
+                    1 -> {
+                        // Continuous vertical scroll for long Webtoon strips.
+                        WebtoonScreen(
+                            book = book,
+                            vm = vm,
+                            prefs = prefs,
+                            settings = settings,
+                            onBack = onBack,
+                            onSettings = onSettings,
+                            settingsOpen = settingsOpen,
+                            onCloseSettings = onCloseSettings,
+                            onProgress = onProgress,
+                            onResetProgress = onResetProgress
+                        )
+                    }
+                    2 -> {
+                        // Continuous horizontal scroll: pages joined into one strip.
+                        HorizontalWebtoonScreen(
+                            book = book,
+                            vm = vm,
+                            prefs = prefs,
+                            settings = settings,
+                            onBack = onBack,
+                            onSettings = onSettings,
+                            settingsOpen = settingsOpen,
+                            onCloseSettings = onCloseSettings,
+                            onProgress = onProgress,
+                            onResetProgress = onResetProgress
+                        )
+                    }
+                    else -> {
+                        ReaderContent(
+                            book = book,
+                            vm = vm,
+                            prefs = prefs,
+                            settings = settings,
+                            onBack = onBack,
+                            onSettings = onSettings,
+                            settingsOpen = settingsOpen,
+                            onCloseSettings = onCloseSettings,
+                            onProgress = onProgress,
+                            onResetProgress = onResetProgress
+                        )
+                    }
                 }
             }
         }
@@ -940,6 +958,7 @@ private fun ReaderContent(
                 targetH = targetH,
                 quality = quality,
                 settings = settings,
+                onEdgeTurn = { d -> turn(d, if (d > 0) 1 else -1) },
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(layerZ)
@@ -1055,9 +1074,15 @@ private fun ReaderContent(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // The app locks its orientation by default, so give the reader a
-                // one-tap way to open a landscape spread without leaving the book.
-                val lockedLandscape = settings.screenOrientation == 2
+                // Each book remembers its own orientation; books without an
+                // override inherit the global setting. ComicApp applies only the
+                // global value outside the reader, so leaving a book restores it
+                // (including "follow system" on tablets).
+                val effectiveOrientation = settings.bookOrientationRev.let {
+                    val perBook = settings.bookOrientation(book.id)
+                    if (perBook >= 0) perBook else settings.screenOrientation
+                }
+                val lockedLandscape = effectiveOrientation == 2
                 PillButton(S.back, onBack, filled = false)
                 Spacer(Modifier.width(12.dp))
                 Text(
@@ -1071,7 +1096,7 @@ private fun ReaderContent(
                 PillButton(
                     text = if (lockedLandscape) S.rotateToPortrait else S.rotateToLandscape,
                     onClick = {
-                        settings.setScreenOrientation(if (lockedLandscape) 1 else 2)
+                        settings.setBookOrientation(book.id, if (lockedLandscape) 1 else 2)
                     },
                     filled = false
                 )
@@ -1178,12 +1203,14 @@ private fun ReaderContent(
                             modifier = Modifier.weight(1f),
                             active = rtl
                         )
-                        SmallAction(
-                            text = S.modeScroll,
-                            onClick = { settings.setReadMode(1) },
-                            modifier = Modifier.weight(1f)
-                        )
                     }
+                    Spacer(Modifier.height(8.dp))
+                    SegmentedChoice(
+                        options = S.readModeOptions,
+                        selected = settings.readMode,
+                        onSelect = settings::setReadMode,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(8.dp))
                     Text(
                         text = S.zoomHint,
@@ -1327,6 +1354,7 @@ private fun PageRow(
     targetH: Int,
     quality: Int,
     settings: UiSettings,
+    onEdgeTurn: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // One logical page is ONE picture. In double-page mode the two images are
@@ -1346,6 +1374,8 @@ private fun PageRow(
         smoothing = settings.smoothing,
         zoomMode = settings.fitMode,
         zoomPercent = settings.zoomPercent,
+        rtl = settings.readingDirection == 1,
+        onEdgeTurn = onEdgeTurn,
         modifier = modifier
     )
 }
@@ -1414,6 +1444,8 @@ private fun PageSpread(
     smoothing: Int,
     zoomMode: Int,
     zoomPercent: Int,
+    rtl: Boolean,
+    onEdgeTurn: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var panX by remember(indices, zoomMode, zoomPercent) { mutableStateOf(0f) }
@@ -1480,11 +1512,42 @@ private fun PageSpread(
             val maxPanX = ((spreadW - viewportW) / 2f).coerceAtLeast(0f)
             val maxPanY = ((spreadH - viewportH) / 2f).coerceAtLeast(0f)
             val drag = when {
-                maxPanX > 1f -> Modifier.pointerInput(indices, zoomMode, zoomPercent, maxPanX, maxPanY) {
-                    detectDragGestures { change, dragAmount ->
+                maxPanX > 1f -> Modifier.pointerInput(
+                    indices, zoomMode, zoomPercent, rtl, maxPanX, maxPanY
+                ) {
+                    // Dragging pans the oversized spread. Once it reaches the
+                    // edge, keep dragging the SAME way a little further and it
+                    // turns the page instead of dead-ending at the boundary.
+                    var overscroll = 0f
+                    var turned = false
+                    val turnThreshold = 64.dp.toPx()
+                    detectDragGestures(
+                        onDragStart = { overscroll = 0f; turned = false },
+                        onDragEnd = { overscroll = 0f },
+                        onDragCancel = { overscroll = 0f }
+                    ) { change, dragAmount ->
                         change.consume()
-                        panX = (panX + dragAmount.x).coerceIn(-maxPanX, maxPanX)
+                        val wanted = panX + dragAmount.x
+                        val clamped = wanted.coerceIn(-maxPanX, maxPanX)
+                        panX = clamped
                         panY = (panY + dragAmount.y).coerceIn(-maxPanY, maxPanY)
+                        val excess = wanted - clamped
+                        if (!turned && abs(dragAmount.x) > abs(dragAmount.y) && excess != 0f) {
+                            overscroll += excess
+                            if (abs(overscroll) > turnThreshold) {
+                                turned = true
+                                // Moving further left reveals the right side of
+                                // the spread, i.e. the next page in LTR books.
+                                val forward = overscroll < 0f
+                                val delta = when {
+                                    forward && !rtl -> 1
+                                    forward && rtl -> -1
+                                    !forward && !rtl -> -1
+                                    else -> 1
+                                }
+                                onEdgeTurn(delta)
+                            }
+                        }
                     }
                 }
                 maxPanY > 1f -> Modifier.pointerInput(indices, zoomMode, zoomPercent, maxPanY) {

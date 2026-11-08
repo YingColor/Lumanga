@@ -657,6 +657,12 @@ private fun ReadingSettings(settings: UiSettings) {
         style = MaterialTheme.typography.bodySmall,
         color = scheme.onSurfaceVariant
     )
+    Spacer(Modifier.height(8.dp))
+    SmallAction(
+        text = S.resetOrientationMemory,
+        onClick = settings::clearBookOrientations,
+        modifier = Modifier.fillMaxWidth()
+    )
     Spacer(Modifier.height(18.dp))
 
     SectionLabel(S.smoothing)

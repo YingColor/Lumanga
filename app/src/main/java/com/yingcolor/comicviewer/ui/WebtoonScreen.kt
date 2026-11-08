@@ -357,6 +357,13 @@ private fun WebtoonContent(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Each book remembers its own orientation; unset books inherit
+                // the global setting. Leaving the reader restores the global one.
+                val effectiveOrientation = settings.bookOrientationRev.let {
+                    val perBook = settings.bookOrientation(book.id)
+                    if (perBook >= 0) perBook else settings.screenOrientation
+                }
+                val lockedLandscape = effectiveOrientation == 2
                 PillButton(S.back, onBack, filled = false)
                 Spacer(Modifier.width(12.dp))
                 Text(
@@ -365,6 +372,14 @@ private fun WebtoonContent(
                     color = Color.White,
                     maxLines = 1,
                     modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                PillButton(
+                    text = if (lockedLandscape) S.rotateToPortrait else S.rotateToLandscape,
+                    onClick = {
+                        settings.setBookOrientation(book.id, if (lockedLandscape) 1 else 2)
+                    },
+                    filled = false
                 )
             }
         }
@@ -430,9 +445,10 @@ private fun WebtoonContent(
                         SmallAction(S.lastPage, { goToPage(pageCount - 1) }, Modifier.weight(1f))
                     }
                     Spacer(Modifier.height(8.dp))
-                    SmallAction(
-                        text = S.modePage,
-                        onClick = { settings.setReadMode(0) },
+                    SegmentedChoice(
+                        options = S.readModeOptions,
+                        selected = settings.readMode,
+                        onSelect = settings::setReadMode,
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))

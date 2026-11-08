@@ -66,6 +66,11 @@ class UiSettings(private val prefs: Prefs) {
     private var stateScreenOrientation by mutableStateOf(prefs.screenOrientation)
     val screenOrientation: Int get() = stateScreenOrientation
 
+    // Bumped whenever a per-book orientation override changes. Reading it makes
+    // the reader recompose so its rotate button shows the new effective value.
+    private var stateBookOrientationRev by mutableIntStateOf(0)
+    val bookOrientationRev: Int get() = stateBookOrientationRev
+
     private var stateSmoothing by mutableStateOf(prefs.smoothing)
     val smoothing: Int get() = stateSmoothing
 
@@ -129,7 +134,7 @@ class UiSettings(private val prefs: Prefs) {
     }
 
     fun setReadMode(value: Int) {
-        val safe = value.coerceIn(0, 1)
+        val safe = value.coerceIn(0, 2)
         stateReadMode = safe
         prefs.readMode = safe
     }
@@ -156,6 +161,19 @@ class UiSettings(private val prefs: Prefs) {
         val safe = value.coerceIn(0, 2)
         stateScreenOrientation = safe
         prefs.screenOrientation = safe
+    }
+
+    /** -1 = inherit the global setting. */
+    fun bookOrientation(bookId: String): Int = prefs.bookOrientation(bookId)
+
+    fun setBookOrientation(bookId: String, value: Int) {
+        prefs.setBookOrientation(bookId, value)
+        stateBookOrientationRev++
+    }
+
+    fun clearBookOrientations() {
+        prefs.clearBookOrientations()
+        stateBookOrientationRev++
     }
 
     fun setSmoothing(value: Int) {

@@ -121,18 +121,6 @@ private fun ComicApp() {
     val prefs = remember { Prefs(context) }
     val settings = remember { UiSettings(prefs) }
 
-    // Rotation and an app-only brightness override are global settings: they
-    // apply to the shelf as well as the reader, and never change the system's
-    // own brightness setting. Portrait is the default: requesting an explicit
-    // orientation overrides the system's auto-rotate, so lying on one side no
-    // longer turns the whole app sideways.
-    LaunchedEffect(settings.screenOrientation) {
-        activity?.requestedOrientation = when (settings.screenOrientation) {
-            1 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            2 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
-    }
     LaunchedEffect(settings.brightness) {
         val window = activity?.window ?: return@LaunchedEffect
         val params = window.attributes
@@ -152,6 +140,23 @@ private fun ComicApp() {
     var settingsRoute by remember { mutableIntStateOf(SettingsRoute.CLOSED) }
     var folders by remember { mutableStateOf(prefs.folderUris) }
     var toast by remember { mutableStateOf<String?>(null) }
+
+    // Orientation is scoped to the reader. A book can remember its own override;
+    // books without one inherit the global setting. Leaving the reader restores
+    // the GLOBAL setting (which may be "follow system"), so a tablet is never
+    // forced back into portrait just because one book was read in landscape.
+    val perBookOrientation = if (screen == "reader") {
+        currentBook?.let { settings.bookOrientation(it.id) } ?: -1
+    } else -1
+    val activeOrientation =
+        if (perBookOrientation >= 0) perBookOrientation else settings.screenOrientation
+    LaunchedEffect(activeOrientation, settings.bookOrientationRev) {
+        activity?.requestedOrientation = when (activeOrientation) {
+            1 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            2 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
 
     // Frozen, blurred copy of the page shown inside the settings card. It is
     // captured before the card appears, so the glass never reflects itself.

@@ -150,10 +150,10 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_TAP_TURN, true)
         set(value) = sp.edit().putBoolean(KEY_TAP_TURN, value).apply()
 
-    /** 0 = page-by-page, 1 = continuous vertical scroll (Webtoon / long strips). */
+    /** 0 = page-by-page, 1 = continuous vertical scroll, 2 = continuous horizontal scroll. */
     var readMode: Int
-        get() = sp.getInt(KEY_READ_MODE, 0).coerceIn(0, 1)
-        set(value) = sp.edit().putInt(KEY_READ_MODE, value.coerceIn(0, 1)).apply()
+        get() = sp.getInt(KEY_READ_MODE, 0).coerceIn(0, 2)
+        set(value) = sp.edit().putInt(KEY_READ_MODE, value.coerceIn(0, 2)).apply()
 
     /** See [ZoomMode]; applies to both page mode and continuous scroll mode. */
     var fitMode: Int
@@ -179,6 +179,25 @@ class Prefs(context: Context) {
             .putInt(KEY_ORIENTATION, value.coerceIn(0, 2))
             .putBoolean(KEY_ORIENTATION_MIGRATED, true)
             .apply()
+
+    /**
+     * Per-book orientation override. -1 means "no override, inherit the global
+     * [screenOrientation]". Kept separate from reading progress so clearing a
+     * book's progress never loses the way the user likes to hold that book.
+     */
+    fun bookOrientation(bookId: String): Int =
+        sp.getInt("bo_${bookId.hashCode()}", -1).coerceIn(-1, 2)
+
+    fun setBookOrientation(bookId: String, value: Int) {
+        sp.edit().putInt("bo_${bookId.hashCode()}", value.coerceIn(-1, 2)).apply()
+    }
+
+    /** Drop every per-book override so all books inherit the global setting again. */
+    fun clearBookOrientations() {
+        val editor = sp.edit()
+        sp.all.keys.filter { it.startsWith("bo_") }.forEach { editor.remove(it) }
+        editor.apply()
+    }
 
     /** 0 = smooth (bilinear), 1 = sharp (nearest neighbour). */
     var smoothing: Int
