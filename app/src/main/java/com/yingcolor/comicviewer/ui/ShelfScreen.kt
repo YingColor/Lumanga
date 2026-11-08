@@ -550,7 +550,7 @@ fun ShelfScreen(
                         start = if (columns >= 4) 12.dp else 18.dp,
                         end = if (columns >= 4) 12.dp else 18.dp,
                         top = 8.dp,
-                        bottom = 100.dp
+                        bottom = 80.dp
                     ),
                     horizontalArrangement = Arrangement.spacedBy(
                         if (columns >= 4) 8.dp else 14.dp
@@ -588,7 +588,7 @@ fun ShelfScreen(
                 contentColor = scheme.onTertiaryContainer,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 20.dp, bottom = 78.dp)
+                    .padding(end = 20.dp, bottom = 58.dp)
             ) {
                 Icon(
                     imageVector = Icons.Filled.KeyboardArrowUp,

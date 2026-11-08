@@ -396,14 +396,14 @@ private fun MainNavBar(
         shadowElevation = 3.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        BoxWithConstraints(
+            BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .height(80.dp)
+                .height(60.dp)
         ) {
             val itemWidth = maxWidth / 2
-            val indicatorWidth = 64.dp
+            val indicatorWidth = 56.dp
             val travelPx = with(LocalDensity.current) { itemWidth.toPx() }
             val startPx = with(LocalDensity.current) {
                 ((itemWidth - indicatorWidth) / 2).toPx()
@@ -412,7 +412,7 @@ private fun MainNavBar(
             Box(
                 modifier = Modifier
                     .width(indicatorWidth)
-                    .height(32.dp)
+                    .height(28.dp)
                     .align(Alignment.TopStart)
                     .offset(y = 16.dp)
                     .graphicsLayer {
@@ -480,12 +480,12 @@ private fun NavTab(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(38.dp), contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = if (selection > 0.5f) activeIcon else icon,
                 contentDescription = null,
                 tint = tint,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(22.dp)
             )
             if (badge > 0) {
                 Box(
