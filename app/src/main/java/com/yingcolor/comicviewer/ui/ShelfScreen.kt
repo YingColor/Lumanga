@@ -79,6 +79,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yingcolor.comicviewer.S
 import com.yingcolor.comicviewer.data.Book
+import com.yingcolor.comicviewer.data.BookKind
 import com.yingcolor.comicviewer.data.ComicRepository
 import com.yingcolor.comicviewer.data.Prefs
 import com.yingcolor.comicviewer.data.ShelfIndex
@@ -195,7 +196,8 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
             val old = known[book.id] ?: return false
             if (old.name != book.name ||
                 old.sizeBytes != book.sizeBytes ||
-                old.lastModified != book.lastModified
+                old.lastModified != book.lastModified ||
+                old.kind != book.kind
             ) return false
         }
         return true
@@ -675,7 +677,7 @@ private fun BookCard(
             )
             if (!compact) {
                 Text(
-                    text = S.sizeText(book.sizeBytes),
+                    text = if (book.kind == BookKind.FOLDER) S.folderType else S.sizeText(book.sizeBytes),
                     style = MaterialTheme.typography.labelSmall,
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)

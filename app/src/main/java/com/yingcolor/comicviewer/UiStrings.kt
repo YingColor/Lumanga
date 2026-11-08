@@ -14,8 +14,8 @@ object S {
     const val chooseFolder = "选择漫画文件夹"
     const val changeFolder = "更换文件夹"
     const val emptyTitle = "还没有漫画"
-    const val emptyBody = "选中存放 zip / cbz 漫画包的文件夹，点一下就能看。选一次就够了，以后打开自动显示。"
-    const val emptyTip = "支持手机内部存储和 SD 卡，几个 GB 的大包也能直接读"
+    const val emptyBody = "选中存放漫画的文件夹，点一下就能看。压缩包（zip / cbz）和已经解压出来的图片文件夹都能读，混在一起也没关系。"
+    const val emptyTip = "支持手机内部存储和 SD 卡，几个 GB 的大包和图片文件夹都能直接读"
     const val noResult = "没有找到匹配的漫画"
     const val loading = "正在整理书架…"
     const val refresh = "刷新"
@@ -51,15 +51,15 @@ object S {
     const val clearProgress = "清除所有阅读进度"
     const val cleared = "阅读进度已清除"
     const val errorTitle = "这一本打不开"
-    const val errorCorrupt = "压缩包可能损坏，或者使用了加密 / 不支持的压缩方式。"
-    const val errorUnsupported = "这个位置暂时不能直接跳着读取。把漫画包移到手机内部存储的普通文件夹里再试。"
+    const val errorCorrupt = "这个文件可能损坏，或者使用了加密 / 不支持的压缩方式。"
+    const val errorUnsupported = "这个位置暂时不能直接跳着读取。把漫画移到手机内部存储的普通文件夹里再试。"
     const val errorBig = "单张图片太大，手机内存不够。"
     const val retry = "重试"
     const val booksUnit = "本"
     const val resume = "继续阅读"
     const val startRead = "开始阅读"
     const val aboutTitle = "关于这个应用"
-    const val aboutBody = "完全离线，不申请任何权限，不上传任何数据。图片只在内存里解码，磁盘上始终只有原来的压缩包。"
+    const val aboutBody = "完全离线，不申请任何权限，不上传任何数据。图片只在内存里解码，不会往磁盘上多写一份。"
     const val close = "关闭"
     const val zoomHint = "轻点左右边缘可连续翻页 · 点中间显示/收起工具条 · 双指放大 · 放大后双击复原"
     const val scrollHint = "上下滑动连续阅读 · 点中间显示/收起工具条 · 点左右侧滚动一屏"
@@ -83,7 +83,7 @@ object S {
     val smoothOptions = listOf("平滑", "锐利")
     val readModeOptions = listOf(modePage, modeScroll)
     const val folderError = "文件夹授权失效了，请重新选一次"
-    const val noImages = "这个包里没有找到图片"
+    const val noImages = "这里没有找到图片"
     const val done = "完成"
     const val cancel = "取消"
     const val coverLoading = "封面加载中"
@@ -91,6 +91,7 @@ object S {
     const val gb = "GB"
     const val mb = "MB"
     const val unknownSize = "未知大小"
+    const val folderType = "文件夹"
 
     val sortOptions = listOf(
         "名称 A → Z",

@@ -10,6 +10,9 @@ extracting any image to disk**.
 - Android 9 (API 28) and newer
 - Multi-gigabyte archives (ZIP64) are read in place through a seekable file
   descriptor — no copy, no extra storage
+- Reads plain **folders of images** as well as archives; both can live in the
+  same library folder, and a folder book is read in place without copying or
+  rearranging anything
 - UTF-8 / GBK / Shift_JIS entry names, natural page ordering
 - Right-to-left manga mode, single/double page, **rapid consecutive** edge taps or swipes to turn pages, pinch zoom, reading progress
 - Reader control bar: scrollable page-thumbnail preview (tap to jump), mirrored page seek bar with page numbers in manga mode, first/previous/next/last shortcuts, single-vs-double page and direction switches, collapse button; thumbnails use a dedicated small-bitmap cache

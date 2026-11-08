@@ -34,7 +34,8 @@ class ShelfIndex(context: Context) {
                     uri = Uri.parse(uriText),
                     name = item.optString(NAME),
                     sizeBytes = item.optLong(SIZE),
-                    lastModified = item.optLong(MODIFIED)
+                    lastModified = item.optLong(MODIFIED),
+                    kind = if (item.optString(KIND) == KIND_FOLDER) BookKind.FOLDER else BookKind.ARCHIVE
                 )
             )
         }
@@ -52,6 +53,7 @@ class ShelfIndex(context: Context) {
                         .put(NAME, book.name)
                         .put(SIZE, book.sizeBytes)
                         .put(MODIFIED, book.lastModified)
+                        .put(KIND, if (book.kind == BookKind.FOLDER) KIND_FOLDER else KIND_ZIP)
                 )
             }
             val text = JSONObject()
@@ -78,5 +80,8 @@ class ShelfIndex(context: Context) {
         const val NAME = "name"
         const val SIZE = "size"
         const val MODIFIED = "modified"
+        const val KIND = "kind"
+        const val KIND_FOLDER = "folder"
+        const val KIND_ZIP = "zip"
     }
 }

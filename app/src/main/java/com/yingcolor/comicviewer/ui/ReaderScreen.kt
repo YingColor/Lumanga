@@ -90,9 +90,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yingcolor.comicviewer.S
 import com.yingcolor.comicviewer.data.ArchiveException
-import com.yingcolor.comicviewer.data.ArchiveReader
 import com.yingcolor.comicviewer.data.Book
 import com.yingcolor.comicviewer.data.PageDecoder
+import com.yingcolor.comicviewer.data.PageSource
 import com.yingcolor.comicviewer.data.Prefs
 import com.yingcolor.comicviewer.data.UiSettings
 import com.yingcolor.comicviewer.data.ZoomMode
@@ -121,7 +121,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
-    private var reader: ArchiveReader? = null
+    private var reader: PageSource? = null
 
     @Volatile
     private var generation = 0
@@ -304,7 +304,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             val result = withContext(Dispatchers.IO) {
                 runCatching { reader?.close() }
                 reader = null
-                runCatching { ArchiveReader.open(getApplication(), book.uri) }
+                runCatching { PageSource.open(getApplication(), book) }
             }
             result.fold(
                 onSuccess = { opened ->

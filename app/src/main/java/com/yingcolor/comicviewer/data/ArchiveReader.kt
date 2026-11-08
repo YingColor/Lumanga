@@ -28,12 +28,12 @@ class ArchiveReader private constructor(
     private val zip: ZipFile,
     private val handles: List<Closeable>,
     val pages: List<ZipArchiveEntry>
-) : Closeable {
+) : PageSource {
 
-    val pageCount: Int get() = pages.size
+    override val pageCount: Int get() = pages.size
     private val ioLock = Any()
 
-    fun pageName(index: Int): String = pages[index].name.substringAfterLast('/')
+    override fun pageName(index: Int): String = pages[index].name.substringAfterLast('/')
 
     /**
      * Inflates only the first few KB of an entry. Image headers (PNG IHDR, JPEG
@@ -41,7 +41,7 @@ class ArchiveReader private constructor(
      * can learn the size of every page of a 300-strip comic without inflating
      * hundreds of multi-megabyte images. Nothing is written to disk.
      */
-    fun readHeader(index: Int, limit: Int = HEADER_BYTES): ByteArray? = synchronized(ioLock) {
+    override fun readHeader(index: Int, limit: Int): ByteArray? = synchronized(ioLock) {
         val stream = runCatching { zip.getInputStream(pages[index]) }.getOrNull()
             ?: return@synchronized null
         runCatching {
@@ -63,7 +63,7 @@ class ArchiveReader private constructor(
     }
 
     @Throws(IOException::class)
-    fun readPage(index: Int): ByteArray {
+    override fun readPage(index: Int): ByteArray {
         val entry = pages[index]
         // ZipFile.getInputStream shares the underlying channel, so reads must be serialised.
         synchronized(ioLock) {
@@ -122,7 +122,6 @@ class ArchiveReader private constructor(
     }
 
     companion object {
-        private const val HEADER_BYTES = 64 * 1024
         private const val MAX_PAGE_BYTES = 96L * 1024 * 1024
         private const val INITIAL_BUFFER = 256 * 1024
         private const val MAX_PREALLOC = 8 * 1024 * 1024

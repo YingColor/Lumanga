@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.LruCache
 import androidx.documentfile.provider.DocumentFile
+import com.yingcolor.comicviewer.util.isImageName
 import com.yingcolor.comicviewer.util.naturalCompare
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -54,8 +55,20 @@ class ComicRepository(private val context: Context) {
         // Large collections are a first-class case: no aggressive 2000-book cap.
         if (depth > 12 || out.size >= MAX_BOOKS) return
         val children = runCatching { dir.listFiles() }.getOrDefault(emptyArray())
+
+        // A directory that directly holds images is a book of its own (an
+        // already-extracted comic). The folder the user picked is never treated
+        // this way: a library root with a few loose images must not collapse
+        // into a single book.
+        if (depth > 0) {
+            folderBook(dir, children)?.let { out.add(it); return }
+        }
+
         for (child in children) {
             if (child.isDirectory) {
+                // Hidden system folders (.thumbnails and friends) are full of
+                // JPEGs and would otherwise show up as one-page "books".
+                if ((child.name ?: "").startsWith(".")) continue
                 walk(child, depth + 1, out)
             } else {
                 val name = child.name ?: continue
@@ -71,6 +84,37 @@ class ComicRepository(private val context: Context) {
                 )
             }
         }
+    }
+
+    /**
+     * Recognises "a folder of images" as a book. A lone image sitting next to
+     * sub-folders is treated as a cover for a container directory
+     * (`cover.jpg` + `第1话/`), so the chapters inside are still found.
+     */
+    private fun folderBook(dir: DocumentFile, children: Array<DocumentFile>): Book? {
+        var images = 0
+        var subdirs = 0
+        for (child in children) {
+            if (child.isDirectory) {
+                subdirs++
+                continue
+            }
+            val childName = child.name ?: continue
+            if (isImageName(childName)) images++
+        }
+        if (images == 0) return null
+        if (images < 2 && subdirs > 0) return null
+        val name = dir.name ?: return null
+        return Book(
+            id = dir.uri.toString(),
+            uri = dir.uri,
+            name = name,
+            // The real size would mean walking every page; zero is shown as
+            // "文件夹" in the grid instead of a made-up number.
+            sizeBytes = 0L,
+            lastModified = runCatching { dir.lastModified() }.getOrDefault(0L),
+            kind = BookKind.FOLDER
+        )
     }
 
     /**
@@ -116,7 +160,7 @@ class ComicRepository(private val context: Context) {
     }
 
     private fun createThumbnail(book: Book, file: File): Bitmap? {
-        val reader = runCatching { ArchiveReader.open(appContext, book.uri) }.getOrNull()
+        val reader = runCatching { PageSource.open(appContext, book) }.getOrNull()
             ?: return null
         val decoded = try {
             val bytes = reader.readPage(0)
