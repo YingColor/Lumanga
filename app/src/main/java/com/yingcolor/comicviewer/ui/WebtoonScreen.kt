@@ -9,6 +9,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -54,6 +56,8 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -182,6 +186,7 @@ fun WebtoonScreen(
                     tiles = plan.first,
                     pageStarts = plan.second,
                     screenH = screenH,
+                    screenW = screenW,
                     onBack = onBack,
                     onSettings = onSettings,
                     onProgress = onProgress,
@@ -201,6 +206,7 @@ private fun WebtoonContent(
     tiles: List<StripTile>,
     pageStarts: IntArray,
     screenH: Int,
+    screenW: Int,
     onBack: () -> Unit,
     onSettings: () -> Unit,
     onProgress: (Int, Int) -> Unit,
@@ -215,6 +221,14 @@ private fun WebtoonContent(
     val scope = rememberCoroutineScope()
     var showUi by remember { mutableStateOf(true) }
     var sliderPage by remember { mutableFloatStateOf(savedPage.toFloat()) }
+
+    // When a strip is wider than the screen (fixed zoom above 100 %, or a page
+    // forced to full height) the sides would be unreachable in a vertical list.
+    // A horizontal drag pans the whole strip instead, which never fights the
+    // list's vertical scroll.
+    val widestStrip = remember(tiles) { tiles.maxOfOrNull { it.targetWidthPx } ?: 0 }
+    val extraX = ((widestStrip - screenW) / 2f).coerceAtLeast(0f)
+    var panX by remember(widestStrip) { mutableStateOf(0f) }
 
     // Reading state follows the strip currently at the top of the screen, so
     // scrolling back to the very first page marks the book unread again.
@@ -239,12 +253,25 @@ private fun WebtoonContent(
         scope.launch { listState.scrollToItem(pageStarts.getOrElse(page) { 0 }) }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clipToBounds()
+            .pointerInput(extraX) {
+                if (extraX > 0f) {
+                    detectHorizontalDragGestures { change, dragAmount ->
+                        change.consume()
+                        panX = (panX + dragAmount).coerceIn(-extraX, extraX)
+                    }
+                }
+            }
+    ) {
         LazyColumn(
             state = listState,
             contentPadding = PaddingValues(bottom = 130.dp),
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer { translationX = panX }
                 // Tap recognition that only OBSERVES the pointer stream and never
                 // consumes a down event. A plain detectTapGestures() consumes it,
                 // which can starve the list's own drag detector — a bug this app
@@ -419,6 +446,7 @@ private fun StripTileImage(
         modifier = Modifier
             .fillMaxWidth()
             .height(shownH)
+            .clipToBounds()
             .background(Color(0xFF101014)),
         contentAlignment = align
     ) {
@@ -441,7 +469,9 @@ private fun StripTileImage(
                 filterQuality = if (settings.smoothing == 0) {
                     FilterQuality.High
                 } else FilterQuality.None,
-                modifier = Modifier.width(shownW).height(shownH)
+                // requiredSize keeps the strip at its true aspect ratio: with
+                // size() a strip wider than the screen was squeezed to fit.
+                modifier = Modifier.requiredSize(shownW, shownH)
             )
         } else {
             Text(

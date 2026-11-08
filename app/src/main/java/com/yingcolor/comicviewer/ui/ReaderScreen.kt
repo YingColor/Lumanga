@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -1216,7 +1217,13 @@ private fun PagePane(
                 contentScale = ContentScale.FillBounds,
                 filterQuality = if (smoothing == 0) FilterQuality.High else FilterQuality.None,
                 modifier = Modifier
-                    .size(with(density) { drawW.toDp() }, with(density) { drawH.toDp() })
+                    // requiredSize, not size: size() clamps to the parent's
+                    // constraints, which squashed a page taller/wider than the
+                    // viewport instead of letting it overflow and be panned.
+                    .requiredSize(
+                        with(density) { drawW.toDp() },
+                        with(density) { drawH.toDp() }
+                    )
                     .graphicsLayer {
                         translationX = panX
                         translationY = panY

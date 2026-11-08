@@ -67,7 +67,7 @@ object S {
     const val fitMode = "缩放方式"
     const val alignMode = "原点设置（卷轴模式）"
     const val zoomPercent = "固定缩放比例"
-    const val zoomTip = "符合宽度看单页更满；超长条漫用卷轴模式配合符合宽度或固定缩放最省事。"
+    const val zoomTip = "除「伸展」会把画面拉满变形外，其余六种都按原比例缩放，不会把画面拉长或压扁。超长条漫建议卷轴模式配符合宽度或固定缩放。"
     const val screenOrientation = "屏幕方向"
     const val smoothing = "图像平滑方式"
     const val brightness = "背光控制"
