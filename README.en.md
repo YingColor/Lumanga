@@ -1,4 +1,7 @@
-# ComicViewer
+<div align=center>
+<h1>ComicViewer</h1>
+<img src="assets/images/logo/logo.png" width=200>
+</div>
 
 An offline, zero-permission comic reader for Android. It reads `.zip` / `.cbz`
 archives straight from a folder on the device and displays pages **without

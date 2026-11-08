@@ -1,4 +1,7 @@
-# 漫画阅览器 · ComicViewer
+<div align=center>
+<h1>漫画阅览器 · ComicViewer</h1>
+<img src="assets/images/logo/logo.png" width=200>
+</div>
 
 一款**完全离线、零权限**的安卓本地漫画阅读器：直接读取手机文件夹里的 `.zip` / `.cbz` 漫画包，点开即看，**不把图片解压到磁盘**。
 
