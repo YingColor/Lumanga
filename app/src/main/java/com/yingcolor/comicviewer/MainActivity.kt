@@ -58,8 +58,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.BlurredEdgeTreatment
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
@@ -74,6 +72,8 @@ import com.yingcolor.comicviewer.data.Book
 import com.yingcolor.comicviewer.data.Prefs
 import com.yingcolor.comicviewer.data.UiSettings
 import com.yingcolor.comicviewer.theme.ComicTheme
+import com.yingcolor.comicviewer.ui.Backdrop
+import com.yingcolor.comicviewer.ui.BackdropShot
 import com.yingcolor.comicviewer.ui.MotionSpec
 import com.yingcolor.comicviewer.ui.ReaderScreen
 import com.yingcolor.comicviewer.ui.ReaderViewModel
@@ -88,6 +88,7 @@ import com.yingcolor.comicviewer.ui.selectionOf
 import com.yingcolor.comicviewer.util.folderLabel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -150,6 +151,10 @@ private fun ComicApp() {
     var folders by remember { mutableStateOf(prefs.folderUris) }
     var toast by remember { mutableStateOf<String?>(null) }
 
+    // Frozen, blurred copy of the page shown inside the settings card. It is
+    // captured before the card appears, so the glass never reflects itself.
+    var backdrop by remember { mutableStateOf<BackdropShot?>(null) }
+
     val scope = rememberCoroutineScope()
     val homeGridState = rememberLazyGridState()
     val readingGridState = rememberLazyGridState()
@@ -175,6 +180,29 @@ private fun ComicApp() {
         }
     }
 
+    // Opening the card first grabs a blurred snapshot of the page: it has to be
+    // taken while the card is still invisible, otherwise the glass would show a
+    // reflection of itself. The wait is about one frame — the card would have
+    // spent it on its own fade-in anyway.
+    val openSettings: (Int) -> Unit = { target ->
+        val window = activity?.window
+        if (window == null) {
+            settingsRoute = target
+        } else {
+            scope.launch {
+                backdrop = withTimeoutOrNull(240) { Backdrop.capture(window) }
+                settingsRoute = target
+            }
+        }
+    }
+
+    // Changing the palette repaints everything under the card, which would leave
+    // the frozen snapshot in the previous theme's colours. The card falls back to
+    // its denser look until it is opened again.
+    LaunchedEffect(settings.themeMode) {
+        if (settingsRoute != SettingsRoute.CLOSED) backdrop = null
+    }
+
     val allBooks = shelfVm.books
     val readingBooks = currentlyReading(allBooks, prefs, progressVersion)
 
@@ -198,22 +226,11 @@ private fun ComicApp() {
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            // A horizontal push with parallax, rather than a cross-fade: the new
-            // screen arrives from the right while the old one drifts left slowly.
-            //
-            // While the settings window is open its backdrop is blurred, so the
-            // text sits on a soft frosted surface instead of on top of artwork.
-            // The blur is live (not a snapshot), so changing the zoom mode still
-            // updates the page visible around the window. Below Android 12 the
-            // modifier is a no-op and the window simply stays denser.
+            // The page stays sharp around the settings card; only the card itself
+            // is frosted, using a blurred snapshot taken just before it opens.
             AnimatedContent(
                 targetState = screen,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .blur(
-                        radius = if (settingsRoute == SettingsRoute.CLOSED) 0.dp else 24.dp,
-                        edgeTreatment = BlurredEdgeTreatment.Unbounded
-                    ),
+                modifier = Modifier.fillMaxSize(),
                 transitionSpec = {
                     if (targetState == "reader") {
                         (slideInHorizontally(slideSpec) { it } + fadeIn(fadeSpec))
@@ -240,7 +257,7 @@ private fun ComicApp() {
                             screen = "shelf"
                             progressVersion++
                         },
-                        onSettings = { settingsRoute = SettingsRoute.READING },
+                        onSettings = { openSettings(SettingsRoute.READING) },
                         settingsOpen = settingsRoute != SettingsRoute.CLOSED,
                         onCloseSettings = { settingsRoute = SettingsRoute.CLOSED },
                         onProgress = { page, total -> prefs.setProgress(book.id, page, total) },
@@ -285,14 +302,14 @@ private fun ComicApp() {
                                     refreshKey = progressVersion,
                                     gridState = if (readingMode) readingGridState else homeGridState,
                                     onPickFolder = { pickFolder.launch(null) },
-                                    onManageFolders = { settingsRoute = SettingsRoute.LIBRARIES },
+                                    onManageFolders = { openSettings(SettingsRoute.LIBRARIES) },
                                     onRefresh = { shelfVm.refresh() },
                                     onOpenBook = { selected ->
                                         currentBook = selected
                                         screen = "reader"
                                         readerVm.open(selected)
                                     },
-                                    onSettings = { settingsRoute = SettingsRoute.ROOT },
+                                    onSettings = { openSettings(SettingsRoute.ROOT) },
                                     onGoHome = { scope.launch { mainPagerState.animateScrollToPage(0) } }
                                 )
                             }
@@ -312,6 +329,7 @@ private fun ComicApp() {
                 route = settingsRoute,
                 settings = settings,
                 folders = folders.map { it to folderLabel(it) },
+                backdrop = backdrop,
                 onClose = { settingsRoute = SettingsRoute.CLOSED },
                 onOpenReading = { settingsRoute = SettingsRoute.READING },
                 onOpenLibraries = { settingsRoute = SettingsRoute.LIBRARIES },

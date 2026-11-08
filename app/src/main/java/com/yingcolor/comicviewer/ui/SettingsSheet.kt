@@ -1,6 +1,5 @@
 package com.yingcolor.comicviewer.ui
 
-import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -8,9 +7,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -42,9 +44,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.round
 import com.yingcolor.comicviewer.S
 import com.yingcolor.comicviewer.data.UiSettings
 import com.yingcolor.comicviewer.data.ZoomMode
@@ -64,35 +75,21 @@ object SettingsRoute {
 }
 
 /**
- * Frosted glass needs a real blur behind the window, and Compose only draws that
- * from Android 12 on. Below it the window has to stay denser: with no blur the
- * artwork underneath competes with the small text of the tips and labels.
- */
-private val frostSupported: Boolean
-    get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-
-/** Window body tint, top to bottom. Thin over a blurred backdrop, solid without one. */
-private fun glassTop(): Float = if (frostSupported) 0.60f else 0.92f
-
-private fun glassBottom(): Float = if (frostSupported) 0.48f else 0.84f
-
-/** Cards and rows sit on top of the window body. */
-private fun rowFill(): Float = if (frostSupported) 0.55f else 0.72f
-
-/** Dimming behind the window: a blurred backdrop needs far less of it. */
-private fun scrimAlpha(): Float = if (frostSupported) 0.16f else 0.38f
-
-/**
  * A floating settings window rather than a full-screen sheet: the page stays
- * visible around it, so a change can be judged without closing the window.
- * Reading options live on their own page, reachable from the menu and opened
- * directly by the gear button in the reader.
+ * visible — and sharp — around it, so a change can be judged without closing the
+ * window. Reading options live on their own page, reachable from the menu and
+ * opened directly by the gear button in the reader.
+ *
+ * Only the card is frosted. [backdrop] is a blurred snapshot of the page taken
+ * just before the card opened (see [Backdrop]); without it the card has to be
+ * denser, otherwise small text competes with the artwork underneath.
  */
 @Composable
-fun SettingsDialog(
+internal fun SettingsDialog(
     route: Int,
     settings: UiSettings,
     folders: List<Pair<String, String>>,
+    backdrop: BackdropShot?,
     onClose: () -> Unit,
     onOpenReading: () -> Unit,
     onOpenLibraries: () -> Unit,
@@ -111,6 +108,24 @@ fun SettingsDialog(
         if (route != SettingsRoute.CLOSED) shown = route
     }
 
+    val frosted = backdrop != null
+    val shape = RoundedCornerShape(28.dp)
+    val glass = scheme.surfaceContainerLow
+    // A bright page under a dark card is the worst case for the small print, so
+    // the tint stays dense enough to keep it readable while the blur still reads
+    // as glass.
+    // Without a snapshot the card falls back to a nearly solid panel: a denser
+    // translucent one would show the sharp page through the labels, which is
+    // exactly the readability problem the glass is meant to solve.
+    val topAlpha = if (frosted) 0.68f else 0.97f
+    val bottomAlpha = if (frosted) 0.56f else 0.93f
+    val rowAlpha = if (frosted) 0.58f else 0.72f
+    val scrimAlpha = if (frosted) 0.10f else 0.30f
+
+    // Where the card sits in the window, so the snapshot can be shifted to the
+    // same place and the glass shows the page that is actually underneath it.
+    var cardOrigin by remember { mutableStateOf(IntOffset.Zero) }
+
     AnimatedVisibility(
         visible = route != SettingsRoute.CLOSED,
         enter = fadeIn(motionTween(MotionSpec.SHORT)) +
@@ -125,18 +140,16 @@ fun SettingsDialog(
             )
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Only a light scrim: the window itself is translucent, so the page
-            // behind it has to stay visible — that is the whole point of a
-            // floating window rather than a full-screen panel. With the backdrop
-            // already blurred, barely any dimming is needed.
+            // A very light scrim: the page has to stay visible (and sharp) around
+            // the card — that is the point of a floating window instead of a
+            // full-screen panel. With the card carrying its own blur, almost no
+            // dimming is needed.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = scrimAlpha()))
+                    .background(Color.Black.copy(alpha = scrimAlpha))
                     .clickable(onClick = onClose)
             )
-            val shape = RoundedCornerShape(28.dp)
-            val glass = scheme.surfaceContainerLow
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -144,19 +157,48 @@ fun SettingsDialog(
                     .heightIn(max = 620.dp)
                     .shadow(24.dp, shape, clip = false)
                     .clip(shape)
-                    // A vertical fade instead of one flat alpha: slightly denser
-                    // at the top where the title sits, thinner at the bottom so
-                    // the blurred artwork keeps showing through.
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                glass.copy(alpha = glassTop()),
-                                glass.copy(alpha = glassBottom())
+                    .onGloballyPositioned { cardOrigin = it.positionInWindow().round() }
+                    // Taps on the card's own padding must not reach the scrim
+                    // behind it, or a miss between two rows would close the
+                    // window instead of doing nothing.
+                    .pointerInput(Unit) { detectTapGestures(onTap = {}) }
+            ) {
+                if (backdrop != null) {
+                    Image(
+                        bitmap = backdrop.image,
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        filterQuality = FilterQuality.High,
+                        modifier = Modifier.layout { measurable, _ ->
+                            // The snapshot covers the whole window: laying it out
+                            // at window size and shifting it by the card's own
+                            // offset makes the visible part line up with the page
+                            // that is actually behind the glass.
+                            val placeable = measurable.measure(
+                                Constraints.fixed(backdrop.windowWidth, backdrop.windowHeight)
+                            )
+                            layout(0, 0) {
+                                placeable.place(-cardOrigin.x, -cardOrigin.y)
+                            }
+                        }
+                    )
+                }
+                // The tint goes above the snapshot: it is what keeps the small
+                // text readable, and it fades slightly towards the bottom so more
+                // of the blurred page shows through.
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    glass.copy(alpha = topAlpha),
+                                    glass.copy(alpha = bottomAlpha)
+                                )
                             )
                         )
-                    )
-                    .border(1.dp, scheme.onSurface.copy(alpha = 0.10f), shape)
-            ) {
+                )
+
                 Column(modifier = Modifier.padding(20.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (shown != SettingsRoute.ROOT) {
@@ -186,12 +228,14 @@ fun SettingsDialog(
                                 SettingsRoute.READING -> ReadingSettings(settings)
                                 SettingsRoute.LIBRARIES -> LibrarySettings(
                                     folders = folders,
+                                    rowAlpha = rowAlpha,
                                     onAddFolder = onAddFolder,
                                     onRemoveFolder = onRemoveFolder
                                 )
                                 else -> RootSettings(
                                     settings = settings,
                                     folderCount = folders.size,
+                                    rowAlpha = rowAlpha,
                                     onOpenReading = onOpenReading,
                                     onOpenLibraries = onOpenLibraries,
                                     onClearProgress = onClearProgress
@@ -201,6 +245,14 @@ fun SettingsDialog(
                         }
                     }
                 }
+
+                // Drawn last so the hairline sits on top of the glass instead of
+                // being hidden under it.
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .border(1.dp, scheme.onSurface.copy(alpha = 0.10f), shape)
+                )
             }
         }
     }
@@ -210,6 +262,7 @@ fun SettingsDialog(
 private fun RootSettings(
     settings: UiSettings,
     folderCount: Int,
+    rowAlpha: Float,
     onOpenReading: () -> Unit,
     onOpenLibraries: () -> Unit,
     onClearProgress: () -> Unit
@@ -219,12 +272,14 @@ private fun RootSettings(
     MenuRow(
         title = S.settings,
         subtitle = S.settingsReadingSummary,
+        rowAlpha = rowAlpha,
         onClick = onOpenReading
     )
     Spacer(Modifier.height(10.dp))
     MenuRow(
         title = S.libraries,
         subtitle = S.foldersCount(folderCount),
+        rowAlpha = rowAlpha,
         onClick = onOpenLibraries
     )
     Spacer(Modifier.height(22.dp))
@@ -272,6 +327,7 @@ private fun RootSettings(
 @Composable
 private fun LibrarySettings(
     folders: List<Pair<String, String>>,
+    rowAlpha: Float,
     onAddFolder: () -> Unit,
     onRemoveFolder: (String) -> Unit
 ) {
@@ -287,7 +343,7 @@ private fun LibrarySettings(
     folders.forEach { (uri, label) ->
         Surface(
             shape = RoundedCornerShape(18.dp),
-            color = scheme.surfaceContainerHigh.copy(alpha = rowFill()),
+            color = scheme.surfaceContainerHigh.copy(alpha = rowAlpha),
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
@@ -496,12 +552,13 @@ private fun ReadingSettings(settings: UiSettings) {
 private fun MenuRow(
     title: String,
     subtitle: String,
+    rowAlpha: Float,
     onClick: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = scheme.surfaceContainerHigh.copy(alpha = rowFill()),
+        color = scheme.surfaceContainerHigh.copy(alpha = rowAlpha),
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
