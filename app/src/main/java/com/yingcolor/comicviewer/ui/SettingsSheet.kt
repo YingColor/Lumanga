@@ -408,9 +408,9 @@ private fun LibrarySettings(
 }
 
 /**
- * Personalisation: the accent colour repaints the whole UI, the light/dark mode
- * picks the side of each palette, and the page animation changes how the reader
- * travels between pages.
+ * Personalisation: the accent colour repaints the whole UI and the light/dark
+ * mode picks the side of each palette. Reading behaviour (including the page
+ * animation) lives on the reading-settings page instead.
  */
 @Composable
 private fun PersonalizeSettings(settings: UiSettings) {
@@ -437,21 +437,6 @@ private fun PersonalizeSettings(settings: UiSettings) {
     Spacer(Modifier.height(6.dp))
     Text(
         text = S.themeColorTip,
-        style = MaterialTheme.typography.bodySmall,
-        color = scheme.onSurfaceVariant
-    )
-    Spacer(Modifier.height(20.dp))
-
-    SectionLabel(S.pageAnim)
-    SegmentedChoice(
-        options = S.pageAnimOptions,
-        selected = settings.pageAnim,
-        onSelect = settings::setPageAnim,
-        modifier = Modifier.fillMaxWidth()
-    )
-    Spacer(Modifier.height(8.dp))
-    Text(
-        text = S.pageAnimTip + "，" + S.pageAnimPreview,
         style = MaterialTheme.typography.bodySmall,
         color = scheme.onSurfaceVariant
     )
@@ -568,6 +553,21 @@ private fun ReadingSettings(settings: UiSettings) {
         selected = settings.readingDirection,
         onSelect = settings::setReadingDirection,
         modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(18.dp))
+
+    SectionLabel(S.pageAnim)
+    SegmentedChoice(
+        options = S.pageAnimOptions,
+        selected = settings.pageAnim,
+        onSelect = settings::setPageAnim,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = S.pageAnimTip + "，" + S.pageAnimPreview,
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant
     )
     Spacer(Modifier.height(18.dp))
 

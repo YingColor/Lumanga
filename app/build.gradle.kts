@@ -12,8 +12,8 @@ android {
         applicationId = "com.yingcolor.comicviewer"
         minSdk = 28
         targetSdk = 36
-        versionCode = 16
-        versionName = "1.2.1"
+        versionCode = 17
+        versionName = "1.2.2"
         vectorDrawables { useSupportLibrary = true }
     }
 

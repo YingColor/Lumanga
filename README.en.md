@@ -28,10 +28,12 @@ extracting any image to disk**.
   apricot) in a "Personalise" settings page — near-white, low-saturation surfaces
   with a clean bright accent; each has its own light and dark palette with an
   animated transition between them
-- **Four page-turn animations**: slide, cross-fade, 3D book flip and zoom-in,
-  all applied to tap, swipe and seek-bar turns. The settled page stays as an
-  opaque underlay, so a turn never flashes a black frame (scroll mode is
-  continuous and has no page turns)
+- **Four page-turn animations** (in the reading settings): slide, cross-fade,
+  3D book flip and zoom-in, all applied to tap, swipe and seek-bar turns. The
+  book flip keeps its spine on one fixed edge and reverses the fold when going
+  back, instead of mirroring the animation to the other side. The settled page
+  stays as an opaque underlay, so a turn never flashes a black frame (scroll
+  mode is continuous and has no page turns)
 - Cover thumbnails cached in the app's private cache for instant re-opening; comic pages themselves are decoded in memory only
 - No permissions declared in the manifest, no network access
 

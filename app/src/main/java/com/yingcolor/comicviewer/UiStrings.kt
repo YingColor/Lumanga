@@ -23,7 +23,7 @@ object S {
     const val backToTop = "回到顶部"
     const val settings = "阅读设置"
     const val settingsRoot = "设置"
-    const val settingsReadingSummary = "阅读模式、缩放方式、翻页方向、屏幕方向、亮度等"
+    const val settingsReadingSummary = "阅读模式、缩放方式、翻页方向与动画、屏幕方向、亮度等"
     const val back = "返回"
     const val previous = "上一页"
     const val next = "下一页"
@@ -104,7 +104,7 @@ object S {
     const val rarTip = "支持 zip / cbz / rar / 7z 和已解压的图片文件夹"
 
     const val personalize = "个性化"
-    const val personalizeSummary = "主题颜色、明暗模式、翻页动画"
+    const val personalizeSummary = "主题颜色、明暗模式"
     const val themeColor = "主题颜色"
     const val themeColorTip = "清新低饱和的六套配色，按钮、进度条、选中态都跟着换色；明暗模式各有一套对应配色"
     const val pageAnim = "翻页动画"

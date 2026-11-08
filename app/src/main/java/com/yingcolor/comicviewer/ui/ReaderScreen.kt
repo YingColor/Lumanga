@@ -896,15 +896,20 @@ private fun ReaderContent(
                                 } else when (pageTurnMode) {
                                     PageAnimation.FADE -> alpha = progress
                                     PageAnimation.FLIP -> {
-                                        // Fold in from the spine. Only the incoming
-                                        // page rotates; the old page underneath
-                                        // keeps the screen filled.
-                                        rotationY = (1f - progress) * 68f *
-                                            if (pos >= 0f) 1f else -1f
+                                        // The spine stays on ONE side (left for
+                                        // left-to-right books, right for manga),
+                                        // whichever way the reader turns. Going
+                                        // back is the same fold played in reverse:
+                                        // the page swings the other way around
+                                        // that same edge, instead of mirroring the
+                                        // whole animation onto the opposite side
+                                        // and repeating it.
+                                        val spineX = if (rtl) 1f else 0f
+                                        val towardsNext = if (rtl) pos < 0f else pos > 0f
+                                        val fold = (1f - progress) * 68f
+                                        rotationY = if (towardsNext) fold else -fold
                                         cameraDistance = 12f * screenDensity
-                                        transformOrigin = TransformOrigin(
-                                            if (pos >= 0f) 0f else 1f, 0.5f
-                                        )
+                                        transformOrigin = TransformOrigin(spineX, 0.5f)
                                         alpha = (progress * 1.7f).coerceIn(0f, 1f)
                                     }
                                     PageAnimation.ZOOM -> {
