@@ -37,6 +37,9 @@ extracting any image to disk**.
   from the top. The settled page
   stays as an opaque underlay, so a turn never flashes a black frame (scroll
   mode is continuous and has no page turns)
+- Edge taps are handled one down/up pair at a time, so rapid consecutive taps
+  always turn one page each instead of being folded into a single gesture;
+  a burst snaps to the target page while a single tap still plays the animation
 - Cover thumbnails cached in the app's private cache for instant re-opening; comic pages themselves are decoded in memory only
 - No permissions declared in the manifest, no network access
 

@@ -3,6 +3,7 @@ package com.yingcolor.comicviewer.ui
 import android.app.Activity
 import android.app.Application
 import android.graphics.Bitmap
+import android.os.SystemClock
 import android.util.LruCache
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
@@ -79,6 +80,8 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -105,6 +108,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -683,30 +687,55 @@ private fun ReaderContent(
     val pagerState = rememberPagerState(initialPage = initialPage) { logicalCount }
     val currentPage = pagerState.currentPage.coerceIn(0, logicalCount - 1)
 
-    // Rapid consecutive taps used to turn only one page: animateScrollToPage()
-    // keeps currentPage stale for the whole ~250 ms animation, so every tap in
-    // that window computed the same target. A synchronous requested-page counter
-    // advances before the coroutine starts, and scrollToPage() snaps immediately.
+    // A synchronous requested-page counter is what makes rapid taps work:
+    // animateScrollToPage() keeps currentPage stale for the whole ~220 ms, so
+    // every tap in that window would otherwise compute the same target.
     var requestedPage by remember { mutableIntStateOf(initialPage) }
     var jumpJob by remember { mutableStateOf<Job?>(null) }
+    var lastTurnAt by remember { mutableStateOf(0L) }
 
-    // The visual turn is animated; `requestedPage` is what keeps rapid taps
-    // correct, because it advances synchronously and never reads the pager's
-    // (deliberately lagging) currentPage.
     val turnSpec = motionTween<Float>(MotionSpec.MEDIUM)
 
     fun goTo(target: Int) {
         val safe = target.coerceIn(0, logicalCount - 1)
+        val now = SystemClock.uptimeMillis()
+        // A single, unhurried tap plays the page-turn animation. Once taps come
+        // in a burst (or the previous animation is still running), restarting
+        // animateScrollToPage() over and over leaves the pager stranded
+        // mid-scroll and pages stop advancing — so snap instead. That is also
+        // exactly what "fast page turning" should feel like.
+        val burst = now - lastTurnAt < 420L ||
+            jumpJob?.isActive == true || pagerState.isScrollInProgress
+        lastTurnAt = now
         requestedPage = safe
         jumpJob?.cancel()
-        jumpJob = scope.launch { pagerState.animateScrollToPage(safe, animationSpec = turnSpec) }
+        jumpJob = scope.launch {
+            if (burst) {
+                pagerState.scrollToPage(safe)
+            } else {
+                pagerState.animateScrollToPage(safe, animationSpec = turnSpec)
+            }
+        }
     }
 
     fun go(delta: Int) = goTo(requestedPage + delta)
 
     // A finger swipe (or a slider drag) changes the page without goTo(); adopt it
-    // once the pager settles, but never while our own jump is still in flight.
+    // once the pager settles, but never while our own jump is still in flight,
+    // and never in the middle of a burst of taps (that would swallow the pages
+    // the user has already queued up).
     LaunchedEffect(currentPage) {
+        val burst = SystemClock.uptimeMillis() - lastTurnAt < 420L
+        if (!burst && jumpJob?.isActive != true && !pagerState.isScrollInProgress) {
+            requestedPage = currentPage
+        }
+    }
+
+    // After the burst ends, re-align the counter with the real page, so a swipe
+    // made right after a burst cannot leave the next tap off by a page.
+    LaunchedEffect(lastTurnAt) {
+        if (lastTurnAt == 0L) return@LaunchedEffect
+        delay(450L)
         if (jumpJob?.isActive != true && !pagerState.isScrollInProgress) {
             requestedPage = currentPage
         }
@@ -815,24 +844,56 @@ private fun ReaderContent(
                             onDoubleTap = { resetZoom() }
                         )
                     } else {
-                        // No onDoubleTap here: that would delay every onTap by the
-                        // double-tap timeout and make edge paging feel unresponsive.
-                        detectTapGestures(
-                            onTap = { position ->
-                                val width = size.width
-                                when {
-                                    position.x < width * 0.32f -> {
-                                        if (tapToTurn) turn(if (rtl) 1 else -1, -1)
-                                        else showUi = !showUi
+                        // detectTapGestures groups presses into gesture rounds with
+                        // awaitEachGesture; a burst of very fast taps can be folded
+                        // into one round and some of them never reach onTap, which
+                        // is exactly why rapid edge paging used to skip pages.
+                        // Handle every physical down -> up pair directly instead:
+                        // each tap turns exactly one page, and a drag past the
+                        // touch slop is left alone for the pager to swipe.
+                        val slop = viewConfiguration.touchSlop
+                        awaitPointerEventScope {
+                            while (true) {
+                                var down: PointerInputChange? = null
+                                while (down == null) {
+                                    val event = awaitPointerEvent(PointerEventPass.Main)
+                                    down = event.changes.firstOrNull {
+                                        it.pressed && !it.previousPressed
                                     }
-                                    position.x > width * 0.68f -> {
-                                        if (tapToTurn) turn(if (rtl) -1 else 1, 1)
-                                        else showUi = !showUi
+                                }
+                                val firstDown = down ?: continue
+                                val downId = firstDown.id
+                                val start = firstDown.position
+                                var up: PointerInputChange? = null
+                                var moved = false
+                                while (up == null && !moved) {
+                                    val event = awaitPointerEvent(PointerEventPass.Main)
+                                    val change = event.changes.firstOrNull {
+                                        it.id == downId
+                                    } ?: break
+                                    if (!change.pressed) {
+                                        up = change
+                                    } else if ((change.position - start).getDistance() > slop) {
+                                        moved = true
                                     }
-                                    else -> showUi = !showUi
+                                }
+                                val tapped = up
+                                if (tapped != null && !moved) {
+                                    val x = tapped.position.x
+                                    when {
+                                        x < size.width * 0.32f -> {
+                                            if (tapToTurn) turn(if (rtl) 1 else -1, -1)
+                                            else showUi = !showUi
+                                        }
+                                        x > size.width * 0.68f -> {
+                                            if (tapToTurn) turn(if (rtl) -1 else 1, 1)
+                                            else showUi = !showUi
+                                        }
+                                        else -> showUi = !showUi
+                                    }
                                 }
                             }
-                        )
+                        }
                     }
                 },
             reverseLayout = rtl,
