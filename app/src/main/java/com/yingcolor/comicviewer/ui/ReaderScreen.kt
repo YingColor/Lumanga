@@ -1329,37 +1329,40 @@ private fun PageRow(
     settings: UiSettings,
     modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.Center
-    ) {
-        PagePane(
-            vm, first, targetW, targetH, quality, settings.smoothing,
-            settings.fitMode, settings.zoomPercent, Modifier.weight(1f)
-        )
-        if (showSecond) {
-            PagePane(
-                vm, first + 1, targetW, targetH, quality, settings.smoothing,
-                settings.fitMode, settings.zoomPercent, Modifier.weight(1f)
-            )
-        }
+    // One logical page is ONE picture. In double-page mode the two images are
+    // stitched into a single spread first (same height, one shared scale), then
+    // the fit mode is applied to that spread as a whole. Splitting the screen
+    // into two independent weight(1f) cells made each half crop and pan on its
+    // own, which looked like two separate viewers glued together.
+    val indices = remember(first, showSecond) {
+        if (showSecond) listOf(first, first + 1) else listOf(first)
     }
+    PageSpread(
+        vm = vm,
+        indices = indices,
+        targetW = targetW,
+        targetH = targetH,
+        quality = quality,
+        smoothing = settings.smoothing,
+        zoomMode = settings.fitMode,
+        zoomPercent = settings.zoomPercent,
+        modifier = modifier
+    )
 }
 
+/** Decode one image of the spread, using the same targets as before. */
 @Composable
-private fun PagePane(
+private fun rememberPageBitmap(
     vm: ReaderViewModel,
     index: Int,
     targetW: Int,
     targetH: Int,
     quality: Int,
-    smoothing: Int,
     zoomMode: Int,
-    zoomPercent: Int,
-    modifier: Modifier = Modifier
-) {
-    // "Original size" is the only mode that needs the real pixel dimensions of the
-    // artwork; every other mode is scaled from the viewport anyway.
+    zoomPercent: Int
+): Bitmap? {
+    // "Original size" is the only mode that needs the real pixel dimensions of
+    // the artwork; every other mode is scaled from the viewport anyway.
     var source by remember(index, zoomMode) { mutableStateOf<Pair<Int, Int>?>(null) }
     LaunchedEffect(index, zoomMode) {
         if (zoomMode == ZoomMode.ORIGINAL) source = vm.sourceSize(index)
@@ -1380,10 +1383,9 @@ private fun PagePane(
             decodeH = targetH
         }
     }
-
-    val bitmap by produceState<Bitmap?>(
-        // Show the cached (possibly lower-resolution) bitmap immediately while
-        // the sharper one loads, instead of blanking the screen with a spinner.
+    // Show the cached (possibly lower-resolution) bitmap immediately while the
+    // sharper one loads, instead of blanking the screen with a spinner.
+    val state = produceState<Bitmap?>(
         initialValue = vm.peekPage(index, quality),
         key1 = index,
         key2 = quality,
@@ -1391,13 +1393,31 @@ private fun PagePane(
     ) {
         value = vm.page(index, decodeW, decodeH, quality)
     }
+    return state.value
+}
 
-    // Panning inside one page. Vertical only when the page is simply taller than
-    // the screen (horizontal swipes must keep turning pages); both axes once the
-    // page is wider than the screen, because then there is nothing else to reach
-    // the cropped side with.
-    var panX by remember(index, zoomMode, zoomPercent) { mutableStateOf(0f) }
-    var panY by remember(index, zoomMode, zoomPercent) { mutableStateOf(0f) }
+/**
+ * Draws one logical page: one image, or two images stitched into ONE spread.
+ *
+ * The stitched picture has a single height, a single scale factor and a single
+ * pan offset. Fit / zoom modes are applied to the COMBINED dimensions, never to
+ * each half separately, so a double page behaves exactly like one wide picture
+ * instead of two independent half-screen viewers with a seam down the middle.
+ */
+@Composable
+private fun PageSpread(
+    vm: ReaderViewModel,
+    indices: List<Int>,
+    targetW: Int,
+    targetH: Int,
+    quality: Int,
+    smoothing: Int,
+    zoomMode: Int,
+    zoomPercent: Int,
+    modifier: Modifier = Modifier
+) {
+    var panX by remember(indices, zoomMode, zoomPercent) { mutableStateOf(0f) }
+    var panY by remember(indices, zoomMode, zoomPercent) { mutableStateOf(0f) }
 
     BoxWithConstraints(
         modifier = modifier.fillMaxSize().clipToBounds(),
@@ -1406,61 +1426,70 @@ private fun PagePane(
         val viewportW = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         val viewportH = constraints.maxHeight.toFloat().coerceAtLeast(1f)
         val density = LocalDensity.current
-        val image = bitmap
-        if (image == null) {
+
+        // A fixed number of call sites for a given spread keeps the produceState
+        // slots stable across recompositions and page turns.
+        val bitmaps = ArrayList<Bitmap?>(indices.size)
+        for (i in indices) {
+            bitmaps += rememberPageBitmap(vm, i, targetW, targetH, quality, zoomMode, zoomPercent)
+        }
+        if (bitmaps.any { it == null }) {
             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         } else {
-            val bw = image.width.toFloat().coerceAtLeast(1f)
-            val bh = image.height.toFloat().coerceAtLeast(1f)
-            val drawW: Float
-            val drawH: Float
-            when (zoomMode) {
-                ZoomMode.ORIGINAL -> {
-                    // 1 bitmap pixel = 1 screen pixel.
-                    drawW = bw
-                    drawH = bh
-                }
+            // Normalise every page to one common height, keeping its own aspect
+            // ratio, then concatenate the widths to get ONE combined picture.
+            val commonH = bitmaps.maxOf { it!!.height.toFloat().coerceAtLeast(1f) }
+            val widths = FloatArray(bitmaps.size) { k ->
+                val b = bitmaps[k]!!
+                b.width.toFloat() * (commonH / b.height.toFloat().coerceAtLeast(1f))
+            }
+            val totalW = widths.sum().coerceAtLeast(1f)
+
+            // The old single-page maths, applied to the combined dimensions.
+            val (scaleW, scaleH) = when (zoomMode) {
+                ZoomMode.ORIGINAL -> 1f to 1f
                 ZoomMode.FIT_WIDTH -> {
-                    val f = viewportW / bw
-                    drawW = viewportW
-                    drawH = bh * f
+                    val f = viewportW / totalW
+                    f to f
                 }
                 ZoomMode.FIT_HEIGHT -> {
-                    val f = viewportH / bh
-                    drawW = bw * f
-                    drawH = viewportH
+                    // A two-page spread on a portrait phone is wider than the
+                    // screen. Cap "fit height" by the width so the whole spread
+                    // stays visible and horizontal swipes keep turning pages
+                    // instead of being swallowed by panning. Single pages keep
+                    // the original, uncapped behaviour.
+                    val f = if (indices.size > 1) {
+                        minOf(viewportH / commonH, viewportW / totalW)
+                    } else viewportH / commonH
+                    f to f
                 }
                 ZoomMode.FIXED -> {
-                    val f = (viewportW * zoomPercent / 100f) / bw
-                    drawW = bw * f
-                    drawH = bh * f
+                    val f = (viewportW * zoomPercent / 100f) / totalW
+                    f to f
                 }
-                ZoomMode.STRETCH -> {
-                    drawW = viewportW
-                    drawH = viewportH
-                }
+                ZoomMode.STRETCH -> (viewportW / totalW) to (viewportH / commonH)
                 ZoomMode.COVER -> {
-                    val f = maxOf(viewportW / bw, viewportH / bh)
-                    drawW = bw * f
-                    drawH = bh * f
+                    val f = maxOf(viewportW / totalW, viewportH / commonH)
+                    f to f
                 }
-                else -> {
-                    val f = minOf(viewportW / bw, viewportH / bh)
-                    drawW = bw * f
-                    drawH = bh * f
+                else -> { // FIT_SCREEN
+                    val f = minOf(viewportW / totalW, viewportH / commonH)
+                    f to f
                 }
             }
-            val maxPanX = ((drawW - viewportW) / 2f).coerceAtLeast(0f)
-            val maxPanY = ((drawH - viewportH) / 2f).coerceAtLeast(0f)
+            val spreadW = totalW * scaleW
+            val spreadH = commonH * scaleH
+            val maxPanX = ((spreadW - viewportW) / 2f).coerceAtLeast(0f)
+            val maxPanY = ((spreadH - viewportH) / 2f).coerceAtLeast(0f)
             val drag = when {
-                maxPanX > 1f -> Modifier.pointerInput(index, zoomMode, zoomPercent, maxPanX, maxPanY) {
+                maxPanX > 1f -> Modifier.pointerInput(indices, zoomMode, zoomPercent, maxPanX, maxPanY) {
                     detectDragGestures { change, dragAmount ->
                         change.consume()
                         panX = (panX + dragAmount.x).coerceIn(-maxPanX, maxPanX)
                         panY = (panY + dragAmount.y).coerceIn(-maxPanY, maxPanY)
                     }
                 }
-                maxPanY > 1f -> Modifier.pointerInput(index, zoomMode, zoomPercent, maxPanY) {
+                maxPanY > 1f -> Modifier.pointerInput(indices, zoomMode, zoomPercent, maxPanY) {
                     detectVerticalDragGestures { change, dragAmount ->
                         change.consume()
                         panY = (panY + dragAmount).coerceIn(-maxPanY, maxPanY)
@@ -1468,25 +1497,35 @@ private fun PagePane(
                 }
                 else -> Modifier
             }
-            Image(
-                bitmap = image.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.FillBounds,
-                filterQuality = if (smoothing == 0) FilterQuality.High else FilterQuality.None,
+            Row(
                 modifier = Modifier
                     // requiredSize, not size: size() clamps to the parent's
-                    // constraints, which squashed a page taller/wider than the
-                    // viewport instead of letting it overflow and be panned.
+                    // constraints and would squash a page that needs to overflow.
                     .requiredSize(
-                        with(density) { drawW.toDp() },
-                        with(density) { drawH.toDp() }
+                        with(density) { spreadW.toDp() },
+                        with(density) { spreadH.toDp() }
                     )
                     .graphicsLayer {
                         translationX = panX
                         translationY = panY
                     }
                     .then(drag)
-            )
+            ) {
+                for (k in bitmaps.indices) {
+                    Image(
+                        bitmap = bitmaps[k]!!.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        filterQuality = if (smoothing == 0) {
+                            FilterQuality.High
+                        } else FilterQuality.None,
+                        modifier = Modifier.requiredSize(
+                            with(density) { (widths[k] * scaleW).toDp() },
+                            with(density) { spreadH.toDp() }
+                        )
+                    )
+                }
+            }
         }
     }
 }
