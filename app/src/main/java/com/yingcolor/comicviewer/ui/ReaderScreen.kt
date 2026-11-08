@@ -688,11 +688,14 @@ private fun ReaderContent(
     // gesture and the settle animation that follows it.
     var edgeSliding by remember { mutableStateOf(false) }
     val useTurnLayer = pageTurnMode != PageAnimation.SLIDE && !zoomed && !edgeSliding
-    // Which side of a freshly turned spread to show first: +1 = left edge,
-    // -1 = right edge, 0 = keep the old centred behaviour. A spread wider than
-    // the screen must open on the edge the reader arrives from, not on the seam
-    // between its two pages.
-    var entrySide by remember { mutableIntStateOf(0) }
+    // Which side of a freshly turned spread to show first: +1 = left page,
+    // -1 = right page. It must NEVER default to 0 (centre) for a spread wider
+    // than the screen: panX = 0 puts the gutter between the two pages right in
+    // the middle of the viewport, which is exactly what a reader should not
+    // see when turning to a new pair of pages. Every way of changing pages
+    // (opening a book, edge taps, toolbar buttons, slider, edge pull) lands on
+    // one whole page, never on the seam.
+    var entrySide by remember { mutableIntStateOf(if (rtl) -1 else 1) }
     var edgeGen by remember { mutableIntStateOf(0) }
     val quality by remember {
         derivedStateOf {
@@ -730,6 +733,13 @@ private fun ReaderContent(
 
     fun goTo(target: Int) {
         val safe = target.coerceIn(0, logicalCount - 1)
+        // Toolbar prev/next/first/last and edge taps all funnel through here.
+        // Updating the landing side here means none of them can ever show the
+        // gutter in the middle of the screen.
+        val delta = safe - pagerState.currentPage
+        if (delta != 0) {
+            entrySide = (if (delta > 0) 1 else -1) * (if (rtl) -1 else 1)
+        }
         val now = SystemClock.uptimeMillis()
         // A single, unhurried tap plays the page-turn animation. Once taps come
         // in a burst (or the previous animation is still running), restarting
@@ -898,7 +908,11 @@ private fun ReaderContent(
             val target = if (wantTurn && dir != 0) {
                 (edgeStartPage + dir).coerceIn(0, logicalCount - 1)
             } else edgeStartPage
-            entrySide = if (target != edgeStartPage) dir * (if (rtl) -1 else 1) else 0
+            // A spring-back must not reset the landing side to 0: that would
+            // put the gutter back in the middle on the next page change.
+            if (target != edgeStartPage) {
+                entrySide = dir * (if (rtl) -1 else 1)
+            }
             requestedPage = target
             lastTurnAt = SystemClock.uptimeMillis()
             jumpJob = scope.launch {
@@ -1259,7 +1273,14 @@ private fun ReaderContent(
                             onValueChange = { value ->
                                 val p = value.toInt().coerceIn(0, logicalCount - 1)
                                 requestedPage = p
-                                scope.launch { pagerState.scrollToPage(p) }
+                                scope.launch {
+                                    val d = p - pagerState.currentPage
+                                    if (d != 0) {
+                                        entrySide = (if (d > 0) 1 else -1) *
+                                            (if (rtl) -1 else 1)
+                                    }
+                                    pagerState.scrollToPage(p)
+                                }
                             },
                             valueRange = 0f..(logicalCount - 1).coerceAtLeast(1).toFloat(),
                             modifier = Modifier
@@ -1611,16 +1632,28 @@ private fun PageSpread(
             val maxPanX = ((spreadW - viewportW) / 2f).coerceAtLeast(0f)
             val maxPanY = ((spreadH - viewportH) / 2f).coerceAtLeast(0f)
 
-            // A spread wider than the screen is a continuous strip, not two
-            // pictures with a seam in the middle of the viewport. On arrival it
-            // opens on the edge the reader comes FROM (the left page when
-            // turning forward in an LTR book). Only a freshly turned spread is
-            // affected: panX is left alone for the rest of that page's life.
+            // Landing position for a NEW spread: put the CENTRE OF THE
+            // VIEWPORT on the centre of the page the reader enters from. For a
+            // left-to-right book turning forward that is the left page, so the
+            // middle of the screen shows that whole page, not the gutter
+            // between the two. Single pages keep the old centred behaviour.
+            val firstW = widths[0] * scaleW
+            val secondW = if (widths.size > 1) widths[1] * scaleW else 0f
+            val landingCentre = when {
+                widths.size < 2 -> spreadW / 2f
+                entrySide >= 0 -> firstW / 2f
+                else -> firstW + secondW / 2f
+            }
+            val landingPx = (spreadW / 2f - landingCentre)
+                .coerceIn(-maxPanX, maxPanX)
+
+            // Only a freshly turned spread is repositioned: after that panX is
+            // left alone so dragging keeps exactly where the finger put it.
             var appliedFor by remember { mutableStateOf<List<Int>?>(null) }
-            LaunchedEffect(indices, maxPanX, entrySide) {
+            LaunchedEffect(indices, maxPanX, entrySide, landingPx) {
                 if (appliedFor != indices) {
                     appliedFor = indices
-                    panX = entrySide * maxPanX
+                    panX = landingPx
                     panY = 0f
                 } else {
                     panX = panX.coerceIn(-maxPanX, maxPanX)
