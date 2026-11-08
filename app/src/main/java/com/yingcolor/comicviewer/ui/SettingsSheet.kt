@@ -8,6 +8,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +37,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -93,20 +97,33 @@ fun SettingsDialog(
             )
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
+            // Only a light scrim: the window itself is translucent, so the page
+            // behind it has to stay visible — that is the whole point of a
+            // floating window rather than a full-screen panel.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.5f))
+                    .background(Color.Black.copy(alpha = 0.38f))
                     .clickable(onClick = onClose)
             )
-            Surface(
+            val shape = RoundedCornerShape(28.dp)
+            val glass = scheme.surfaceContainerLow
+            Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .fillMaxWidth(0.93f)
-                    .heightIn(max = 620.dp),
-                shape = RoundedCornerShape(28.dp),
-                color = scheme.surfaceContainerLow,
-                shadowElevation = 18.dp
+                    .heightIn(max = 620.dp)
+                    .shadow(24.dp, shape, clip = false)
+                    .clip(shape)
+                    // A vertical fade instead of one flat alpha: slightly denser
+                    // at the top where the title sits, thinner at the bottom so
+                    // the artwork keeps showing through.
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(glass.copy(alpha = 0.88f), glass.copy(alpha = 0.74f))
+                        )
+                    )
+                    .border(1.dp, scheme.onSurface.copy(alpha = 0.10f), shape)
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -370,7 +387,7 @@ private fun MenuRow(
     val scheme = MaterialTheme.colorScheme
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = scheme.surfaceContainerHigh,
+        color = scheme.surfaceContainerHigh.copy(alpha = 0.72f),
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
