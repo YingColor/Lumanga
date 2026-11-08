@@ -24,6 +24,19 @@ extracting any image to disk**.
 Full documentation is in [README.md](README.md) (Chinese).
 Installation steps for non-technical users: [使用说明.md](使用说明.md).
 
+## This project is AI-generated
+
+**The code, UI copy and documentation were produced by a large language model.**
+The maintainer wrote the requirements, checked the result on a real device,
+gave feedback for revision, and decided what shipped.
+
+- Nothing was typed by hand line by line: every implementation was generated and then kept only after it actually ran;
+- Feature choices, visual design, the icon and the release schedule are the maintainer's;
+- The commit history keeps release points only, not the development process.
+
+This note is here so you can judge the project before adopting it; the source is
+provided "as is" under the [LICENSE](LICENSE) (MIT).
+
 ## Performance
 
 Previous builds shipped an unoptimised **debug** APK, which is noticeably slower
@@ -46,8 +59,10 @@ with no page breaks. Very tall strips are decoded in ~1000 px bands via
 `BitmapRegionDecoder`, so an 800 x 20,000 px image never becomes a single
 64 MB bitmap; page sizes come from only the first 64 KB of each entry. Fit
 mode, alignment, screen orientation, image smoothing and an app-only
-brightness override were added as general reader settings, implemented
-independently from scratch.
+brightness override are available as general reader settings.
+
+The settings window is a translucent floating card, so a change can be judged
+against the page behind it instead of a full-screen panel.
 
 The launcher icon is an AI-generated portrait of the same silver-lilac character,
 shipped at full frame as a proper adaptive icon (separate foreground layers at
