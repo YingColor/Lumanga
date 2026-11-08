@@ -2,7 +2,7 @@ package com.yingcolor.comicviewer
 
 /** All user-facing copy lives here so it can be extracted for translation later. */
 object S {
-    const val appName = "漫画阅览器"
+    const val appName = "光漫堂"
     const val shelf = "书架"
     const val shelfSubtitle = "享受看漫画的时光吧~"
     const val reading = "在读"

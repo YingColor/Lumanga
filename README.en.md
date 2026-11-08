@@ -1,5 +1,5 @@
 <div align=center>
-<h1>ComicViewer</h1>
+<h1>Lumanga</h1>
 <img src="assets/images/logo/logo.png" width=200>
 </div>
 
