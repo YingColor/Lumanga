@@ -965,10 +965,16 @@ private fun ReaderContent(
             }
             val isBase = pagerPage == settledPage
             val inRange = abs(pos) <= 1.02f
-            // zIndex is a modifier (not a graphicsLayer property): it lifts the
-            // incoming page above the settled one, whichever index the pager
-            // happens to compose first.
-            val layerZ = if (useTurnLayer && !isBase && inRange) 1f else 0f
+            // zIndex is a modifier (not a graphicsLayer property): it decides
+            // which sheet is on top, whichever index the pager composes first.
+            // In a book flip the sheet being turned AWAY is the top one — it
+            // swings off and uncovers the page underneath. Every other turn
+            // keeps the incoming page on top.
+            val layerZ = if (useTurnLayer && inRange) {
+                if (pageTurnMode == PageAnimation.FLIP) {
+                    if (isBase) 1f else 0f
+                } else if (!isBase) 1f else 0f
+            } else 0f
             // Captured here: inside graphicsLayer the bare name `density` does not
             // resolve to a number (it picks up a function of the same name).
             val screenDensity = LocalDensity.current.density
@@ -1009,6 +1015,33 @@ private fun ReaderContent(
                                 // smaller incoming picture briefly showed the
                                 // previous page around its edges.
                                 alpha = 1f - incomingAlpha
+                                if (pageTurnMode == PageAnimation.FLIP && turnProgress > 0f) {
+                                    // Fading alone is not a page turn: the old
+                                    // picture never MOVED, so the animation read
+                                    // as "a new picture appearing on top of the
+                                    // old one". The outgoing sheet now swings
+                                    // away around the same spine while the
+                                    // incoming one swings in from the other
+                                    // side. Both sheets are visible mid-turn,
+                                    // one folding out, one folding in.
+                                    val forward = if (rtl) settledPos > 0f else settledPos < 0f
+                                    val dir = if (forward) 1f else -1f
+                                    val side = if (rtl) -1f else 1f
+                                    // By the time the complementary alpha reaches
+                                    // zero the sheet is nearly edge-on, so it
+                                    // never leaves a flat ghost on the screen.
+                                    rotationY = -dir * side * turnProgress * 118f
+                                    transformOrigin = TransformOrigin(
+                                        if (rtl) 1f else 0f,
+                                        0.5f
+                                    )
+                                    cameraDistance = 12f * screenDensity
+                                    // A little travel reinforces the direction
+                                    // of the fold: the sheet really leaves the
+                                    // viewport instead of rotating in place.
+                                    translationX -= dir * side * turnProgress *
+                                        size.width * 0.10f
+                                }
                             } else {
                                 if (!inRange) {
                                     alpha = 0f
