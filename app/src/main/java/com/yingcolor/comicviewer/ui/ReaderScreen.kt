@@ -89,6 +89,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
@@ -844,6 +845,11 @@ private fun ReaderContent(
         val density = LocalDensity.current
         val targetW = with(density) { maxWidth.toPx().toInt() }
         val targetH = with(density) { maxHeight.toPx().toInt() }
+        // A landscape phone is short (roughly 400 dp tall): the reader toolbar,
+        // which is sized for a tall portrait screen, would otherwise cover
+        // almost the entire picture. Tablets in landscape still have plenty of
+        // height, so they keep the roomy layout.
+        val compactBar = maxHeight < 520.dp
 
         // A tap is only a tap when the finger stays put.
         val tapTolerancePx = with(density) { 2.dp.toPx() }
@@ -1129,7 +1135,10 @@ private fun ReaderContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(
+                        horizontal = 16.dp,
+                        vertical = if (compactBar) 2.dp else 8.dp
+                    ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Each book remembers its own orientation; books without an
@@ -1177,112 +1186,241 @@ private fun ReaderContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                shape = RoundedCornerShape(28.dp),
+                    .padding(
+                        horizontal = 12.dp,
+                        vertical = if (compactBar) 4.dp else 10.dp
+                    ),
+                shape = RoundedCornerShape(if (compactBar) 20.dp else 28.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f)
             ) {
-                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                Column(
+                    modifier = Modifier.padding(
+                        horizontal = 14.dp,
+                        vertical = if (compactBar) 6.dp else 10.dp
+                    )
+                ) {
+                    // Page number + two icons, shared by both layouts. On a short
+                    // landscape screen the icons are shrunk so this row does not
+                    // eat a fifth of the available height.
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = S.pageProgress(firstImageIndex(currentPage), pageCount),
-                            style = MaterialTheme.typography.titleMedium
+                            style = if (compactBar) {
+                                MaterialTheme.typography.titleSmall
+                            } else MaterialTheme.typography.titleMedium
                         )
                         Spacer(Modifier.weight(1f))
-                        IconButton(onClick = onSettings) {
+                        val iconBox = if (compactBar) Modifier.size(30.dp) else Modifier
+                        val iconSize = if (compactBar) 18.dp else 24.dp
+                        IconButton(onClick = onSettings, modifier = iconBox) {
                             Icon(
                                 imageVector = Icons.Filled.Settings,
                                 contentDescription = S.settings,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(iconSize)
                             )
                         }
-                        IconButton(onClick = { showUi = false }) {
+                        IconButton(onClick = { showUi = false }, modifier = iconBox) {
                             Icon(
                                 imageVector = Icons.Filled.Close,
                                 contentDescription = S.closeBar,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(iconSize)
                             )
                         }
                     }
 
-                    PagePreviewStrip(
-                        count = logicalCount,
-                        current = currentPage,
-                        rtl = rtl,
-                        vm = vm,
-                        imageIndexOf = { firstImageIndex(it) },
-                        onPick = { goTo(it) }
-                    )
-
-                    Spacer(Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = if (rtl) pageCount.toString() else "1",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Slider(
-                            value = currentPage.coerceAtMost((logicalCount - 1).coerceAtLeast(1)).toFloat(),
-                            onValueChange = { value ->
-                                val p = value.toInt().coerceIn(0, logicalCount - 1)
-                                requestedPage = p
-                                scope.launch {
-                                    val d = p - pagerState.currentPage
-                                    if (d != 0) {
-                                        entrySide = (if (d > 0) 1 else -1) *
-                                            (if (rtl) -1 else 1)
-                                    }
-                                    pagerState.scrollToPage(p)
+                    if (compactBar) {
+                        // A landscape phone is WIDE but SHORT. Stacking every
+                        // control vertically used up nearly the whole screen and
+                        // hid the comic. Spend the width instead: page previews
+                        // and the seek bar on the left, all the buttons on the
+                        // right, in three short rows.
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                PagePreviewStrip(
+                                    count = logicalCount,
+                                    current = currentPage,
+                                    rtl = rtl,
+                                    vm = vm,
+                                    imageIndexOf = { firstImageIndex(it) },
+                                    onPick = { goTo(it) },
+                                    compact = true
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = if (rtl) pageCount.toString() else "1",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Slider(
+                                        value = currentPage.coerceAtMost(
+                                            (logicalCount - 1).coerceAtLeast(1)
+                                        ).toFloat(),
+                                        onValueChange = { value ->
+                                            val p = value.toInt()
+                                                .coerceIn(0, logicalCount - 1)
+                                            requestedPage = p
+                                            scope.launch {
+                                                val d = p - pagerState.currentPage
+                                                if (d != 0) {
+                                                    entrySide = (if (d > 0) 1 else -1) *
+                                                        (if (rtl) -1 else 1)
+                                                }
+                                                pagerState.scrollToPage(p)
+                                            }
+                                        },
+                                        valueRange = 0f..(logicalCount - 1)
+                                            .coerceAtLeast(1).toFloat(),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(horizontal = 4.dp)
+                                            .graphicsLayer {
+                                                scaleX = if (rtl) -1f else 1f
+                                            }
+                                    )
+                                    Text(
+                                        text = if (rtl) "1" else pageCount.toString(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                            },
-                            valueRange = 0f..(logicalCount - 1).coerceAtLeast(1).toFloat(),
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 4.dp)
-                                .graphicsLayer { scaleX = if (rtl) -1f else 1f }
+                            }
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    SmallAction(
+                                        S.firstPage, { goTo(0) },
+                                        Modifier.weight(1f), height = 28.dp
+                                    )
+                                    SmallAction(
+                                        S.previous, { go(-1) },
+                                        Modifier.weight(1f), height = 28.dp
+                                    )
+                                    SmallAction(
+                                        S.next, { go(1) },
+                                        Modifier.weight(1f), height = 28.dp
+                                    )
+                                    SmallAction(
+                                        S.lastPage, { goTo(logicalCount - 1) },
+                                        Modifier.weight(1f), height = 28.dp
+                                    )
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    SmallAction(
+                                        text = if (doublePage) S.double else S.single,
+                                        onClick = { settings.setDoublePage(!doublePage) },
+                                        modifier = Modifier.weight(1f),
+                                        active = doublePage,
+                                        height = 28.dp
+                                    )
+                                    SmallAction(
+                                        text = if (rtl) S.directionRtlShort
+                                        else S.directionLtrShort,
+                                        onClick = {
+                                            settings.setReadingDirection(if (rtl) 0 else 1)
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        active = rtl,
+                                        height = 28.dp
+                                    )
+                                }
+                                SegmentedChoice(
+                                    options = S.readModeOptions,
+                                    selected = settings.readMode,
+                                    onSelect = settings::setReadMode,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    itemHeight = 30.dp
+                                )
+                            }
+                        }
+                    } else {
+                        PagePreviewStrip(
+                            count = logicalCount,
+                            current = currentPage,
+                            rtl = rtl,
+                            vm = vm,
+                            imageIndexOf = { firstImageIndex(it) },
+                            onPick = { goTo(it) }
                         )
-                        Text(
-                            text = if (rtl) "1" else pageCount.toString(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
 
-                    Spacer(Modifier.height(4.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SmallAction(S.firstPage, { goTo(0) }, Modifier.weight(1f))
-                        SmallAction(S.previous, { go(-1) }, Modifier.weight(1f))
-                        SmallAction(S.next, { go(1) }, Modifier.weight(1f))
-                        SmallAction(S.lastPage, { goTo(logicalCount - 1) }, Modifier.weight(1f))
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SmallAction(
-                            text = if (doublePage) S.double else S.single,
-                            onClick = { settings.setDoublePage(!doublePage) },
-                            modifier = Modifier.weight(1f),
-                            active = doublePage
+                        Spacer(Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (rtl) pageCount.toString() else "1",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Slider(
+                                value = currentPage.coerceAtMost((logicalCount - 1).coerceAtLeast(1)).toFloat(),
+                                onValueChange = { value ->
+                                    val p = value.toInt().coerceIn(0, logicalCount - 1)
+                                    requestedPage = p
+                                    scope.launch {
+                                        val d = p - pagerState.currentPage
+                                        if (d != 0) {
+                                            entrySide = (if (d > 0) 1 else -1) *
+                                                (if (rtl) -1 else 1)
+                                        }
+                                        pagerState.scrollToPage(p)
+                                    }
+                                },
+                                valueRange = 0f..(logicalCount - 1).coerceAtLeast(1).toFloat(),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 4.dp)
+                                    .graphicsLayer { scaleX = if (rtl) -1f else 1f }
+                            )
+                            Text(
+                                text = if (rtl) "1" else pageCount.toString(),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SmallAction(S.firstPage, { goTo(0) }, Modifier.weight(1f))
+                            SmallAction(S.previous, { go(-1) }, Modifier.weight(1f))
+                            SmallAction(S.next, { go(1) }, Modifier.weight(1f))
+                            SmallAction(S.lastPage, { goTo(logicalCount - 1) }, Modifier.weight(1f))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SmallAction(
+                                text = if (doublePage) S.double else S.single,
+                                onClick = { settings.setDoublePage(!doublePage) },
+                                modifier = Modifier.weight(1f),
+                                active = doublePage
+                            )
+                            SmallAction(
+                                text = if (rtl) S.directionRtlShort else S.directionLtrShort,
+                                onClick = { settings.setReadingDirection(if (rtl) 0 else 1) },
+                                modifier = Modifier.weight(1f),
+                                active = rtl
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        SegmentedChoice(
+                            options = S.readModeOptions,
+                            selected = settings.readMode,
+                            onSelect = settings::setReadMode,
+                            modifier = Modifier.fillMaxWidth()
                         )
-                        SmallAction(
-                            text = if (rtl) S.directionRtlShort else S.directionLtrShort,
-                            onClick = { settings.setReadingDirection(if (rtl) 0 else 1) },
-                            modifier = Modifier.weight(1f),
-                            active = rtl
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = S.zoomHint,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
                         )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    SegmentedChoice(
-                        options = S.readModeOptions,
-                        selected = settings.readMode,
-                        onSelect = settings::setReadMode,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = S.zoomHint,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    )
+                    }   // end of the roomy portrait/tablet layout
                 }
             }
         }
@@ -1302,10 +1440,15 @@ private fun PagePreviewStrip(
     rtl: Boolean,
     vm: ReaderViewModel,
     imageIndexOf: (Int) -> Int,
-    onPick: (Int) -> Unit
+    onPick: (Int) -> Unit,
+    compact: Boolean = false
 ) {
     val state = rememberLazyListState()
     val scheme = MaterialTheme.colorScheme
+    val stripHeight = if (compact) 48.dp else 84.dp
+    val thumbWidth = if (compact) 30.dp else 52.dp
+    val gap = if (compact) 4.dp else 8.dp
+    val tilePadding = if (compact) 2.dp else 3.dp
 
     // Snap, do not animate: a tween here would fight with rapid page turns and
     // with the user's own scrolling of the strip.
@@ -1318,11 +1461,11 @@ private fun PagePreviewStrip(
     LazyRow(
         state = state,
         reverseLayout = rtl,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(gap),
         contentPadding = PaddingValues(horizontal = 4.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .height(84.dp)
+            .height(stripHeight)
             .clip(RoundedCornerShape(12.dp))
     ) {
         items(count, key = { it }) { index ->
@@ -1339,7 +1482,7 @@ private fun PagePreviewStrip(
             val active = index == current
             Box(
                 modifier = Modifier
-                    .width(52.dp)
+                    .width(thumbWidth)
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(8.dp))
                     .background(
@@ -1351,7 +1494,7 @@ private fun PagePreviewStrip(
                         shape = RoundedCornerShape(8.dp)
                     )
                     .clickable { onPick(index) }
-                    .padding(3.dp),
+                    .padding(tilePadding),
                 contentAlignment = Alignment.Center
             ) {
                 val image = bitmap
@@ -1380,11 +1523,12 @@ fun SmallAction(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    active: Boolean = false
+    active: Boolean = false,
+    height: Dp = 38.dp
 ) {
     val scheme = MaterialTheme.colorScheme
     Surface(
-        modifier = modifier.height(38.dp),
+        modifier = modifier.height(height),
         shape = CircleShape,
         color = if (active) scheme.primaryContainer else scheme.surfaceContainerHighest,
         contentColor = if (active) scheme.onPrimaryContainer else scheme.onSurfaceVariant

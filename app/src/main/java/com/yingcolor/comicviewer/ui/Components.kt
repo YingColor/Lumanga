@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.yingcolor.comicviewer.theme.expressiveSpring
 
@@ -88,7 +89,8 @@ fun SegmentedChoice(
     options: List<String>,
     selected: Int,
     onSelect: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    itemHeight: Dp = 42.dp
 ) {
     val scheme = MaterialTheme.colorScheme
     val position by animateFloatAsState(
@@ -117,7 +119,7 @@ fun SegmentedChoice(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height(42.dp)
+                    .height(itemHeight)
                     .background(fill, RoundedCornerShape(corner.dp))
                     .clickable(
                         interactionSource = interaction,
