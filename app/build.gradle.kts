@@ -14,7 +14,7 @@ android {
         applicationId = "com.yingcolor.lumanga"
         minSdk = 28
         targetSdk = 36
-        versionCode = 14
+        versionCode = 15
         versionName = "1.0.0"
         vectorDrawables { useSupportLibrary = true }
     }
@@ -44,7 +44,12 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        // The About card shows the real version name/build number, and the update
+        // checker compares against BuildConfig.VERSION_CODE.
+        buildConfig = true
+    }
 
     lint {
         // Lint's automatic "vital" pass on assembleRelease only produces static

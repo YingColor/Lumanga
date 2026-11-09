@@ -3,7 +3,12 @@ package com.yingcolor.comicviewer.ui
 import android.app.Application
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -23,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,7 +42,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -44,6 +52,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +60,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
@@ -69,6 +79,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -81,6 +92,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.yingcolor.comicviewer.BuildConfig
 import com.yingcolor.comicviewer.S
 import com.yingcolor.comicviewer.data.Book
 import com.yingcolor.comicviewer.data.BookKind
@@ -107,10 +119,15 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
     private var loadedKey: String? = null
     private var loadJob: Job? = null
     private var lastVerifiedAt = 0L
+    /** Identifies the newest scan, so a superseded one cannot clear its state. */
+    private var loadToken = 0
 
     var books by mutableStateOf<List<Book>>(emptyList())
         private set
     var loading by mutableStateOf(false)
+        private set
+    /** True while a pull-to-refresh (or the refresh chip) is scanning. */
+    var refreshing by mutableStateOf(false)
         private set
     /** True only while the private index is being read (a few hundred ms). */
     var restoring by mutableStateOf(false)
@@ -129,67 +146,105 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
      * background. Only a real add / remove / rename / size change rewrites the
      * list and the index, so a library of thousands needs no startup wait.
      */
-    fun load(roots: List<Uri>, force: Boolean = false) {
+    fun load(
+        roots: List<Uri>,
+        force: Boolean = false,
+        onDone: (() -> Unit)? = null
+    ) {
         if (roots.isEmpty()) {
             loadJob?.cancel()
             loadedKey = null
             books = emptyList()
             loading = false
+            refreshing = false
+            onDone?.invoke()
             return
         }
         val folder = roots.joinToString("|") { it.toString() }
         val sameFolder = loadedKey == folder
-        if (sameFolder && loadJob?.isActive == true) return
+        if (sameFolder && loadJob?.isActive == true) {
+            onDone?.invoke()
+            return
+        }
         // Activity restarts (rotation, theme switch) must not walk the tree again.
         if (sameFolder && !force && books.isNotEmpty() &&
             System.currentTimeMillis() - lastVerifiedAt < VERIFY_INTERVAL_MS
-        ) return
+        ) {
+            onDone?.invoke()
+            return
+        }
 
         loadedKey = folder
         loadJob?.cancel()
         restoring = false
+        // A scan that gets superseded must not clear the pull indicator that now
+        // belongs to the newer scan which replaced it.
+        val token = ++loadToken
         loadJob = viewModelScope.launch {
-            error = null
-            // Never delete the index here: a cold start also has loadedKey == null,
-            // and wiping it would force the full walk we are trying to avoid. A
-            // different folder is handled by index.load()'s folder check and by
-            // index.save() overwriting the file after a successful scan.
-            if (!sameFolder) books = emptyList()
-            restoring = !force
-            val cached = withContext(Dispatchers.IO) {
-                if (force) null else index.load(folder)
-            }
-            restoring = false
-            if (cached.isNullOrEmpty()) {
-                if (books.isEmpty()) loading = true
-            } else {
-                books = cached
-                loading = false
-            }
-
-            val result = withContext(Dispatchers.IO) {
-                runCatching { repo.listBooks(roots) }
-            }
-            result.fold(
-                onSuccess = { scanned ->
-                    // An empty result with a populated cache is usually a transient
-                    // provider / permission hiccup. Never wipe a good shelf for it.
-                    if (scanned.isEmpty() && books.isNotEmpty()) {
-                        lastVerifiedAt = System.currentTimeMillis()
-                    } else {
-                        if (!sameContent(books, scanned)) {
-                            books = scanned
-                            withContext(Dispatchers.IO) { index.save(folder, scanned) }
-                        }
-                        lastVerifiedAt = System.currentTimeMillis()
-                    }
-                },
-                onFailure = { failure ->
-                    if (books.isEmpty()) error = failure.message ?: S.folderError
+            try {
+                error = null
+                // Never delete the index here: a cold start also has loadedKey == null,
+                // and wiping it would force the full walk we are trying to avoid. A
+                // different folder is handled by index.load()'s folder check and by
+                // index.save() overwriting the file after a successful scan.
+                if (!sameFolder) books = emptyList()
+                restoring = !force
+                val cached = withContext(Dispatchers.IO) {
+                    if (force) null else index.load(folder)
                 }
-            )
-            loading = false
+                restoring = false
+                if (cached.isNullOrEmpty()) {
+                    if (books.isEmpty()) loading = true
+                } else {
+                    books = cached
+                    loading = false
+                }
+
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { repo.listBooks(roots) }
+                }
+                result.fold(
+                    onSuccess = { scanned ->
+                        // An empty result with a populated cache is usually a transient
+                        // provider / permission hiccup. Never wipe a good shelf for it.
+                        if (scanned.isEmpty() && books.isNotEmpty()) {
+                            lastVerifiedAt = System.currentTimeMillis()
+                        } else {
+                            if (!sameContent(books, scanned)) {
+                                books = scanned
+                                withContext(Dispatchers.IO) { index.save(folder, scanned) }
+                            }
+                            lastVerifiedAt = System.currentTimeMillis()
+                        }
+                    },
+                    onFailure = { failure ->
+                        if (books.isEmpty()) error = failure.message ?: S.folderError
+                    }
+                )
+                loading = false
+            } finally {
+                if (token == loadToken) {
+                    refreshing = false
+                    onDone?.invoke()
+                }
+            }
         }
+    }
+
+    /** The refresh chip and the pull gesture both force an immediate re-check. */
+    fun refresh(onDone: (() -> Unit)? = null) {
+        val folder = loadedKey
+        if (folder == null) {
+            onDone?.invoke()
+            return
+        }
+        val roots = folder.split("|").mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }
+        if (roots.isEmpty()) {
+            onDone?.invoke()
+            return
+        }
+        refreshing = true
+        load(roots, force = true, onDone = onDone)
     }
 
     /** The shelf's small "refresh" chip forces an immediate re-check. */
@@ -236,6 +291,7 @@ private fun sortBooks(list: List<Book>, mode: Int, prefs: Prefs): List<Book> = w
     else -> list
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ShelfScreen(
     books: List<Book>,
@@ -318,12 +374,19 @@ fun ShelfScreen(
         }
     }
     val gridScope = rememberCoroutineScope()
+    // A plain boolean, not rememberDrawerState + ModalNavigationDrawer: that
+    // component keeps a full-screen scrim in the tree even while closed, which
+    // silently swallowed every touch on the shelf (no taps, no scrolling, no
+    // pull-to-refresh). This overlay only exists while the drawer is open.
+    var drawerOpen by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
     val showTopButton by remember {
         derivedStateOf {
             gridState.firstVisibleItemIndex > 0 || gridState.firstVisibleItemScrollOffset > 0
         }
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -352,6 +415,16 @@ fun ShelfScreen(
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Opens the side menu (reading settings + about). It lives at the
+                // very top-left so the right side of the toolbar stays free for
+                // the filters, which are used far more often.
+                IconButton(onClick = { drawerOpen = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.Menu,
+                        contentDescription = S.menu,
+                        tint = scheme.onSurfaceVariant
+                    )
+                }
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -506,13 +579,6 @@ fun ShelfScreen(
                         tint = scheme.onSurfaceVariant
                     )
                 }
-                IconButton(onClick = onSettings) {
-                    Icon(
-                        imageVector = Icons.Filled.Settings,
-                        contentDescription = S.settings,
-                        tint = scheme.onSurfaceVariant
-                    )
-                }
             }
 
             // The reading-state filter now lives as a toolbar chip that opens a
@@ -543,34 +609,40 @@ fun ShelfScreen(
                     onPickFolder = onPickFolder,
                     showChooseButton = false
                 )
-                else -> LazyVerticalGrid(
-                    state = gridState,
-                    columns = GridCells.Fixed(columns),
-                    contentPadding = PaddingValues(
-                        start = if (columns >= 4) 12.dp else 18.dp,
-                        end = if (columns >= 4) 12.dp else 18.dp,
-                        top = 8.dp,
-                        bottom = 80.dp
-                    ),
-                    horizontalArrangement = Arrangement.spacedBy(
-                        if (columns >= 4) 8.dp else 14.dp
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(
-                        if (columns >= 4) 12.dp else 18.dp
-                    ),
+                else -> PullToRefreshBox(
+                    isRefreshing = vm.refreshing,
+                    onRefresh = onRefresh,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(displayed, key = { it.id }) { book ->
-                        BookCard(
-                            book = book,
-                            columns = columns,
-                            prefs = prefs,
-                            vm = vm,
-                            refreshKey = refreshKey,
-                            favorite = book.id in favorites,
-                            onToggleFavorite = { settings.toggleFavorite(book.id) },
-                            onClick = { onOpenBook(book) }
-                        )
+                    LazyVerticalGrid(
+                        state = gridState,
+                        columns = GridCells.Fixed(columns),
+                        contentPadding = PaddingValues(
+                            start = if (columns >= 4) 12.dp else 18.dp,
+                            end = if (columns >= 4) 12.dp else 18.dp,
+                            top = 8.dp,
+                            bottom = 80.dp
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(
+                            if (columns >= 4) 8.dp else 14.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(
+                            if (columns >= 4) 12.dp else 18.dp
+                        ),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(displayed, key = { it.id }) { book ->
+                            BookCard(
+                                book = book,
+                                columns = columns,
+                                prefs = prefs,
+                                vm = vm,
+                                refreshKey = refreshKey,
+                                favorite = book.id in favorites,
+                                onToggleFavorite = { settings.toggleFavorite(book.id) },
+                                onClick = { onOpenBook(book) }
+                            )
+                        }
                     }
                 }
             }
@@ -607,6 +679,116 @@ fun ShelfScreen(
                 .padding(end = 20.dp, bottom = 16.dp),
             filled = false
         )
+    }
+
+    // Side menu: scrim + panel. Both exist only while open, so a closed drawer
+    // can never intercept a tap or a scroll on the shelf.
+    AnimatedVisibility(
+        visible = drawerOpen,
+        enter = fadeIn(motionTween(MotionSpec.SHORT)),
+        exit = fadeOut(motionTween(MotionSpec.SHORT)),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.45f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { drawerOpen = false }
+        )
+    }
+    AnimatedVisibility(
+        visible = drawerOpen,
+        enter = slideInHorizontally(
+            motionTween(MotionSpec.MEDIUM, MotionSpec.Emphasized)
+        ) { -it },
+        exit = slideOutHorizontally(
+            motionTween(MotionSpec.SHORT, MotionSpec.Emphasized)
+        ) { -it },
+        modifier = Modifier.align(Alignment.CenterStart)
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(300.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 20.dp)
+            ) {
+                Text(
+                    text = S.appName,
+                    style = MaterialTheme.typography.headlineSmall
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = S.versionLabel(
+                        BuildConfig.VERSION_NAME,
+                        BuildConfig.VERSION_CODE
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = scheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(22.dp))
+                DrawerRow(
+                    icon = Icons.Filled.Settings,
+                    label = S.settings,
+                    onClick = {
+                        drawerOpen = false
+                        onSettings()
+                    }
+                )
+                DrawerRow(
+                    icon = Icons.Filled.Info,
+                    label = S.about,
+                    onClick = {
+                        drawerOpen = false
+                        showAbout = true
+                    }
+                )
+            }
+        }
+    }
+
+    if (showAbout) {
+        AboutDialog(
+            versionName = BuildConfig.VERSION_NAME,
+            versionCode = BuildConfig.VERSION_CODE,
+            onClose = { showAbout = false }
+        )
+    }
+    }
+}
+
+/** One row inside the side menu. */
+@Composable
+private fun DrawerRow(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(Modifier.width(14.dp))
+        Text(text = label, style = MaterialTheme.typography.bodyLarge)
     }
 }
 

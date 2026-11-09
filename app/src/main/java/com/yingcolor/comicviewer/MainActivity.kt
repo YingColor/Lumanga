@@ -310,7 +310,9 @@ private fun ComicApp() {
                                     gridState = if (readingMode) readingGridState else homeGridState,
                                     onPickFolder = { pickFolder.launch(null) },
                                     onManageFolders = { openSettings(SettingsRoute.LIBRARIES) },
-                                    onRefresh = { shelfVm.refresh() },
+                                    onRefresh = {
+                                        shelfVm.refresh { toast = S.refreshDone }
+                                    },
                                     onOpenBook = { selected ->
                                         currentBook = selected
                                         screen = "reader"

@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- No runtime permissions at all: files are read through the system folder picker (SAF). -->
+    <!-- The only permission: used exclusively by "check for updates" in About,
+         which fetches the public GitHub release list when the reader taps it.
+         Nothing about the device is sent, and no comic data ever leaves it. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"
