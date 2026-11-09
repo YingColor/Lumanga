@@ -873,23 +873,13 @@ private fun ReaderContent(
                 }
         }
 
-        // Opaque underlay for the animated turn. Without it, both the outgoing
-        // and the incoming page are partly transparent (or edge-on) halfway
-        // through a page change, so the dark reader background shows through as
-        // a large black frame. This plate keeps one fully drawn page on screen
-        // at every instant.
+        // Solid plate of the reader background under both pages. The outgoing
+        // page now fades out while the incoming one fades in, so around a
+        // smaller incoming picture the reader sees the background, never the
+        // previous page. Drawing the previous page here (the old cure for a
+        // black frame mid-flip) is exactly what used to leak through.
         if (useTurnLayer) {
-            val baseFirst = firstImageIndex(settledPage)
-            PageRow(
-                vm = vm,
-                first = baseFirst,
-                showSecond = doublePage && baseFirst + 1 < pageCount,
-                targetW = targetW,
-                targetH = targetH,
-                quality = quality,
-                settings = settings,
-                modifier = Modifier.fillMaxSize()
-            )
+            Box(Modifier.fillMaxSize().background(Color(0xFF101014)))
         }
 
         HorizontalPager(
@@ -960,6 +950,19 @@ private fun ReaderContent(
             val pos = ((pagerPage - pagerState.currentPage) -
                 pagerState.currentPageOffsetFraction) * if (rtl) -1f else 1f
             val progress = (1f - abs(pos)).coerceIn(0f, 1f)
+            // Progress of the TURN as a whole: 0 while settled, 1 when the new
+            // page has arrived. It is measured from the settled page (which does
+            // not change mid-turn), so it stays continuous even when
+            // currentPage flips at the halfway point. The outgoing page fades
+            // out with exactly the complement of the incoming page's alpha, so
+            // a smaller incoming canvas can never expose the previous picture.
+            val settledPos = ((settledPage - pagerState.currentPage) -
+                pagerState.currentPageOffsetFraction) * if (rtl) -1f else 1f
+            val turnProgress = abs(settledPos).coerceIn(0f, 1f)
+            val incomingAlpha = when (pageTurnMode) {
+                PageAnimation.FLIP -> (turnProgress * 1.7f).coerceIn(0f, 1f)
+                else -> turnProgress
+            }
             val isBase = pagerPage == settledPage
             val inRange = abs(pos) <= 1.02f
             // zIndex is a modifier (not a graphicsLayer property): it lifts the
@@ -1000,9 +1003,12 @@ private fun ReaderContent(
                             // page, which is exactly the black gap.
                             translationX -= pos * size.width
                             if (isBase) {
-                                // The settled page stays solid; it is the page the
-                                // new one turns over.
-                                alpha = 1f
+                                // The page being left fades away at the same
+                                // rate the new one appears (complementary alpha).
+                                // It used to stay fully opaque, which is why a
+                                // smaller incoming picture briefly showed the
+                                // previous page around its edges.
+                                alpha = 1f - incomingAlpha
                             } else {
                                 if (!inRange) {
                                     alpha = 0f
