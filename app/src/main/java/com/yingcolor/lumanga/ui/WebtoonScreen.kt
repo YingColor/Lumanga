@@ -73,15 +73,15 @@ import com.yingcolor.lumanga.data.ZoomMode
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/**
- * One drawable slice of a (possibly extremely tall) comic page.
- *
- * A Korean Webtoon strip can be 800 x 20,000 px. Decoding that as one bitmap
- * would need ~64 MB and often exceeds the GPU texture limit. Instead the strip
- * is cut into ~1,000 px tall bands which are decoded on demand by
- * BitmapRegionDecoder and placed in one uninterrupted LazyColumn, so pages flow
- * into each other with no tap-to-turn and no gap.
- */
+
+
+
+
+
+
+
+
+
 private data class StripTile(
     val page: Int,
     val slice: Int,
@@ -108,9 +108,9 @@ private fun buildTiles(
         starts[page] = tiles.size
         val srcW = rawW.coerceAtLeast(1)
         val srcH = rawH.coerceAtLeast(1)
-        // In a continuous strip only the width matters: "fit screen", "cover" and
-        // "stretch" all mean "use the whole width", while the others change how
-        // wide each page ends up.
+        
+        
+        
         val displayW = when (zoomMode) {
             ZoomMode.ORIGINAL -> srcW.coerceIn(1, maxWidth)
             ZoomMode.FIXED -> (screenW.toLong() * zoomPercent / 100).toInt()
@@ -155,8 +155,8 @@ fun WebtoonScreen(
             val screenW = with(density) { maxWidth.toPx().toInt() }.coerceAtLeast(1)
             val screenH = with(density) { maxHeight.toPx().toInt() }.coerceAtLeast(1)
 
-            // Only image headers are inflated here, so even a 300-strip book is
-            // ready in a moment and the list gets exact item heights up front.
+            
+            
             var sizes by remember(book.id, vm.pageCount) {
                 mutableStateOf<List<Pair<Int, Int>>?>(null)
             }
@@ -223,22 +223,22 @@ private fun WebtoonContent(
     onResetProgress: () -> Unit
 ) {
     if (tiles.isEmpty()) return
-    // A scroll gesture must never be mistaken for a tap on the middle of the
-    // screen. Distance is measured from the down position (not per frame), so
-    // even a slow, few-pixel drag is rejected.
+    
+    
+    
     val density = LocalDensity.current
     val tapTolerancePx = with(density) { 2.dp.toPx() }
-    // The OS reports the width of its swipe-back zones; ignore those strips
-    // entirely. On some phones that gesture arrives as DOWN + immediate cancel
-    // with zero movement, which no distance threshold can catch.
+    
+    
+    
     val gestureInsets = WindowInsets.systemGestures
     val leftGuard = gestureInsets.getLeft(density, LayoutDirection.Ltr)
     val rightGuard = gestureInsets.getRight(density, LayoutDirection.Ltr)
     val gestureGuardPx = maxOf(
         leftGuard.toFloat(),
         rightGuard.toFloat(),
-        // Fallback for ROMs that fail to report the insets; the tappable
-        // left/right zones are much wider than this narrow strip.
+        
+        
         with(density) { 20.dp.toPx() }
     ) + with(density) { 4.dp.toPx() }
     val pageCount = vm.pageCount.coerceAtLeast(1)
@@ -249,7 +249,7 @@ private fun WebtoonContent(
     val scope = rememberCoroutineScope()
     var showUi by remember { mutableStateOf(true) }
 
-    // Back peels one layer at a time: settings window -> tool bar -> leave book.
+    
     BackHandler {
         when {
             settingsOpen -> onCloseSettings()
@@ -259,16 +259,16 @@ private fun WebtoonContent(
     }
     var sliderPage by remember { mutableFloatStateOf(savedPage.toFloat()) }
 
-    // When a strip is wider than the screen (fixed zoom above 100 %, or a page
-    // forced to full height) the sides would be unreachable in a vertical list.
-    // A horizontal drag pans the whole strip instead, which never fights the
-    // list's vertical scroll.
+    
+    
+    
+    
     val widestStrip = remember(tiles) { tiles.maxOfOrNull { it.targetWidthPx } ?: 0 }
     val extraX = ((widestStrip - screenW) / 2f).coerceAtLeast(0f)
     var panX by remember(widestStrip) { mutableStateOf(0f) }
 
-    // Reading state follows the strip currently at the top of the screen, so
-    // scrolling back to the very first page marks the book unread again.
+    
+    
     val currentPage by remember(tiles) {
         derivedStateOf {
             val index = listState.firstVisibleItemIndex
@@ -309,10 +309,10 @@ private fun WebtoonContent(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer { translationX = panX }
-                // Tap recognition only OBSERVES the pointer stream on the FINAL
-                // pass and never consumes an event, so the list keeps its normal
-                // drag / fling behaviour. A stationary single finger is a tap;
-                // any real movement is a scroll and is ignored here.
+                
+                
+                
+                
                 .pointerInput(
                     settings.tapToTurn, tapTolerancePx, gestureGuardPx
                 ) {
@@ -357,8 +357,8 @@ private fun WebtoonContent(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Each book remembers its own orientation; unset books inherit
-                // the global setting. Leaving the reader restores the global one.
+                
+                
                 val effectiveOrientation = settings.bookOrientationRev.let {
                     val perBook = settings.bookOrientation(book.id)
                     if (perBook >= 0) perBook else settings.screenOrientation
@@ -505,8 +505,8 @@ private fun StripTileImage(
                 filterQuality = if (settings.smoothing == 0) {
                     FilterQuality.High
                 } else FilterQuality.None,
-                // requiredSize keeps the strip at its true aspect ratio: with
-                // size() a strip wider than the screen was squeezed to fit.
+                
+                
                 modifier = Modifier.requiredSize(shownW, shownH)
             )
         } else {

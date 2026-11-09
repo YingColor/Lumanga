@@ -1,6 +1,6 @@
 package com.yingcolor.lumanga.util
 
-/** Sorts "page2.jpg" before "page10.jpg" instead of using plain lexicographic order. */
+
 fun naturalCompare(a: String, b: String): Int {
     var i = 0
     var j = 0

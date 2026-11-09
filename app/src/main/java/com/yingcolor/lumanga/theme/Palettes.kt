@@ -6,26 +6,26 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 
-/**
- * Fresh, low-saturation accent palettes.
- *
- * Every palette shares one clean neutral skeleton: near-white paper with only a
- * whisper of colour in light mode, cool charcoal in dark mode. Only the accent
- * roles change between presets, so switching colours never changes contrast or
- * legibility. Heavy tinted surfaces and muddy mid-tone primaries are avoided:
- * the accent stays bright, the surfaces stay quiet.
- */
+
+
+
+
+
+
+
+
+
 object Palettes {
     const val COUNT = 6
 
     private data class Accent(
-        val seed: Color,      // light-mode primary
-        val darkSeed: Color,  // dark-mode primary (bright pastel)
-        val mate: Color,      // light-mode tertiary
-        val darkMate: Color   // dark-mode tertiary
+        val seed: Color,      
+        val darkSeed: Color,  
+        val mate: Color,      
+        val darkMate: Color   
     )
 
-    /** Mint green, lake cyan, sky blue, lavender, sakura pink, apricot orange. */
+    
     private val accents = arrayOf(
         Accent(Color(0xFF2FA276), Color(0xFF8EDCB2), Color(0xFF48A9C6), Color(0xFF8FD3E6)),
         Accent(Color(0xFF1E9FAE), Color(0xFF82D6E2), Color(0xFF5B8FD8), Color(0xFFA8C7F2)),
@@ -45,7 +45,7 @@ object Palettes {
 
     fun coerce(index: Int): Int = index.coerceIn(0, COUNT - 1)
 
-    /** A representative colour for the swatch picker. */
+    
     fun accent(index: Int): Color = accents[coerce(index)].seed
 
     fun schemeFor(index: Int, dark: Boolean): ColorScheme {
@@ -113,7 +113,7 @@ object Palettes {
         onError = Color(0xFF601410)
     )
 
-    /** Linear blend in sRGB, used for the pale tinted containers and surfaces. */
+    
     private fun mix(from: Color, to: Color, amount: Float): Color {
         val a = from.toArgb()
         val b = to.toArgb()

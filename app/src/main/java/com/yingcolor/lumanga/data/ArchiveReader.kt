@@ -17,13 +17,13 @@ import java.nio.channels.NonReadableChannelException
 import java.nio.channels.SeekableByteChannel
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Reads a ZIP/CBZ archive in place through a seekable file descriptor.
- *
- * Nothing is extracted to disk: only the requested page is inflated into a byte array
- * in memory, decoded into a Bitmap, and then released. The archive itself is never copied,
- * so even multi-gigabyte books cost no extra storage.
- */
+
+
+
+
+
+
+
 class ArchiveReader private constructor(
     private val zip: ZipFile,
     private val source: Closeable,
@@ -35,12 +35,12 @@ class ArchiveReader private constructor(
 
     override fun pageName(index: Int): String = pages[index].name.substringAfterLast('/')
 
-    /**
-     * Inflates only the first few KB of an entry. Image headers (PNG IHDR, JPEG
-     * SOF, WebP VP8) live at the very beginning, so a continuous-scroll reader
-     * can learn the size of every page of a 300-strip comic without inflating
-     * hundreds of multi-megabyte images. Nothing is written to disk.
-     */
+    
+
+
+
+
+
     override fun readHeader(index: Int, limit: Int): ByteArray? = synchronized(ioLock) {
         val stream = runCatching { zip.getInputStream(pages[index]) }.getOrNull()
             ?: return@synchronized null
@@ -65,7 +65,7 @@ class ArchiveReader private constructor(
     @Throws(IOException::class)
     override fun readPage(index: Int): ByteArray {
         val entry = pages[index]
-        // ZipFile.getInputStream shares the underlying channel, so reads must be serialised.
+        
         synchronized(ioLock) {
             if (entry.size > MAX_PAGE_BYTES) {
                 throw ArchiveException(ArchiveException.Kind.PAGE_TOO_LARGE, "single page exceeds limit")
@@ -76,9 +76,9 @@ class ArchiveReader private constructor(
                 throw ArchiveException(ArchiveException.Kind.ENCRYPTED, "encrypted or unsupported compression", e)
             } ?: throw IOException("cannot open entry ${entry.name}")
 
-            // ZIP entries know their uncompressed size. Pre-sizing the buffer
-            // avoids the repeated grow-and-copy cycle that a 10 MB scan used to
-            // trigger (256 KB -> 512 KB -> ... -> 10 MB).
+            
+            
+            
             val declared = entry.size
             val initial = if (declared > 0) {
                 declared.toInt().coerceIn(INITIAL_BUFFER, MAX_PREALLOC)
@@ -127,11 +127,11 @@ class ArchiveReader private constructor(
         private const val MAX_PREALLOC = 8 * 1024 * 1024
         private val ENCODINGS = arrayOf("UTF-8", "GBK", "Shift_JIS")
 
-        /**
-         * Parsing the central directory of a multi-GB archive is the single most
-         * expensive step when opening a book. Remembering the winning codepage per
-         * file means a re-opened book usually needs one parse instead of three.
-         */
+        
+
+
+
+
         private val encodingCache = ConcurrentHashMap<String, String>()
 
         private data class Best(val candidate: Candidate, val score: Int, val encoding: String)
@@ -198,7 +198,7 @@ class ArchiveReader private constructor(
             }
         }
 
-        /** Garbled names are the tell-tale sign of a wrongly decoded codepage. */
+        
         private fun garbledScore(pages: List<ZipArchiveEntry>): Int =
             pages.sumOf { entry -> entry.name.count { it == '\uFFFD' || it == '?' } }
 

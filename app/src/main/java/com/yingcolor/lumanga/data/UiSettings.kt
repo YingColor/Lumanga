@@ -7,20 +7,20 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
-/**
- * The single source of truth for settings that must repaint the UI immediately.
- *
- * A plain getter on Prefs only returns the new value when some other state happens
- * to trigger recomposition, which is why the option buttons used to look stale
- * until the settings sheet was reopened. Every setter here updates both the
- * observable state and the persisted preference in one step.
- *
- * The observable fields are private backing delegates exposed as read-only values:
- * a `private set` property would generate a JVM setter with the same signature as
- * the explicit `setXxx` methods below.
- */
+
+
+
+
+
+
+
+
+
+
+
+
 class UiSettings(private val prefs: Prefs) {
-    /** Favourites live here too, so a long-press repaints the cover at once. */
+    
     private var stateFavorites by mutableStateOf(prefs.favorites)
     val favorites: Set<String> get() = stateFavorites
 
@@ -66,8 +66,8 @@ class UiSettings(private val prefs: Prefs) {
     private var stateScreenOrientation by mutableStateOf(prefs.screenOrientation)
     val screenOrientation: Int get() = stateScreenOrientation
 
-    // Bumped whenever a per-book orientation override changes. Reading it makes
-    // the reader recompose so its rotate button shows the new effective value.
+    
+    
     private var stateBookOrientationRev by mutableIntStateOf(0)
     val bookOrientationRev: Int get() = stateBookOrientationRev
 
@@ -163,7 +163,7 @@ class UiSettings(private val prefs: Prefs) {
         prefs.screenOrientation = safe
     }
 
-    /** -1 = inherit the global setting. */
+    
     fun bookOrientation(bookId: String): Int = prefs.bookOrientation(bookId)
 
     fun setBookOrientation(bookId: String, value: Int) {

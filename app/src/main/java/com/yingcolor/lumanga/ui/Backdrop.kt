@@ -13,24 +13,24 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.math.max
 
-/**
- * The blurred picture that sits inside the settings card.
- *
- * Only the card is frosted; everything around it stays sharp. Compose cannot
- * blur a slice of the page behind a single rounded rect — a live backdrop blur
- * would mean drawing the page twice, which duplicates the whole composition
- * (and every decoded page under it). So the card instead shows a snapshot of the
- * window taken the moment before it opens.
- *
- * The snapshot is shrunk eightfold and blurred while tiny, then drawn back at
- * full size with bilinear filtering: a 1080 x 2340 screen is only ~39k pixels of
- * blur work (a few milliseconds), and upscaling it hides the banding a small
- * radius would otherwise leave behind.
- */
-/**
- * A blurred snapshot of the window plus the size it was taken at, so the card can
- * lay it out at window scale and slide it to its own position.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 internal class BackdropShot(
     val image: ImageBitmap,
     val windowWidth: Int,
@@ -38,13 +38,13 @@ internal class BackdropShot(
 )
 
 internal object Backdrop {
-    /** Downscale factor before blurring. 8 keeps text ghosts from showing. */
+    
     private const val SCALE = 8
 
-    /** Box-blur rounds; three passes approximate a Gaussian closely enough. */
+    
     private const val PASSES = 3
 
-    /** Blur radius in downscaled pixels (so ~24 px on a 1080-wide screen). */
+    
     private const val RADIUS = 3
 
     suspend fun capture(window: Window): BackdropShot? {
@@ -89,11 +89,11 @@ internal object Backdrop {
         repeat(PASSES) { buffer = boxBlur(buffer, width, height, RADIUS) }
         small.setPixels(buffer, 0, width, 0, 0, width, height)
 
-        // The bitmap must stay alive: it is the card's background from now on.
+        
         small.asImageBitmap()
     }.getOrNull()
 
-    /** Separable box blur: one horizontal pass, then one vertical pass. */
+    
     private fun boxBlur(source: IntArray, width: Int, height: Int, radius: Int): IntArray {
         if (radius <= 0) return source
         val span = radius * 2 + 1

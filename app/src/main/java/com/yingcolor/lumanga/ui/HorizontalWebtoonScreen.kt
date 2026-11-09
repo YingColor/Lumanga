@@ -68,11 +68,11 @@ import com.yingcolor.lumanga.data.Prefs
 import com.yingcolor.lumanga.data.UiSettings
 import kotlinx.coroutines.launch
 
-/**
- * Continuous HORIZONTAL scroll: every page is scaled to the screen height and
- * the pages are laid end to end in one long strip. Unlike the pager there is no
- * snapping to a page boundary, so the reader can stop anywhere along the strip.
- */
+
+
+
+
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HorizontalWebtoonScreen(
@@ -97,7 +97,7 @@ fun HorizontalWebtoonScreen(
                 mutableStateOf<List<Pair<Int, Int>>?>(null)
             }
             LaunchedEffect(book.id, vm.pageCount) {
-                // The strip uses the page cache, not the vertical tile cache.
+                
                 vm.releaseWebtoonCaches()
                 sizes = null
                 sizes = vm.pageSizes()
@@ -151,8 +151,8 @@ private fun HorizontalStrip(
     val scope = rememberCoroutineScope()
     var showUi by remember { mutableStateOf(true) }
 
-    // One width per page: every page fills the screen height, its width follows
-    // the original aspect ratio. Pages are then simply concatenated.
+    
+    
     val widths = remember(sizes, screenH) {
         sizes.map { (w, h) ->
             (w.toFloat() * screenH / h.coerceAtLeast(1).toFloat()).coerceAtLeast(1f)
@@ -206,8 +206,8 @@ private fun HorizontalStrip(
                     observeTaps(tapTolerancePx, gestureGuardPx) { pos ->
                         val x = pos.x
                         val width = size.width.toFloat()
-                        // In manga mode the reading order is mirrored, so the
-                        // edge that advances the strip is the opposite one.
+                        
+                        
                         val step = screenW * 0.88f
                         when {
                             x < width * 0.30f -> {
@@ -257,8 +257,8 @@ private fun HorizontalStrip(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Each book remembers its own orientation; unset books inherit
-                // the global setting. Leaving the reader restores the global one.
+                
+                
                 val effectiveOrientation = settings.bookOrientationRev.let {
                     val perBook = settings.bookOrientation(book.id)
                     if (perBook >= 0) perBook else settings.screenOrientation

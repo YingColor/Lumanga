@@ -1,6 +1,6 @@
 package com.yingcolor.lumanga
 
-/** All user-facing copy lives here so it can be extracted for translation later. */
+
 object S {
     const val appName = "光漫堂"
     const val shelf = "书架"
@@ -113,8 +113,8 @@ object S {
     const val webtoonNoImage = "这一页暂时无法显示"
     val fitOptions = listOf("原始尺寸", "符合屏幕", "符合宽度", "符合高度", "固定缩放", "伸展", "覆盖")
     val alignOptions = listOf("水平置中", "靠左", "靠右")
-    // Display order puts the locked-portrait default first. The stored values
-    // are unchanged: 0 = follow system, 1 = portrait, 2 = landscape.
+    
+    
     val orientationOptions = listOf("直立", "横屏", "跟随系统")
     val orientationValues = listOf(1, 2, 0)
     val smoothOptions = listOf("平滑", "锐利")
@@ -170,7 +170,7 @@ object S {
         return "第 ${(page + 1).coerceIn(1, total)} / $total 页"
     }
 
-    /** Compact form used when four or five covers share a row. */
+    
     fun pageProgressCompact(page: Int, total: Int): String {
         if (total <= 0) return "已读"
         return "${(page + 1).coerceIn(1, total)}/$total"

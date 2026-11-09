@@ -24,10 +24,10 @@ import com.yingcolor.lumanga.ui.MotionSpec
 import com.yingcolor.lumanga.ui.motionTween
 import com.yingcolor.lumanga.ui.rememberMotionScale
 
-/**
- * Material 3 Expressive shapes and motion, with the light accent palettes in
- * [Palettes]. Generous corner radii and springy motion are the defining traits.
- */
+
+
+
+
 private val BaseTypography = Typography()
 
 private val AppTypography = Typography(
@@ -48,17 +48,17 @@ val ExpressiveShapes = Shapes(
     extraLarge = RoundedCornerShape(36.dp)
 )
 
-/** Bouncy spring used for press feedback and page transitions. */
+
 fun <T> expressiveSpring() = spring<T>(
     dampingRatio = Spring.DampingRatioMediumBouncy,
     stiffness = Spring.StiffnessMedium
 )
 
-/**
- * Interpolates every visible colour of the scheme instead of swapping the whole
- * palette in one frame. This is what turns the light/dark switch into a gradual
- * fade rather than a hard cut.
- */
+
+
+
+
+
 @Composable
 private fun animatedColorScheme(target: ColorScheme): ColorScheme {
     val spec = motionTween<Color>(MotionSpec.LONG, MotionSpec.Emphasized)

@@ -3,10 +3,9 @@
 <img src="assets/images/logo/logo.png" width=200>
 </div>
 
-An offline-first comic reader for Android (it only touches the network when you
-tap "check for updates"). It reads `.zip` / `.cbz`
-archives straight from a folder on the device and displays pages **without
-extracting any image to disk**.
+An offline-first comic reader for Android. It reads archives straight from a
+folder on the device and displays pages **without extracting any image to disk**.
+The only network request is the optional "check for updates" button in About.
 
 - Android 8.0 (API 26) and newer
 - Multi-gigabyte archives (ZIP64) are read in place through a seekable file
@@ -46,55 +45,12 @@ extracting any image to disk**.
   always turn one page each instead of being folded into a single gesture;
   a burst snaps to the target page while a single tap still plays the animation
 - Cover thumbnails cached in the app's private cache for instant re-opening; comic pages themselves are decoded in memory only
-- No permissions declared in the manifest, no network access
 
 Full documentation is in [README.md](README.md) (Chinese).
 Installation steps for non-technical users: [使用说明.md](使用说明.md).
 
-## This project is AI-generated
+Full documentation: [README.md](README.md) (Chinese).
+Installation steps: [使用说明.md](使用说明.md).
+Latest APK: [Releases](https://github.com/YingColor/Lumanga/releases/latest).
 
-**The code, UI copy and documentation were produced by a large language model.**
-The maintainer wrote the requirements, checked the result on a real device,
-gave feedback for revision, and decided what shipped.
-
-- Nothing was typed by hand line by line: every implementation was generated and then kept only after it actually ran;
-- Feature choices, visual design, the icon and the release schedule are the maintainer's;
-- The commit history keeps release points only, not the development process.
-
-This note is here so you can judge the project before adopting it; the source is
-provided "as is" under the [LICENSE](LICENSE) (MIT).
-
-## Performance
-
-Previous builds shipped an unoptimised **debug** APK, which is noticeably slower
-for Jetpack Compose. The published APK is a **release** build: R8 code optimisation,
-resource shrinking and the AndroidX baseline profiles shipped inside the AARs
-(`assets/dexopt/baseline.prof`). The APK dropped from 27.6 MB to 2.6 MB and uses
-the same signing key, so it installs over the old build without losing data.
-
-On the code side, all archive reads now go through one worker with three priority
-queues (visible page > neighbours > preview strip) instead of dozens of coroutines
-fighting over a single ZIP channel; previews use much tighter sampling; the
-collapsing header no longer recomposes the whole grid on every scroll frame;
-covers return synchronously on a memory hit; and search no longer re-sorts the
-whole library on every keystroke.
-
-## Long Webtoon strips
-
-A new **scroll** reading mode joins all pages into one continuous vertical list,
-with no page breaks. Very tall strips are decoded in ~1000 px bands via
-`BitmapRegionDecoder`, so an 800 x 20,000 px image never becomes a single
-64 MB bitmap; page sizes come from only the first 64 KB of each entry. Fit
-mode, alignment, screen orientation, image smoothing and an app-only
-brightness override are available as general reader settings.
-
-The settings window is a translucent floating card, so a change can be judged
-against the page behind it instead of a full-screen panel.
-
-The launcher icon is an AI-generated portrait of the same silver-lilac character,
-shipped at full frame as a proper adaptive icon (separate foreground layers at
-every density plus a legacy rounded-square fallback). The final artwork carries
-no watermark and is used without cropping or retouching. Details in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-Build with `./gradlew assembleRelease` (or `assembleDebug` for debugging only).
+Source is provided under the [LICENSE](LICENSE) (MIT).

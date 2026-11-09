@@ -7,13 +7,13 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/**
- * The newest published release, seen from this build.
- *
- * The public version name deliberately stays "1.0.0" between rebuilds, so the
- * real ordering key is `versionCode`, taken from the `versionCode=N` line in
- * the release notes. Comparing names alone would report "up to date" forever.
- */
+
+
+
+
+
+
+
 data class RemoteRelease(
     val versionName: String,
     val versionCode: Int,
@@ -27,11 +27,11 @@ sealed interface UpdateResult {
     data class Failed(val reason: String) : UpdateResult
 }
 
-/**
- * The only network call in the whole app. It runs only when the reader taps
- * "check for updates" inside About, sends nothing about the device, and the
- * response is used for exactly one thing: deciding whether a newer APK exists.
- */
+
+
+
+
+
 object UpdateChecker {
     private const val API =
         "https://api.github.com/repos/YingColor/Lumanga/releases/latest"
@@ -77,7 +77,7 @@ object UpdateChecker {
             val newer = if (remoteCode > 0) {
                 remoteCode > BuildConfig.VERSION_CODE
             } else {
-                // Releases published before the notes carried a build number.
+                
                 compareVersions(tag, BuildConfig.VERSION_NAME) > 0
             }
             if (newer) UpdateResult.Available(release) else UpdateResult.UpToDate

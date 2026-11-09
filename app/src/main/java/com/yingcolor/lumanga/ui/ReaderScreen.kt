@@ -117,25 +117,25 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
-/** Logical pages warmed behind / ahead of the reader. */
+
 private const val WARM_BACK = 2
 private const val WARM_AHEAD = 5
 
-/**
- * One archive, three workers, three priority queues.
- *
- * A ZipFile shares a single seekable channel, so archive reads serialise on a
- * lock — but decoding does not. Two workers are reserved for the visible page
- * (a spread needs two), a third warms the surrounding pages and serves the
- * preview strip. The visible workers never pick up a warm-up job, so a burst
- * of fast turns can never leave the newest page waiting behind a backlog.
- *
- * Every warmed page first gets a tiny stand-in bitmap, then its full-resolution
- * decode. Requests are deduplicated and a background job is promoted to the
- * visible queue the instant its page comes on screen. Stale visible requests
- * are dropped rather than decoded, and opening another book invalidates
- * everything still in flight.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
     private var reader: PageSource? = null
@@ -150,49 +150,49 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     var error by mutableStateOf<ArchiveException?>(null)
         private set
 
-    // Budgets follow the device's heap instead of a hard-coded number: a phone
-    // with a large heap can keep a dozen decoded pages warm, a small one stays
-    // conservative. Evicted bitmaps are deliberately NOT recycled — Compose may
-    // still be drawing one while the LRU drops it.
+    
+    
+    
+    
     private val heapKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
     private val pageCacheLimit = (heapKb / 4).coerceIn(48 * 1024, 128 * 1024)
     private val rawCacheLimit = (heapKb / 12).coerceIn(16 * 1024, 40 * 1024)
 
-    /** Bounded by bytes, so zooming into a giant scan cannot exhaust the heap. */
+    
     private val pageCache = object : LruCache<String, Bitmap>(pageCacheLimit) {
         override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
 
-    /** Previews live apart from full pages so they can never evict (or be handed out as) a page. */
+    
     private val thumbCache = object : LruCache<String, Bitmap>(8 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
 
-    /**
-     * A tiny, cheaply decoded stand-in for each warmed page. It is cached
-     * BEFORE the full-resolution decode starts, so a fast turn always has a
-     * picture to draw and the sharp bitmap replaces it a moment later.
-     */
+    
+
+
+
+
     private val placeholderCache = object : LruCache<Int, Bitmap>(8 * 1024) {
         override fun sizeOf(key: Int, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
 
-    /**
-     * Inflated page bytes. Unzipping a 10 MB scan is often as expensive as
-     * decoding it; keeping the bytes means a page revisited after its bitmap
-     * was evicted only needs decoding again, never another inflate.
-     */
+    
+
+
+
+
     private val rawCache = object : LruCache<Int, ByteArray>(rawCacheLimit) {
         override fun sizeOf(key: Int, value: ByteArray): Int = (value.size / 1024).coerceAtLeast(1)
     }
     private val rawLock = Any()
 
-    /** Header-only page dimensions, used by the 1:1 "original size" zoom mode. */
+    
     private val sizeCache = object : LruCache<Int, Pair<Int, Int>>(256) {
         override fun sizeOf(key: Int, value: Pair<Int, Int>): Int = 1
     }
 
-    /** Mutable priority / active let a warm-up job be promoted the moment its page becomes visible. */
+    
     private class Load(
         val key: String,
         val index: Int,
@@ -212,12 +212,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val previews = ArrayDeque<Load>()
     private val inFlight = HashMap<String, Load>()
     private val queueLock = Any()
-    // Visible workers and the warm-up worker wait on separate signals: one
-    // worker must never consume the wake-up meant for another.
+    
+    
     private val wakeVisible = Channel<Unit>(Channel.CONFLATED)
     private val wakeWarm = Channel<Unit>(Channel.CONFLATED)
 
-    /** The page the reader is on. Kept loose enough to survive a one-frame Compose lag. */
+    
     @Volatile
     private var focusIndex = 0
 
@@ -227,12 +227,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         const val PLACEHOLDER_H = 800
     }
 
-    /**
-     * Continuous-scroll mode keeps the inflated bytes of recently seen pages so
-     * all of their slices share one unzip, and a separate bitmap cache for the
-     * slices themselves. It has its own worker: page mode and scroll mode are
-     * never active at the same time, so neither can starve the other.
-     */
+    
+
+
+
+
+
     private data class TileLoad(
         val key: String,
         val page: Int,
@@ -256,10 +256,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val tileWake = Channel<Unit>(Channel.CONFLATED)
 
     init {
-        // Two workers are reserved for the page(s) actually on screen. They
-        // never touch warm-up jobs, so a burst of turns cannot leave the newest
-        // page stuck behind a queue of older decodes. Archive reads serialise on
-        // the reader's own IO lock, while the CPU-bound decodes run in parallel.
+        
+        
+        
+        
         repeat(2) {
             viewModelScope.launch(Dispatchers.IO) {
                 while (isActive) {
@@ -278,9 +278,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-        // A third worker warms the pages around the reader and serves the
-        // preview strip. It produces the cheap placeholder before the full
-        // decode, so there is always something to draw after a fast turn.
+        
+        
+        
         viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 val job = takeWarm()
@@ -315,26 +315,26 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /**
-     * Newest visible request wins. When the reader taps through five pages
-     * faster than the decoder can keep up, the four abandoned pages are dropped
-     * instead of being decoded first — this is what used to make the spinner
-     * sit on screen while the picture "caught up".
-     */
+    
+
+
+
+
+
     private fun takeVisible(): Load? {
         val dropped = ArrayList<Load>(4)
         val picked = synchronized(queueLock) {
             fun valid(job: Load) = job.generation == generation &&
                 job.index in (focusIndex - WARM_RADIUS)..(focusIndex + WARM_RADIUS)
 
-            // A first-frame stand-in always wins: it costs one inflate plus a
-            // tiny decode and immediately replaces the spinner with artwork.
+            
+            
             val quick = urgent.lastOrNull { it.quick && valid(it) }
             if (quick != null) {
                 urgent.remove(quick)
                 return@synchronized quick
             }
-            // Otherwise the newest full decode; abandoned pages are dropped.
+            
             var found: Load? = null
             while (urgent.isNotEmpty()) {
                 val job = urgent.removeLast()
@@ -351,7 +351,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         return picked
     }
 
-    /** Warm the page nearest to the reader first, then the preview strip. */
+    
     private fun takeWarm(): Load? = synchronized(queueLock) {
         var best: Load? = null
         var bestScore = Int.MAX_VALUE
@@ -383,7 +383,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         job.result.complete(bitmap)
     }
 
-    /** One inflate per page, shared by the placeholder, the full decode and repeat visits. */
+    
     private fun rawBytes(index: Int, gen: Int): ByteArray? {
         synchronized(rawLock) {
             rawCache.get(index)?.let { return it }
@@ -396,7 +396,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         return if (gen == generation) bytes else null
     }
 
-    /** A ~0.8 MB stand-in decodes in a few ms; the full page follows right after. */
+    
     private fun warmPlaceholder(job: Load) {
         if (placeholderCache.get(job.index) != null) return
         val bytes = rawBytes(job.index, job.generation) ?: return
@@ -408,8 +408,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun decode(job: Load): Bitmap? {
         if (job.thumbnail) {
-            // The strip scrolls through hundreds of pages; caching their raw
-            // bytes would evict the pages the reader is actually looking at.
+            
+            
             val archive = reader ?: return null
             val bytes = runCatching { archive.readPage(job.index) }.getOrNull() ?: return null
             return PageDecoder.decode(bytes, 160, 240, 0, tight = true)
@@ -448,9 +448,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
         return synchronized(queueLock) {
             inFlight[key]?.let { existing ->
-                // A page being warmed in the background may suddenly become the
-                // one on screen. Promote it instead of making the reader wait
-                // behind the whole warm-up backlog.
+                
+                
+                
                 if (priority < existing.priority) {
                     when (existing.priority) {
                         -1, 0 -> urgent.remove(existing)
@@ -474,7 +474,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Caller holds [queueLock]. */
+    
     private fun enqueue(job: Load) {
         when (job.priority) {
             -1, 0 -> urgent.addLast(job)
@@ -532,10 +532,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         tileCache.evictAll()
     }
 
-    /** The page the user is looking at: highest priority. */
+    
     suspend fun page(index: Int, widthPx: Int, heightPx: Int, quality: Int): Bitmap? {
-        // A request dropped because the reader turned again must be retried,
-        // otherwise the page would stay on its blurry stand-in forever.
+        
+        
         repeat(3) { attempt ->
             val result = request(index, widthPx, heightPx, quality, false, 0, active = { true }).await()
             if (result != null) return result
@@ -544,26 +544,26 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         return null
     }
 
-    /** Fire-and-forget warm-up; stale pages leave the queue as the focus moves. */
+    
     fun prefetch(index: Int, widthPx: Int, heightPx: Int) {
         request(index, widthPx, heightPx, 0, false, 1, active = {
             abs(index - focusIndex) <= WARM_RADIUS
         })
     }
 
-    /** Called on every page change so the scheduler knows which decode to serve first. */
+    
     fun setVisibleFocus(focus: Int) {
         focusIndex = focus
         wakeVisible.trySend(Unit)
         wakeWarm.trySend(Unit)
     }
 
-    /**
-     * A first-frame picture served by the visible workers rather than by an
-     * unchecked burst of producer coroutines. One inflate — shared with the
-     * full decode through [rawCache] — plus a tiny decode, so the reader sees
-     * artwork instead of a spinner without flooding the archive's IO lock.
-     */
+    
+
+
+
+
+
     suspend fun quickPage(index: Int): Bitmap? {
         repeat(2) { attempt ->
             val result = request(index, 0, 0, 0, false, -1, active = { true }, quick = true).await()
@@ -573,11 +573,11 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         return null
     }
 
-    /** Lowest priority; `active` turns false when the preview scrolls away. */
+    
     suspend fun thumbnail(index: Int, active: () -> Boolean): Bitmap? =
         request(index, 0, 0, 0, true, 2, active = active).await()
 
-    /** Synchronous cache peek: show the old bitmap immediately instead of a spinner. */
+    
     fun peekPage(index: Int, quality: Int): Bitmap? =
         pageCache.get("$index-$quality")
             ?: pageCache.get("$index-0")
@@ -588,13 +588,13 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     fun peekThumbnail(index: Int): Bitmap? = thumbCache.get("t$index")
 
-    // ---- Continuous-scroll (Webtoon) support ----
+    
 
-    /**
-     * Only the first 64 KB of each entry is inflated, so even a 300-strip book
-     * gets a full size table in a moment. Pages whose header cannot be parsed
-     * fall back to a conventional comic ratio.
-     */
+    
+
+
+
+
     suspend fun pageSizes(): List<Pair<Int, Int>> = withContext(Dispatchers.IO) {
         val archive = reader ?: return@withContext emptyList()
         val count = pageCount
@@ -606,11 +606,11 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         result
     }
 
-    /**
-     * Pixel size of one page, read from the image header only. Used by the
-     * "original size" zoom mode, which needs the real dimensions to decode at
-     * 1:1 instead of at screen size.
-     */
+    
+
+
+
+
     suspend fun sourceSize(index: Int): Pair<Int, Int>? = withContext(Dispatchers.IO) {
         sizeCache.get(index)?.let { return@withContext it }
         val archive = reader ?: return@withContext null
@@ -644,7 +644,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun peekTile(page: Int, slice: Int, targetWidth: Int): Bitmap? =
         tileCache.get(tileKey(page, slice, targetWidth))
 
-    /** Switching modes frees the other mode's bitmaps so both never fill the heap. */
+    
     fun releasePageModeCaches() {
         pageCache.evictAll()
         thumbCache.evictAll()
@@ -667,7 +667,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         job.result.complete(bitmap)
     }
 
-    /** One unzip per page, shared by all of its slices. */
+    
     private fun bytesFor(page: Int): ByteArray? = synchronized(tileLock) {
         bytesCache.get(page)?.let { return@synchronized it }
         val archive = reader ?: return@synchronized null
@@ -679,8 +679,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private fun decodeTile(job: TileLoad): Bitmap? {
         val bytes = bytesFor(job.page) ?: return null
         PageDecoder.decodeRegion(bytes, job.top, job.bottom, job.targetWidth)?.let { return it }
-        // Exotic formats without region decoding: scale a bounded whole image
-        // and crop this strip's vertical fraction. Softer, but never blank.
+        
+        
         val size = PageDecoder.bounds(bytes) ?: return null
         val full = PageDecoder.decodeWhole(bytes) ?: return null
         val scale = full.height.toFloat() / size.second
@@ -715,11 +715,11 @@ fun ReaderScreen(
     onResetProgress: () -> Unit
 ) {
     val activity = LocalContext.current as? Activity
-    // While the settings window is open it owns the back button; the content
-    // below installs its own handler that closes the window / tool bar first.
+    
+    
     BackHandler(enabled = !settingsOpen) { onBack() }
 
-    // Screen-level push animations are owned by the parent AnimatedContent.
+    
     DisposableEffect(book.id, settings.keepAwake) {
         val window = activity?.window
         if (settings.keepAwake) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -745,13 +745,13 @@ fun ReaderScreen(
                 }
             }
             vm.error != null -> ErrorPane(message = errorMessage(vm.error), onBack = onBack)
-            // Rebuild the pager when the page layout changes: switching to double
-            // page halves the page count, and keeping the old pager index would
-            // point past the end of the new range.
+            
+            
+            
             else -> key(book.id, vm.pageCount, settings.readMode, settings.doublePage, settings.readingDirection) {
                 when (settings.readMode) {
                     1 -> {
-                        // Continuous vertical scroll for long Webtoon strips.
+                        
                         WebtoonScreen(
                             book = book,
                             vm = vm,
@@ -766,7 +766,7 @@ fun ReaderScreen(
                         )
                     }
                     2 -> {
-                        // Continuous horizontal scroll: pages joined into one strip.
+                        
                         HorizontalWebtoonScreen(
                             book = book,
                             vm = vm,
@@ -850,7 +850,7 @@ private fun ReaderContent(
     val logicalCount = if (doublePage) (pageCount + 1) / 2 else pageCount
     if (logicalCount <= 0) return
 
-    // Stored progress is the image page index (0-based), not the pager index.
+    
     val savedImage = prefs.progress(book.id).coerceIn(0, pageCount - 1)
     val initialPage = (if (doublePage) savedImage / 2 else savedImage)
         .coerceIn(0, logicalCount - 1)
@@ -858,8 +858,8 @@ private fun ReaderContent(
     LaunchedEffect(Unit) { vm.releaseWebtoonCaches() }
     var showUi by remember { mutableStateOf(true) }
 
-    // Back inside the reader peels one layer at a time instead of jumping
-    // straight out to the shelf: settings window -> tool bar -> leave book.
+    
+    
     BackHandler {
         when {
             settingsOpen -> onCloseSettings()
@@ -872,17 +872,17 @@ private fun ReaderContent(
     var offsetY by remember { mutableStateOf(0f) }
     var flashSide by remember { mutableIntStateOf(-1) }
     var flashToken by remember { mutableIntStateOf(0) }
-    // The badge must be REMOVED from the composition when the animation ends.
-    // Relying on a layer alpha alone left a persistent grey circle on the page
-    // after a tap; an explicit visibility flag makes that impossible.
+    
+    
+    
     var showFlash by remember { mutableStateOf(false) }
     val flashAlpha = remember { Animatable(0f) }
     val flashIn = motionTween<Float>(MotionSpec.SHORT, MotionSpec.EaseOutCubic)
     val flashOut = motionTween<Float>(MotionSpec.MEDIUM, MotionSpec.EaseOutCubic)
 
-    // One effect per tap. Restarting it (rapid taps) cancels the previous run,
-    // and the new run always finishes with snapTo(0) + showFlash = false. The
-    // timeout is a safety net so the badge can never get stuck on screen.
+    
+    
+    
     LaunchedEffect(flashToken) {
         if (flashToken == 0) return@LaunchedEffect
         showFlash = true
@@ -895,22 +895,22 @@ private fun ReaderContent(
         showFlash = false
     }
 
-    // `scale` is written on every gesture frame. Reading it directly here used to
-    // recompose the whole reader (including the preview strip and slider) 60 times
-    // a second while pinching. derivedStateOf only invalidates at the thresholds.
+    
+    
+    
     val zoomed by remember { derivedStateOf { scale > 1.02f } }
     val pageTurnMode = settings.pageAnim
-    // The non-sliding animations replace the pager's own travel with an in-place
-    // turn. They are switched off while the page is zoomed, where the pager's
-    // normal swipe/pan behaviour must stay untouched.
+    
+    
+    
     val useTurnLayer = pageTurnMode != PageAnimation.SLIDE && !zoomed
-    // Which side of a freshly turned spread to show first: +1 = left page,
-    // -1 = right page. It must NEVER default to 0 (centre) for a spread wider
-    // than the screen: panX = 0 puts the gutter between the two pages right in
-    // the middle of the viewport, which is exactly what a reader should not
-    // see when turning to a new pair of pages. Every way of changing pages
-    // (opening a book, edge taps, toolbar buttons, slider) lands on one whole
-    // page, never on the seam.
+    
+    
+    
+    
+    
+    
+    
     var entrySide by remember { mutableIntStateOf(if (rtl) -1 else 1) }
     val quality by remember {
         derivedStateOf {
@@ -928,18 +928,18 @@ private fun ReaderContent(
         offsetY = 0f
     }
 
-    // reverseLayout already flips the visual order and swipe direction for manga mode.
-    // Keeping the pager index as the logical page number avoids a double inversion,
-    // which used to make the progress indicator stop at the wrong end.
+    
+    
+    
     fun firstImageIndex(pagerPage: Int): Int =
         if (doublePage) pagerPage * 2 else pagerPage
 
     val pagerState = rememberPagerState(initialPage = initialPage) { logicalCount }
     val currentPage = pagerState.currentPage.coerceIn(0, logicalCount - 1)
 
-    // A synchronous requested-page counter is what makes rapid taps work:
-    // animateScrollToPage() keeps currentPage stale for the whole ~220 ms, so
-    // every tap in that window would otherwise compute the same target.
+    
+    
+    
     var requestedPage by remember { mutableIntStateOf(initialPage) }
     var jumpJob by remember { mutableStateOf<Job?>(null) }
     var lastTurnAt by remember { mutableStateOf(0L) }
@@ -948,19 +948,19 @@ private fun ReaderContent(
 
     fun goTo(target: Int) {
         val safe = target.coerceIn(0, logicalCount - 1)
-        // Toolbar prev/next/first/last and edge taps all funnel through here.
-        // Updating the landing side here means none of them can ever show the
-        // gutter in the middle of the screen.
+        
+        
+        
         val delta = safe - pagerState.currentPage
         if (delta != 0) {
             entrySide = (if (delta > 0) 1 else -1) * (if (rtl) -1 else 1)
         }
         val now = SystemClock.uptimeMillis()
-        // A single, unhurried tap plays the page-turn animation. Once taps come
-        // in a burst (or the previous animation is still running), restarting
-        // animateScrollToPage() over and over leaves the pager stranded
-        // mid-scroll and pages stop advancing — so snap instead. That is also
-        // exactly what "fast page turning" should feel like.
+        
+        
+        
+        
+        
         val burst = now - lastTurnAt < 420L ||
             jumpJob?.isActive == true || pagerState.isScrollInProgress
         lastTurnAt = now
@@ -975,18 +975,18 @@ private fun ReaderContent(
         }
     }
 
-    // Base the turn on the pager's real current page. animateScrollToPage() sets
-    // currentPage to the target immediately, so every tap advances exactly one page
-    // and rapid taps each land on the next one. The old requestedPage counter was
-    // re-synced by LaunchedEffects that could run while currentPage was still
-    // lagging, pulling the next tap's target back onto the current page — exactly
-    // the "needs two taps" symptom.
+    
+    
+    
+    
+    
+    
     fun go(delta: Int) = goTo(pagerState.currentPage + delta)
 
-    // A finger swipe (or a slider drag) changes the page without goTo(); adopt it
-    // once the pager settles, but never while our own jump is still in flight,
-    // and never in the middle of a burst of taps (that would swallow the pages
-    // the user has already queued up).
+    
+    
+    
+    
     LaunchedEffect(currentPage) {
         val burst = SystemClock.uptimeMillis() - lastTurnAt < 420L
         if (!burst && jumpJob?.isActive != true && !pagerState.isScrollInProgress) {
@@ -994,8 +994,8 @@ private fun ReaderContent(
         }
     }
 
-    // After the burst ends, re-align the counter with the real page, so a swipe
-    // made right after a burst cannot leave the next tap off by a page.
+    
+    
     LaunchedEffect(lastTurnAt) {
         if (lastTurnAt == 0L) return@LaunchedEffect
         delay(450L)
@@ -1004,12 +1004,12 @@ private fun ReaderContent(
         }
     }
 
-    // A manual swipe (or slider drag) ends when isScrollInProgress flips to false.
-    // currentPage has already advanced by then, but the two sync effects above
-    // react to currentPage / lastTurnAt and can miss that exact settle moment,
-    // leaving requestedPage stuck on the PRE-swipe page. Re-align here as well:
-    // without it, the first tap after a swipe computes its target from the old
-    // page and effectively turns nothing, so the page looks like it needs two taps.
+    
+    
+    
+    
+    
+    
     LaunchedEffect(Unit) {
         snapshotFlow { pagerState.isScrollInProgress }
             .collect { scrolling ->
@@ -1019,11 +1019,11 @@ private fun ReaderContent(
             }
     }
 
-    // The page that was on screen before the current turn began. During a turn
-    // it is drawn as a solid plate behind the pager: a fade or a flip then
-    // always has a real page underneath it, instead of exposing the black
-    // reader background in the middle of the animation. It only advances once
-    // the pager has fully settled, so the swap is invisible.
+    
+    
+    
+    
+    
     var settledPage by remember { mutableIntStateOf(initialPage) }
     LaunchedEffect(Unit) {
         snapshotFlow {
@@ -1035,24 +1035,24 @@ private fun ReaderContent(
     }
 
     fun turn(delta: Int, side: Int) {
-        // reverseLayout flips the visual side of "forward", so the edge a new
-        // spread opens on has to be flipped with it.
+        
+        
         entrySide = delta * if (rtl) -1 else 1
         go(delta)
         flashSide = side
         flashToken++
     }
 
-    // Changing the zoom mode changes what "1x" means, so any pinch state from the
-    // previous mode would be wrong.
+    
+    
     LaunchedEffect(settings.fitMode, settings.zoomPercent) {
         resetZoom()
     }
 
-    LaunchedEffect(currentPage, pageCount) {        // Reading state follows the page you are on, not the furthest page you
-        // ever reached. Page 0 means "unread": the record is deleted so the book
-        // disappears from the reading tab and loses its shelf progress bar.
-        // Merely opening a book therefore leaves no trace either.
+    LaunchedEffect(currentPage, pageCount) {        
+        
+        
+        
         val imageIndex = firstImageIndex(currentPage)
         if (imageIndex > 0) {
             onProgress(imageIndex, pageCount)
@@ -1066,37 +1066,37 @@ private fun ReaderContent(
         val density = LocalDensity.current
         val targetW = with(density) { maxWidth.toPx().toInt() }
         val targetH = with(density) { maxHeight.toPx().toInt() }
-        // A landscape phone is short (roughly 400 dp tall): the reader toolbar,
-        // which is sized for a tall portrait screen, would otherwise cover
-        // almost the entire picture. Tablets in landscape still have plenty of
-        // height, so they keep the roomy layout.
+        
+        
+        
+        
         val compactBar = maxHeight < 520.dp
 
-        // A tap is only a tap when the finger stays put.
+        
         val tapTolerancePx = with(density) { 2.dp.toPx() }
-        // Ask the OS how wide its swipe-back zones are instead of guessing:
-        // they differ between phones and navigation modes. Everything inside
-        // them is ignored, because on some phones that gesture reaches the app
-        // as DOWN followed by an immediate cancel, with no movement at all.
+        
+        
+        
+        
         val gestureInsets = WindowInsets.systemGestures
         val leftGuard = gestureInsets.getLeft(density, LayoutDirection.Ltr)
         val rightGuard = gestureInsets.getRight(density, LayoutDirection.Ltr)
         val gestureGuardPx = maxOf(
             leftGuard.toFloat(),
             rightGuard.toFloat(),
-            // Fallback for ROMs that fail to report the gesture insets. A narrow
-            // strip is always reserved; the tappable left/right zones are far
-            // wider than this, so normal edge paging is unaffected.
+            
+            
+            
             with(density) { 20.dp.toPx() }
         ) + with(density) { 4.dp.toPx() }
 
         LaunchedEffect(currentPage, doublePage, pageCount, targetW, targetH) {
             val focus = firstImageIndex(currentPage)
             vm.setVisibleFocus(focus)
-            // Warm a window around the reader, with more pages ahead than
-            // behind, and include BOTH images of a spread. A burst of taps
-            // easily outruns a one-page look-ahead. Nearest first, so the very
-            // next tap has its cheap stand-in before the full window finishes.
+            
+            
+            
+            
             val from = (currentPage - WARM_BACK).coerceAtLeast(0)
             val to = (currentPage + WARM_AHEAD).coerceAtMost(logicalCount - 1)
             val indices = ArrayList<Int>((to - from + 1) * 2)
@@ -1109,11 +1109,11 @@ private fun ReaderContent(
             indices.forEach { vm.prefetch(it, targetW, targetH) }
         }
 
-        // Solid plate of the reader background under both pages. The outgoing
-        // page now fades out while the incoming one fades in, so around a
-        // smaller incoming picture the reader sees the background, never the
-        // previous page. Drawing the previous page here (the old cure for a
-        // black frame mid-flip) is exactly what used to leak through.
+        
+        
+        
+        
+        
         if (useTurnLayer) {
             Box(Modifier.fillMaxSize().background(Color(0xFF101014)))
         }
@@ -1136,11 +1136,11 @@ private fun ReaderContent(
                         }
                     }
                 }
-                // Tap recognition sits on the FINAL dispatch pass and never
-                // consumes an event. A separate full-screen overlay (or a
-                // detector that consumes the down) starves the pager's own drag
-                // detector, which is what used to kill swipe-to-turn. Watching
-                // from the back keeps swipes, pinch-zoom and taps independent.
+                
+                
+                
+                
+                
                 .pointerInput(
                     rtl, zoomed, tapToTurn, logicalCount,
                     tapTolerancePx, gestureGuardPx
@@ -1158,8 +1158,8 @@ private fun ReaderContent(
                         lastTapX = x
                         lastTapY = y
                         if (zoomed) {
-                            // A double tap flips the toolbar twice (back to where
-                            // it was) and also restores the zoom.
+                            
+                            
                             showUi = !showUi
                             if (isDouble) resetZoom()
                         } else if (tapToTurn) {
@@ -1178,20 +1178,20 @@ private fun ReaderContent(
         ) { pagerPage ->
             val first = firstImageIndex(pagerPage)
             val showSecond = doublePage && first + 1 < pageCount
-            // Signed distance from the viewport centre, in page widths. reversing
-            // the layout flips the pager's own placement, so the sign is flipped
-            // here too. `progress` runs 0 -> 1 as a page travels towards the
-            // centre, and stays continuous when currentPage flips at the halfway
-            // point of a turn.
+            
+            
+            
+            
+            
             val pos = ((pagerPage - pagerState.currentPage) -
                 pagerState.currentPageOffsetFraction) * if (rtl) -1f else 1f
             val progress = (1f - abs(pos)).coerceIn(0f, 1f)
-            // Progress of the TURN as a whole: 0 while settled, 1 when the new
-            // page has arrived. It is measured from the settled page (which does
-            // not change mid-turn), so it stays continuous even when
-            // currentPage flips at the halfway point. The outgoing page fades
-            // out with exactly the complement of the incoming page's alpha, so
-            // a smaller incoming canvas can never expose the previous picture.
+            
+            
+            
+            
+            
+            
             val settledPos = ((settledPage - pagerState.currentPage) -
                 pagerState.currentPageOffsetFraction) * if (rtl) -1f else 1f
             val turnProgress = abs(settledPos).coerceIn(0f, 1f)
@@ -1201,18 +1201,18 @@ private fun ReaderContent(
             }
             val isBase = pagerPage == settledPage
             val inRange = abs(pos) <= 1.02f
-            // zIndex is a modifier (not a graphicsLayer property): it decides
-            // which sheet is on top, whichever index the pager composes first.
-            // In a book flip the sheet being turned AWAY is the top one — it
-            // swings off and uncovers the page underneath. Every other turn
-            // keeps the incoming page on top.
+            
+            
+            
+            
+            
             val layerZ = if (useTurnLayer && inRange) {
                 if (pageTurnMode == PageAnimation.FLIP) {
                     if (isBase) 1f else 0f
                 } else if (!isBase) 1f else 0f
             } else 0f
-            // Captured here: inside graphicsLayer the bare name `density` does not
-            // resolve to a number (it picks up a function of the same name).
+            
+            
             val screenDensity = LocalDensity.current.density
             PageRow(
                 vm = vm,
@@ -1231,50 +1231,50 @@ private fun ReaderContent(
                         scaleY = scale
                         translationX = offsetX
                         translationY = offsetY
-                        // Reset everything the turn can touch, so switching back
-                        // to "slide" or pinching a page cannot leave a rotated or
-                        // transparent layer behind.
+                        
+                        
+                        
                         alpha = 1f
                         rotationY = 0f
                         transformOrigin = TransformOrigin.Center
                         cameraDistance = 8f * screenDensity
                         if (useTurnLayer) {
-                            // Cancel the pager's travel with the UNCLAMPED value:
-                            // clamping here used to leave pages half a screen off
-                            // to the side whenever a jump skipped more than one
-                            // page, which is exactly the black gap.
+                            
+                            
+                            
+                            
                             translationX -= pos * size.width
                             if (isBase) {
-                                // The page being left fades away at the same
-                                // rate the new one appears (complementary alpha).
-                                // It used to stay fully opaque, which is why a
-                                // smaller incoming picture briefly showed the
-                                // previous page around its edges.
+                                
+                                
+                                
+                                
+                                
                                 alpha = 1f - incomingAlpha
                                 if (pageTurnMode == PageAnimation.FLIP && turnProgress > 0f) {
-                                    // Fading alone is not a page turn: the old
-                                    // picture never MOVED, so the animation read
-                                    // as "a new picture appearing on top of the
-                                    // old one". The outgoing sheet now swings
-                                    // away around the same spine while the
-                                    // incoming one swings in from the other
-                                    // side. Both sheets are visible mid-turn,
-                                    // one folding out, one folding in.
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
+                                    
                                     val forward = if (rtl) settledPos > 0f else settledPos < 0f
                                     val dir = if (forward) 1f else -1f
                                     val side = if (rtl) -1f else 1f
-                                    // By the time the complementary alpha reaches
-                                    // zero the sheet is nearly edge-on, so it
-                                    // never leaves a flat ghost on the screen.
+                                    
+                                    
+                                    
                                     rotationY = -dir * side * turnProgress * 118f
                                     transformOrigin = TransformOrigin(
                                         if (rtl) 1f else 0f,
                                         0.5f
                                     )
                                     cameraDistance = 12f * screenDensity
-                                    // A little travel reinforces the direction
-                                    // of the fold: the sheet really leaves the
-                                    // viewport instead of rotating in place.
+                                    
+                                    
+                                    
                                     translationX -= dir * side * turnProgress *
                                         size.width * 0.10f
                                 }
@@ -1284,27 +1284,27 @@ private fun ReaderContent(
                                 } else when (pageTurnMode) {
                                     PageAnimation.FADE -> alpha = progress
                                     PageAnimation.FLIP -> {
-                                        // The spine stays on ONE side (left for
-                                        // left-to-right books, right for manga),
-                                        // whichever way the reader turns. Going
-                                        // back is the same fold played in reverse:
-                                        // the page swings the other way around
-                                        // that same edge, instead of mirroring the
-                                        // whole animation onto the opposite side
-                                        // and repeating it.
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
                                         val spineX = if (rtl) 1f else 0f
                                         val towardsNext = if (rtl) pos < 0f else pos > 0f
                                         val fold = (1f - progress) * 68f
-                                        // Flipping the spine to the other edge
-                                        // mirrors the perspective too, so the sign
-                                        // has to flip with it. Otherwise a
-                                        // right-to-left book would "fold down"
-                                        // when going forward and "fold up" when
-                                        // going back — the exact opposite of a
-                                        // left-to-right book. With this factor,
-                                        // forward always rises from the bottom
-                                        // and back always settles from the top,
-                                        // in BOTH reading directions.
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
                                         val side = if (rtl) -1f else 1f
                                         rotationY = (if (towardsNext) fold else -fold) * side
                                         cameraDistance = 12f * screenDensity
@@ -1324,9 +1324,9 @@ private fun ReaderContent(
             )
         }
 
-        // Direction feedback for edge taps. The badge exists in the tree ONLY
-        // while its animation runs: showFlash is turned off unconditionally at
-        // the end, so a grey circle can never be left behind on the page.
+        
+        
+        
         if (showFlash) {
             Box(
                 modifier = Modifier
@@ -1371,10 +1371,10 @@ private fun ReaderContent(
                     ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Each book remembers its own orientation; books without an
-                // override inherit the global setting. ComicApp applies only the
-                // global value outside the reader, so leaving a book restores it
-                // (including "follow system" on tablets).
+                
+                
+                
+                
                 val effectiveOrientation = settings.bookOrientationRev.let {
                     val perBook = settings.bookOrientation(book.id)
                     if (perBook >= 0) perBook else settings.screenOrientation
@@ -1429,9 +1429,9 @@ private fun ReaderContent(
                         vertical = if (compactBar) 6.dp else 10.dp
                     )
                 ) {
-                    // Page number + two icons, shared by both layouts. On a short
-                    // landscape screen the icons are shrunk so this row does not
-                    // eat a fifth of the available height.
+                    
+                    
+                    
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = S.pageProgress(firstImageIndex(currentPage), pageCount),
@@ -1461,11 +1461,11 @@ private fun ReaderContent(
                     }
 
                     if (compactBar) {
-                        // A landscape phone is WIDE but SHORT. Stacking every
-                        // control vertically used up nearly the whole screen and
-                        // hid the comic. Spend the width instead: page previews
-                        // and the seek bar on the left, all the buttons on the
-                        // right, in three short rows.
+                        
+                        
+                        
+                        
+                        
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1650,19 +1650,19 @@ private fun ReaderContent(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.align(Alignment.CenterHorizontally)
                         )
-                    }   // end of the roomy portrait/tablet layout
+                    }   
                 }
             }
         }
     }
 }
 
-/**
- * A horizontally scrollable strip of small page previews, in the spirit of the
- * page-seek bar in desktop/mobile comic viewers. Only visible items are decoded,
- * from a dedicated small-bitmap cache, so a 300-page book stays light.
- * In manga mode the strip is mirrored to match the reading direction.
- */
+
+
+
+
+
+
 @Composable
 private fun PagePreviewStrip(
     count: Int,
@@ -1680,8 +1680,8 @@ private fun PagePreviewStrip(
     val gap = if (compact) 4.dp else 8.dp
     val tilePadding = if (compact) 2.dp else 3.dp
 
-    // Snap, do not animate: a tween here would fight with rapid page turns and
-    // with the user's own scrolling of the strip.
+    
+    
     LaunchedEffect(current) {
         if (!state.isScrollInProgress) {
             state.scrollToItem((current - 2).coerceAtLeast(0))
@@ -1705,8 +1705,8 @@ private fun PagePreviewStrip(
                 key1 = imageIndex,
                 key2 = vm
             ) {
-                // `isActive` becomes false as soon as this preview scrolls out of
-                // the strip, letting the worker skip the expensive unzip.
+                
+                
                 value = vm.thumbnail(imageIndex) { isActive }
             }
             val active = index == current
@@ -1780,10 +1780,10 @@ fun SmallAction(
     }
 }
 
-/**
- * One logical page (one image, or two side by side). Shared by the pager and by
- * the opaque underlay, so both always show exactly the same fit / zoom / decode.
- */
+
+
+
+
 @Composable
 private fun PageRow(
     vm: ReaderViewModel,
@@ -1796,11 +1796,11 @@ private fun PageRow(
     entrySide: Int = 0,
     modifier: Modifier = Modifier
 ) {
-    // One logical page is ONE picture. In double-page mode the two images are
-    // stitched into a single spread first (same height, one shared scale), then
-    // the fit mode is applied to that spread as a whole. Splitting the screen
-    // into two independent weight(1f) cells made each half crop and pan on its
-    // own, which looked like two separate viewers glued together.
+    
+    
+    
+    
+    
     val indices = remember(first, showSecond) {
         if (showSecond) listOf(first, first + 1) else listOf(first)
     }
@@ -1818,7 +1818,7 @@ private fun PageRow(
     )
 }
 
-/** Decode one image of the spread, using the same targets as before. */
+
 @Composable
 private fun rememberPageBitmap(
     vm: ReaderViewModel,
@@ -1829,8 +1829,8 @@ private fun rememberPageBitmap(
     zoomMode: Int,
     zoomPercent: Int
 ): Bitmap? {
-    // "Original size" is the only mode that needs the real pixel dimensions of
-    // the artwork; every other mode is scaled from the viewport anyway.
+    
+    
     var source by remember(index, zoomMode) { mutableStateOf<Pair<Int, Int>?>(null) }
     LaunchedEffect(index, zoomMode) {
         if (zoomMode == ZoomMode.ORIGINAL) source = vm.sourceSize(index)
@@ -1851,19 +1851,19 @@ private fun rememberPageBitmap(
             decodeH = targetH
         }
     }
-    // Show a sharp cached bitmap if there is one, otherwise the cheap stand-in
-    // produced by the warm-up worker. Either way the page has a picture on the
-    // very first frame — the full decode replaces it without a spinner.
+    
+    
+    
     val state = produceState<Bitmap?>(
         initialValue = vm.peekPage(index, quality) ?: vm.peekPlaceholder(index),
         key1 = index,
         key2 = quality,
         key3 = "$decodeW-$decodeH"
     ) {
-        // A page that skipped the warm-up window still gets a picture on its
-        // first frame: produce the cheap stand-in here (on IO), show it, and
-        // only then ask for the full-resolution decode. The inflate is shared
-        // through the raw-byte cache, so this adds ~10 ms, not a second decode.
+        
+        
+        
+        
         if (vm.peekPage(index, quality) == null && vm.peekPlaceholder(index) == null) {
             val quick = vm.quickPage(index)
             if (quick != null && value == null) value = quick
@@ -1874,14 +1874,14 @@ private fun rememberPageBitmap(
     return state.value
 }
 
-/**
- * Draws one logical page: one image, or two images stitched into ONE spread.
- *
- * The stitched picture has a single height, a single scale factor and a single
- * pan offset. Fit / zoom modes are applied to the COMBINED dimensions, never to
- * each half separately, so a double page behaves exactly like one wide picture
- * instead of two independent half-screen viewers with a seam down the middle.
- */
+
+
+
+
+
+
+
+
 @Composable
 private fun PageSpread(
     vm: ReaderViewModel,
@@ -1906,18 +1906,18 @@ private fun PageSpread(
         val viewportH = constraints.maxHeight.toFloat().coerceAtLeast(1f)
         val density = LocalDensity.current
 
-        // A fixed number of call sites for a given spread keeps the produceState
-        // slots stable across recompositions and page turns.
+        
+        
         val loaded = ArrayList<Bitmap?>(indices.size)
         for (i in indices) {
             loaded += rememberPageBitmap(vm, i, targetW, targetH, quality, zoomMode, zoomPercent)
         }
 
-        // Keep the last complete spread on screen while the next one decodes.
-        // Even a burst of taps faster than the decoder should never blank the
-        // artwork or show a spinner: each new image takes over the moment it is
-        // ready. Only the very first page of a newly opened book has nothing to
-        // fall back on, and that is the one case where a spinner is honest.
+        
+        
+        
+        
+        
         var lastGood by remember(indices, zoomMode) { mutableStateOf<List<Bitmap>?>(null) }
         val signature = loaded.joinToString(",") { b ->
             b?.let { System.identityHashCode(it).toString() } ?: "-"
@@ -1931,8 +1931,8 @@ private fun PageSpread(
         if (bitmaps.any { it == null }) {
             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         } else {
-            // Normalise every page to one common height, keeping its own aspect
-            // ratio, then concatenate the widths to get ONE combined picture.
+            
+            
             val commonH = bitmaps.maxOf { it!!.height.toFloat().coerceAtLeast(1f) }
             val widths = FloatArray(bitmaps.size) { k ->
                 val b = bitmaps[k]!!
@@ -1940,7 +1940,7 @@ private fun PageSpread(
             }
             val totalW = widths.sum().coerceAtLeast(1f)
 
-            // The old single-page maths, applied to the combined dimensions.
+            
             val (scaleW, scaleH) = when (zoomMode) {
                 ZoomMode.ORIGINAL -> 1f to 1f
                 ZoomMode.FIT_WIDTH -> {
@@ -1948,11 +1948,11 @@ private fun PageSpread(
                     f to f
                 }
                 ZoomMode.FIT_HEIGHT -> {
-                    // "Fit to height" means the combined picture fills the
-                    // screen height. On a portrait phone a two-page spread then
-                    // becomes wider than the screen; that overflow is panned,
-                    // exactly like Fit-to-width overflows vertically. Capping
-                    // this by the width would silently turn it into Fit-to-width.
+                    
+                    
+                    
+                    
+                    
                     val f = viewportH / commonH
                     f to f
                 }
@@ -1965,7 +1965,7 @@ private fun PageSpread(
                     val f = maxOf(viewportW / totalW, viewportH / commonH)
                     f to f
                 }
-                else -> { // FIT_SCREEN
+                else -> { 
                     val f = minOf(viewportW / totalW, viewportH / commonH)
                     f to f
                 }
@@ -1975,11 +1975,11 @@ private fun PageSpread(
             val maxPanX = ((spreadW - viewportW) / 2f).coerceAtLeast(0f)
             val maxPanY = ((spreadH - viewportH) / 2f).coerceAtLeast(0f)
 
-            // Landing position for a NEW spread: put the CENTRE OF THE
-            // VIEWPORT on the centre of the page the reader enters from. For a
-            // left-to-right book turning forward that is the left page, so the
-            // middle of the screen shows that whole page, not the gutter
-            // between the two. Single pages keep the old centred behaviour.
+            
+            
+            
+            
+            
             val firstW = widths[0] * scaleW
             val secondW = if (widths.size > 1) widths[1] * scaleW else 0f
             val landingCentre = when {
@@ -1990,8 +1990,8 @@ private fun PageSpread(
             val landingPx = (spreadW / 2f - landingCentre)
                 .coerceIn(-maxPanX, maxPanX)
 
-            // Only a freshly turned spread is repositioned: after that panX is
-            // left alone so dragging keeps exactly where the finger put it.
+            
+            
             var appliedFor by remember { mutableStateOf<List<Int>?>(null) }
             LaunchedEffect(indices, maxPanX, entrySide, landingPx) {
                 if (appliedFor != indices) {
@@ -2008,10 +2008,10 @@ private fun PageSpread(
                 maxPanX > 1f -> Modifier.pointerInput(
                     indices, zoomMode, zoomPercent, maxPanX, maxPanY
                 ) {
-                    // Panning an oversized spread just stops at the edge. Page
-                    // turns come from tapping the left / right side of the
-                    // screen (or the pager's own swipe when the picture fits);
-                    // dragging past the edge must never change the page.
+                    
+                    
+                    
+                    
                     detectDragGestures { change, dragAmount ->
                         change.consume()
                         panX = (panX + dragAmount.x).coerceIn(-maxPanX, maxPanX)
@@ -2028,8 +2028,8 @@ private fun PageSpread(
             }
             Row(
                 modifier = Modifier
-                    // requiredSize, not size: size() clamps to the parent's
-                    // constraints and would squash a page that needs to overflow.
+                    
+                    
                     .requiredSize(
                         with(density) { spreadW.toDp() },
                         with(density) { spreadH.toDp() }

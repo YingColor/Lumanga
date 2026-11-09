@@ -74,33 +74,33 @@ import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.theme.Palettes
 import com.yingcolor.lumanga.data.ZoomMode
 
-/** Which page of the settings window is shown. */
+
 object SettingsRoute {
     const val CLOSED = 0
 
-    /** Menu with the entry points (reading, appearance, shelf…). */
+    
     const val ROOT = 1
 
-    /** All reading options; the reader's gear button opens this page directly. */
+    
     const val READING = 2
 
-    /** Library folders: add another root, drop one that is no longer needed. */
+    
     const val LIBRARIES = 3
 
-    /** Accent colour, light/dark mode and the page-turn animation. */
+    
     const val PERSONALIZE = 4
 }
 
-/**
- * A floating settings window rather than a full-screen sheet: the page stays
- * visible — and sharp — around it, so a change can be judged without closing the
- * window. Reading options live on their own page, reachable from the menu and
- * opened directly by the gear button in the reader.
- *
- * Only the card is frosted. [backdrop] is a blurred snapshot of the page taken
- * just before the card opened (see [Backdrop]); without it the card has to be
- * denser, otherwise small text competes with the artwork underneath.
- */
+
+
+
+
+
+
+
+
+
+
 @Composable
 internal fun SettingsDialog(
     route: Int,
@@ -118,8 +118,8 @@ internal fun SettingsDialog(
 ) {
     val scheme = MaterialTheme.colorScheme
 
-    // Keep the last visible page during the exit animation, otherwise the
-    // content would snap back to the menu while the window fades out.
+    
+    
     val pageFade = motionTween<Float>(MotionSpec.SHORT)
     var shown by remember { mutableIntStateOf(if (route == 0) SettingsRoute.ROOT else route) }
     LaunchedEffect(route) {
@@ -129,19 +129,19 @@ internal fun SettingsDialog(
     val frosted = backdrop != null
     val shape = RoundedCornerShape(28.dp)
     val glass = scheme.surfaceContainerLow
-    // A bright page under a dark card is the worst case for the small print, so
-    // the tint stays dense enough to keep it readable while the blur still reads
-    // as glass.
-    // Without a snapshot the card falls back to a nearly solid panel: a denser
-    // translucent one would show the sharp page through the labels, which is
-    // exactly the readability problem the glass is meant to solve.
+    
+    
+    
+    
+    
+    
     val topAlpha = if (frosted) 0.68f else 0.97f
     val bottomAlpha = if (frosted) 0.56f else 0.93f
     val rowAlpha = if (frosted) 0.58f else 0.72f
     val scrimAlpha = if (frosted) 0.10f else 0.30f
 
-    // Where the card sits in the window, so the snapshot can be shifted to the
-    // same place and the glass shows the page that is actually underneath it.
+    
+    
     var cardOrigin by remember { mutableStateOf(IntOffset.Zero) }
 
     AnimatedVisibility(
@@ -158,10 +158,10 @@ internal fun SettingsDialog(
             )
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // A very light scrim: the page has to stay visible (and sharp) around
-            // the card — that is the point of a floating window instead of a
-            // full-screen panel. With the card carrying its own blur, almost no
-            // dimming is needed.
+            
+            
+            
+            
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -176,9 +176,9 @@ internal fun SettingsDialog(
                     .shadow(24.dp, shape, clip = false)
                     .clip(shape)
                     .onGloballyPositioned { cardOrigin = it.positionInWindow().round() }
-                    // Taps on the card's own padding must not reach the scrim
-                    // behind it, or a miss between two rows would close the
-                    // window instead of doing nothing.
+                    
+                    
+                    
                     .pointerInput(Unit) { detectTapGestures(onTap = {}) }
             ) {
                 if (backdrop != null) {
@@ -188,10 +188,10 @@ internal fun SettingsDialog(
                         contentScale = ContentScale.FillBounds,
                         filterQuality = FilterQuality.High,
                         modifier = Modifier.layout { measurable, _ ->
-                            // The snapshot covers the whole window: laying it out
-                            // at window size and shifting it by the card's own
-                            // offset makes the visible part line up with the page
-                            // that is actually behind the glass.
+                            
+                            
+                            
+                            
                             val placeable = measurable.measure(
                                 Constraints.fixed(backdrop.windowWidth, backdrop.windowHeight)
                             )
@@ -201,9 +201,9 @@ internal fun SettingsDialog(
                         }
                     )
                 }
-                // The tint goes above the snapshot: it is what keeps the small
-                // text readable, and it fades slightly towards the bottom so more
-                // of the blurred page shows through.
+                
+                
+                
                 Box(
                     modifier = Modifier
                         .matchParentSize()
@@ -217,10 +217,10 @@ internal fun SettingsDialog(
                         )
                 )
 
-                // The card is a plain Box (a Surface would be opaque), so the
-                // default text colour has to be provided here — otherwise every
-                // Text without an explicit colour falls back to black and turns
-                // invisible in the dark theme.
+                
+                
+                
+                
                 CompositionLocalProvider(LocalContentColor provides scheme.onSurface) {
                     Column(modifier = Modifier.padding(20.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -273,8 +273,8 @@ internal fun SettingsDialog(
                     }
                 }
 
-                // Drawn last so the hairline sits on top of the glass instead of
-                // being hidden under it.
+                
+                
                 Box(
                     modifier = Modifier
                         .matchParentSize()
@@ -297,8 +297,8 @@ private fun RootSettings(
 ) {
     val scheme = MaterialTheme.colorScheme
 
-    // Three deliberate taps, then a warning that must stay on screen for three
-    // full seconds, keep a stray tap from wiping the whole reading history.
+    
+    
     var clearTaps by remember { mutableIntStateOf(0) }
     var lastClearTapAt by remember { mutableStateOf(0L) }
     var showClearWarning by remember { mutableStateOf(false) }
@@ -376,7 +376,7 @@ private fun RootSettings(
         text = if (clearTaps > 0) S.clearProgressTapHint(3 - clearTaps) else S.clearProgress,
         onClick = {
             val now = SystemClock.uptimeMillis()
-            // A pause of more than two seconds starts a fresh count.
+            
             clearTaps = if (now - lastClearTapAt > 2000L) 1 else clearTaps + 1
             lastClearTapAt = now
             if (clearTaps >= 3) {
@@ -404,11 +404,11 @@ private fun RootSettings(
     )
 }
 
-/**
- * The library can live in more than one folder: one per author, one per genre,
- * internal storage plus an SD card. Every root is scanned into the same shelf,
- * and each root's first-level folders become the shelf's category chips.
- */
+
+
+
+
+
 @Composable
 private fun LibrarySettings(
     folders: List<Pair<String, String>>,
@@ -471,11 +471,11 @@ private fun LibrarySettings(
     }
 }
 
-/**
- * Personalisation: the accent colour repaints the whole UI and the light/dark
- * mode picks the side of each palette. Reading behaviour (including the page
- * animation) lives on the reading-settings page instead.
- */
+
+
+
+
+
 @Composable
 private fun PersonalizeSettings(settings: UiSettings) {
     val scheme = MaterialTheme.colorScheme
@@ -506,7 +506,7 @@ private fun PersonalizeSettings(settings: UiSettings) {
     )
 }
 
-/** One circle per accent; the selected one gets a ring and a tick. */
+
 @Composable
 private fun SwatchRow(selected: Int, onSelect: (Int) -> Unit) {
     val scheme = MaterialTheme.colorScheme

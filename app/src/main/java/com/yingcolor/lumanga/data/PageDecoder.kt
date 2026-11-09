@@ -11,23 +11,23 @@ import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
 
-/**
- * Decodes one page from memory. Standard formats go through BitmapFactory (cheap and
- * sample-friendly); anything newer such as HEIF/AVIF falls back to ImageDecoder.
- * The decoded bitmap is always bounded by a pixel budget so a huge scan cannot OOM the app.
- */
+
+
+
+
+
 object PageDecoder {
-    // 8 M pixels ~= 32 MB ARGB_8888. Tall Webtoon strips used to produce a
-    // single 64 MB bitmap here; capping the budget also keeps page mode safe.
+    
+    
     private const val MAX_PIXELS = 8L * 1024 * 1024
     private const val MAX_SAMPLE = 32
 
-    /**
-     * quality: 0 = fit screen, 1 = zoomed, 2 = zoomed further.
-     * `tight` is for small preview thumbnails: it allows a much smaller decoded
-     * bitmap (roughly 1.25x the displayed size instead of 2x), which cuts both
-     * decode time and memory by several times on high-resolution scans.
-     */
+    
+
+
+
+
+
     fun decode(
         bytes: ByteArray,
         targetW: Int,
@@ -54,7 +54,7 @@ object PageDecoder {
         return decodeWithImageDecoder(bytes, targetW, targetH, quality)
     }
 
-    /** Width / height from a (possibly truncated) image header, without decoding pixels. */
+    
     fun bounds(bytes: ByteArray, length: Int = bytes.size): Pair<Int, Int>? {
         val n = length.coerceIn(0, bytes.size)
         if (n <= 0) return null
@@ -65,18 +65,18 @@ object PageDecoder {
         } else null
     }
 
-    /**
-     * Decodes one horizontal strip of a very tall Webtoon image. A 800 x 20,000
-     * scan cannot be decoded as a single bitmap (memory and GPU limits), so the
-     * continuous-scroll reader asks for ~1,000 px tall slices, one at a time.
-     * BitmapRegionDecoder covers JPEG / PNG / WebP; HEIF / AVIF fall back to
-     * ImageDecoder's crop (Android 10+).
-     */
+    
+
+
+
+
+
+
     @Suppress("DEPRECATION")
     fun decodeRegion(bytes: ByteArray, top: Int, bottom: Int, targetWidth: Int): Bitmap? {
         val decoder = runCatching {
-            // The byte[] overload only exists from Android 12; the stream one has
-            // been there since API 10, so it works all the way down to Android 5.
+            
+            
             BitmapRegionDecoder.newInstance(ByteArrayInputStream(bytes), false)
         }.getOrNull()
         if (decoder != null) {
@@ -123,11 +123,11 @@ object PageDecoder {
         }.getOrNull()
     }
 
-    /**
-     * Last-resort whole-image decode for formats without region decoding.
-     * Scales to a fixed pixel budget first, so a 20,000 px strip never becomes
-     * a single giant bitmap.
-     */
+    
+
+
+
+
     fun decodeWhole(bytes: ByteArray, maxPixels: Long = 4L * 1024 * 1024): Bitmap? {
         val size = bounds(bytes) ?: return null
         val ratio = min(1f, kotlin.math.sqrt(maxPixels.toDouble() / (size.first.toDouble() * size.second)).toFloat())

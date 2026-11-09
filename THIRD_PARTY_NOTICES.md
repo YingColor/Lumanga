@@ -45,7 +45,7 @@ are vendored into this repository; the library is resolved at build time from Ma
 
 - Version: 8.1.2
 - License: the "unrar" license — free to use for reading/extracting RAR archives;
-  it may not be used to build a RAR-compatible *archiver*. This project only reads.
+  it may not be used to build a RAR-compatible *archiver*.
 - Project: https://github.com/junrar/junrar
 - Usage: reads `.rar` (RAR 4 and RAR 5) entries without unpacking the archive first.
 
@@ -55,9 +55,3 @@ are vendored into this repository; the library is resolved at build time from Ma
 - License: MIT
 - Project: https://www.slf4j.org/
 - Usage: logging facade required by junrar; no provider is shipped, so it stays a no-op.
-
-## Launcher icon
-
-The launcher icon is an AI-generated illustration containing no third-party
-artwork, character design, logo or icon set. It is shipped as adaptive-icon
-foreground layers for every density, plus legacy rounded-square fallbacks.

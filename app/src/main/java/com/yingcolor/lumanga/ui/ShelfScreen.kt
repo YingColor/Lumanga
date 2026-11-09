@@ -119,33 +119,33 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
     private var loadedKey: String? = null
     private var loadJob: Job? = null
     private var lastVerifiedAt = 0L
-    /** Identifies the newest scan, so a superseded one cannot clear its state. */
+    
     private var loadToken = 0
 
     var books by mutableStateOf<List<Book>>(emptyList())
         private set
     var loading by mutableStateOf(false)
         private set
-    /** True while a pull-to-refresh (or the refresh chip) is scanning. */
+    
     var refreshing by mutableStateOf(false)
         private set
-    /** True only while the private index is being read (a few hundred ms). */
+    
     var restoring by mutableStateOf(false)
         private set
     var error by mutableStateOf<String?>(null)
         private set
 
-    /** Category chip selected on the shelf; empty means "all". */
+    
     var filterGroup by mutableStateOf("")
 
-    /** Reading-state filter: 0 = all, 1 = finished, 2 = currently reading, 3 = favorites. */
+    
     var readFilter by mutableStateOf(0)
 
-    /**
-     * Show the remembered shelf first, then quietly verify the folder in the
-     * background. Only a real add / remove / rename / size change rewrites the
-     * list and the index, so a library of thousands needs no startup wait.
-     */
+    
+
+
+
+
     fun load(
         roots: List<Uri>,
         force: Boolean = false,
@@ -166,7 +166,7 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
             onDone?.invoke()
             return
         }
-        // Activity restarts (rotation, theme switch) must not walk the tree again.
+        
         if (sameFolder && !force && books.isNotEmpty() &&
             System.currentTimeMillis() - lastVerifiedAt < VERIFY_INTERVAL_MS
         ) {
@@ -177,16 +177,16 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
         loadedKey = folder
         loadJob?.cancel()
         restoring = false
-        // A scan that gets superseded must not clear the pull indicator that now
-        // belongs to the newer scan which replaced it.
+        
+        
         val token = ++loadToken
         loadJob = viewModelScope.launch {
             try {
                 error = null
-                // Never delete the index here: a cold start also has loadedKey == null,
-                // and wiping it would force the full walk we are trying to avoid. A
-                // different folder is handled by index.load()'s folder check and by
-                // index.save() overwriting the file after a successful scan.
+                
+                
+                
+                
                 if (!sameFolder) books = emptyList()
                 restoring = !force
                 val cached = withContext(Dispatchers.IO) {
@@ -205,8 +205,8 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 result.fold(
                     onSuccess = { scanned ->
-                        // An empty result with a populated cache is usually a transient
-                        // provider / permission hiccup. Never wipe a good shelf for it.
+                        
+                        
                         if (scanned.isEmpty() && books.isNotEmpty()) {
                             lastVerifiedAt = System.currentTimeMillis()
                         } else {
@@ -231,7 +231,7 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** The refresh chip and the pull gesture both force an immediate re-check. */
+    
     fun refresh(onDone: (() -> Unit)? = null) {
         val folder = loadedKey
         if (folder == null) {
@@ -247,7 +247,7 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
         load(roots, force = true, onDone = onDone)
     }
 
-    /** The shelf's small "refresh" chip forces an immediate re-check. */
+    
     fun refresh() {
         val folder = loadedKey ?: return
         val roots = folder.split("|").mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }
@@ -316,14 +316,14 @@ fun ShelfScreen(
     var groupMenu by remember { mutableStateOf(false) }
     var columnMenu by remember { mutableStateOf(false) }
     var readFilterMenu by remember { mutableStateOf(false) }
-    // Sorting with naturalCompare() is the expensive part of a big shelf. Do it
-    // once per books/sort change, then only filter for each keystroke instead of
-    // re-sorting the whole library on every character typed into search.
+    
+    
+    
     val sorted = remember(books, settings.sortMode, refreshKey) {
         sortBooks(books, settings.sortMode, prefs)
     }
-    // Categories are the first folder below each library root, so a library
-    // organised as 作者 / 类型 / … can be narrowed down with one tap.
+    
+    
     val groups = remember(sorted) {
         sorted.asSequence()
             .map { it.group }
@@ -332,8 +332,8 @@ fun ShelfScreen(
             .sortedWith { a, b -> naturalCompare(a, b) }
             .toList()
     }
-    // A saved category can disappear when its folder is removed; never leave the
-    // shelf filtered by something that no longer exists.
+    
+    
     val groupFilter = vm.filterGroup.takeIf { it in groups } ?: ""
     val readFilter = vm.readFilter
     val favorites = settings.favorites
@@ -341,8 +341,8 @@ fun ShelfScreen(
         val base = if (groupFilter.isEmpty()) sorted else sorted.filter { it.group == groupFilter }
         val q = query.trim()
         val searched = if (q.isEmpty()) base else base.filter { it.name.contains(q, ignoreCase = true) }
-        // The "currently reading" tab already arrives pre-filtered; narrowing it
-        // again with the shelf's progress filter would hide part of that list.
+        
+        
         if (mode == SHELF_MODE_READING || readFilter == 0) searched
         else if (readFilter == 3) searched.filter { it.id in favorites }
         else searched.filter { book ->
@@ -355,11 +355,11 @@ fun ShelfScreen(
     val scheme = MaterialTheme.colorScheme
     val columns = settings.gridColumns
 
-    // Collapsing large title: ONE continuous scroll value drives the title's
-    // size, weight and opacity and the expandable region's height. The toolbar
-    // below stays pinned. Crucially this state is read ONLY inside the header
-    // composable: reading it here used to recompose the whole screen (toolbar,
-    // menus and the entire grid) on every single scroll frame.
+    
+    
+    
+    
+    
     val maxCollapsePx = with(LocalDensity.current) { ExpandableHeaderHeight.toPx() }
     val collapseState = remember { mutableFloatStateOf(0f) }
     val scrollConnection = remember(maxCollapsePx) {
@@ -374,10 +374,10 @@ fun ShelfScreen(
         }
     }
     val gridScope = rememberCoroutineScope()
-    // A plain boolean, not rememberDrawerState + ModalNavigationDrawer: that
-    // component keeps a full-screen scrim in the tree even while closed, which
-    // silently swallowed every touch on the shelf (no taps, no scrolling, no
-    // pull-to-refresh). This overlay only exists while the drawer is open.
+    
+    
+    
+    
     var drawerOpen by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     val showTopButton by remember {
@@ -397,9 +397,9 @@ fun ShelfScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
         ) {
-            // Only this small composable subscribes to the scroll progress now.
-            // The toolbar and the (potentially 10,000-item) grid stay untouched
-            // while the title shrinks.
+            
+            
+            
             CollapsingHeader(
                 collapse = collapseState,
                 mode = mode,
@@ -408,16 +408,16 @@ fun ShelfScreen(
                 count = displayed.size
             )
 
-            // Pinned toolbar: always visible, including when the big title is gone.
+            
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Opens the side menu (reading settings + about). It lives at the
-                // very top-left so the right side of the toolbar stays free for
-                // the filters, which are used far more often.
+                
+                
+                
                 IconButton(onClick = { drawerOpen = true }) {
                     Icon(
                         imageVector = Icons.Filled.Menu,
@@ -581,9 +581,9 @@ fun ShelfScreen(
                 }
             }
 
-            // The reading-state filter now lives as a toolbar chip that opens a
-            // dropdown (全部 / 已读完 / 正在读 / 收藏), so it no longer occupies a
-            // full-width row and never covers the covers.
+            
+            
+            
 
             when {
                 error != null -> EmptyState(
@@ -591,7 +591,7 @@ fun ShelfScreen(
                     body = error,
                     onPickFolder = onPickFolder
                 )
-                // Reading the index takes a moment; do not flash "no comics yet".
+                
                 restoring -> Box(Modifier.fillMaxSize())
                 books.isEmpty() && !loading -> if (mode == SHELF_MODE_READING) {
                     ReadingEmptyState(onGoHome = onGoHome)
@@ -648,8 +648,8 @@ fun ShelfScreen(
             }
         }
 
-        // Small "back to top" FAB, like the one on Kazumi's grid pages. It only
-        // appears once the list has actually been scrolled.
+        
+        
         if (showTopButton) {
             SmallFloatingActionButton(
                 onClick = {
@@ -669,8 +669,8 @@ fun ShelfScreen(
             }
         }
 
-        // With several library folders, "change folder" is the wrong promise:
-        // this opens the list where folders are added or removed.
+        
+        
         PillButton(
             text = S.manageFolders,
             onClick = onManageFolders,
@@ -681,8 +681,8 @@ fun ShelfScreen(
         )
     }
 
-    // Side menu: scrim + panel. Both exist only while open, so a closed drawer
-    // can never intercept a tap or a scroll on the shelf.
+    
+    
     AnimatedVisibility(
         visible = drawerOpen,
         enter = fadeIn(motionTween(MotionSpec.SHORT)),
@@ -766,7 +766,7 @@ fun ShelfScreen(
     }
 }
 
-/** One row inside the side menu. */
+
 @Composable
 private fun DrawerRow(
     icon: ImageVector,
@@ -792,11 +792,11 @@ private fun DrawerRow(
     }
 }
 
-/**
- * Isolating the scroll subscription here is the single biggest UI win on a large
- * shelf: the title interpolates every frame, but only these three Text nodes
- * recompose — not the search field, menus or the grid of covers.
- */
+
+
+
+
+
 @Composable
 private fun CollapsingHeader(
     collapse: State<Float>,
@@ -903,8 +903,8 @@ private fun BookCard(
         columns == 3 -> 8.dp
         else -> 10.dp
     }
-    // A five-column card is tiny on screen: asking for a 360 px thumbnail would
-    // waste both decode time and memory. Request only what the layout can show.
+    
+    
     val coverPx = when (columns) {
         5 -> 160
         4 -> 200
@@ -912,8 +912,8 @@ private fun BookCard(
         else -> 360
     }
     val cover by produceState<Bitmap?>(
-        // A cached cover is available synchronously: no spinner-to-image flicker
-        // when scrolling a card back into view.
+        
+        
         initialValue = vm.peekCover(book, coverPx),
         key1 = book.id,
         key2 = vm,
@@ -928,14 +928,14 @@ private fun BookCard(
         animationSpec = motionTween(MotionSpec.SHORT, MotionSpec.EaseOutCubic),
         label = "cardPress"
     )
-    // Shape morph on press: a short ease-out, in step with the scale change.
+    
     val restingCorner = if (compact) 18f else 24f
     val cardCorner by animateDpAsState(
         targetValue = (if (pressed) restingCorner * 0.65f else restingCorner).dp,
         animationSpec = motionTween(MotionSpec.SHORT, MotionSpec.EaseOutCubic),
         label = "cardCorner"
     )
-    // Re-read SharedPreferences whenever we come back from the reader.
+    
     val (progress, total) = remember(book.id, refreshKey) {
         prefs.progress(book.id) to prefs.pageCount(book.id)
     }
@@ -986,7 +986,7 @@ private fun BookCard(
                     )
                 }
 
-                // A favourite shows a pink heart on the cover's top-right corner.
+                
                 if (favorite) {
                     Box(
                         modifier = Modifier
@@ -1006,7 +1006,7 @@ private fun BookCard(
                     }
                 }
 
-                // Long-press menu anchored to the cover itself.
+                
                 DropdownMenu(
                     expanded = coverMenu,
                     onDismissRequest = { coverMenu = false }
@@ -1045,7 +1045,7 @@ private fun BookCard(
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                 )
             }
-            // A book that was only opened (still on the cover) must not show a bar.
+            
             if (total > 0 && progress > 0) {
                 Spacer(Modifier.height(if (compact) 4.dp else 6.dp))
                 Text(

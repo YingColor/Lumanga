@@ -16,8 +16,6 @@ captures/
 keystore.properties
 .toolchain/
 
-# 只在本机用于参考 / 测试的材料，绝不随源码上传：
-# 参考软件安装包、反编译产物、参考项目源码、私人漫画库
 参考软件/
 m3e-canvas*/
 漫画/
@@ -27,5 +25,4 @@ m3e-canvas*/
 *.7z
 *.rar
 
-# 说明：*.apk 已在上面排除；交付用的 APK 放在项目根目录，
-# 开源时请通过 GitHub Releases 附件发布，而不是塞进源码仓库。
+_已删除旧版备份/

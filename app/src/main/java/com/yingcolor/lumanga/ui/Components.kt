@@ -30,7 +30,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.yingcolor.lumanga.theme.expressiveSpring
 
-/** Capsule button with the springy press feedback used throughout M3 Expressive. */
+
 @Composable
 fun PillButton(
     text: String,
@@ -77,13 +77,13 @@ fun PillButton(
     }
 }
 
-/**
- * A connected button group whose visual state comes from one continuous
- * position. As the position slides between slots, every segment interpolates
- * its fill, label colour and corner radius at the same time, so the highlight
- * travels instead of two blocks fading against each other. Only the press
- * (a genuinely discrete event) gets its own short ease-out tween.
- */
+
+
+
+
+
+
+
 @Composable
 fun SegmentedChoice(
     options: List<String>,
@@ -151,10 +151,10 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/**
- * Wrapping chip group. The zoom list has seven entries, which is unreadable as
- * equal-width segments on a phone; chips wrap onto as many lines as needed.
- */
+
+
+
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChoiceChips(

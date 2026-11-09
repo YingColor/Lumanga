@@ -98,12 +98,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * "Unread" means page 0 / no record; "currently reading" means a real page turn
- * that has not reached the final page. A single snapshot of the progress store
- * keeps this O(n) without three storage reads per book, which matters for a
- * library with tens of thousands of files.
- */
+
+
+
+
+
+
 @Composable
 private fun currentlyReading(allBooks: List<Book>, prefs: Prefs, version: Int): List<Book> =
     remember(allBooks, prefs, version) {
@@ -141,10 +141,10 @@ private fun ComicApp() {
     var folders by remember { mutableStateOf(prefs.folderUris) }
     var toast by remember { mutableStateOf<String?>(null) }
 
-    // Orientation is scoped to the reader. A book can remember its own override;
-    // books without one inherit the global setting. Leaving the reader restores
-    // the GLOBAL setting (which may be "follow system"), so a tablet is never
-    // forced back into portrait just because one book was read in landscape.
+    
+    
+    
+    
     val perBookOrientation = if (screen == "reader") {
         currentBook?.let { settings.bookOrientation(it.id) } ?: -1
     } else -1
@@ -158,8 +158,8 @@ private fun ComicApp() {
         }
     }
 
-    // Frozen, blurred copy of the page shown inside the settings card. It is
-    // captured before the card appears, so the glass never reflects itself.
+    
+    
     var backdrop by remember { mutableStateOf<BackdropShot?>(null) }
 
     val scope = rememberCoroutineScope()
@@ -187,10 +187,10 @@ private fun ComicApp() {
         }
     }
 
-    // Opening the card first grabs a blurred snapshot of the page: it has to be
-    // taken while the card is still invisible, otherwise the glass would show a
-    // reflection of itself. The wait is about one frame — the card would have
-    // spent it on its own fade-in anyway.
+    
+    
+    
+    
     val openSettings: (Int) -> Unit = { target ->
         val window = activity?.window
         if (window == null) {
@@ -203,9 +203,9 @@ private fun ComicApp() {
         }
     }
 
-    // Changing the palette repaints everything under the card, which would leave
-    // the frozen snapshot in the previous theme's colours. The card falls back to
-    // its denser look until it is opened again.
+    
+    
+    
     LaunchedEffect(settings.themeMode, settings.themeColor) {
         if (settingsRoute != SettingsRoute.CLOSED) backdrop = null
     }
@@ -213,9 +213,9 @@ private fun ComicApp() {
     val allBooks = shelfVm.books
     val readingBooks = currentlyReading(allBooks, prefs, progressVersion)
 
-    // The reader owns the back button while it is open: inside it, back first
-    // closes the settings window, then the tool bar, and only then leaves the
-    // book (see ReaderScreen). Here we only handle the shelf.
+    
+    
+    
     BackHandler(
         enabled = screen != "reader" && (settingsRoute != SettingsRoute.CLOSED || mainPage == 1)
     ) {
@@ -233,8 +233,8 @@ private fun ComicApp() {
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            // The page stays sharp around the settings card; only the card itself
-            // is frosted, using a blurred snapshot taken just before it opens.
+            
+            
             AnimatedContent(
                 targetState = screen,
                 modifier = Modifier.fillMaxSize(),
@@ -274,8 +274,8 @@ private fun ComicApp() {
                     Column(modifier = Modifier.fillMaxSize()) {
                         HorizontalPager(
                             state = mainPagerState,
-                            // Keep both tabs composed so switching does not build a whole
-                            // new grid (and dozens of covers) inside a single frame.
+                            
+                            
                             beyondViewportPageCount = 1,
                             modifier = Modifier
                                 .weight(1f)
@@ -286,10 +286,10 @@ private fun ComicApp() {
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
-                                        // Never translate a page here: HorizontalPager
-                                        // already parks off-screen pages one full width
-                                        // away, and any extra translation pulls them
-                                        // back into the viewport (overlapping headers).
+                                        
+                                        
+                                        
+                                        
                                         val distance = kotlin.math.abs(
                                             mainPagerState.currentPage - page +
                                                 mainPagerState.currentPageOffsetFraction
@@ -385,12 +385,12 @@ private fun ComicApp() {
     }
 }
 
-/**
- * Material 3 NavigationBar-style bottom bar: an icon above a label, with a small
- * active-indicator capsule behind the icon that travels continuously with the
- * pager. This is the standard navigation pattern (also used by Kazumi), not a
- * copy of any of their code.
- */
+
+
+
+
+
+
 @Composable
 private fun MainNavBar(
     pagerState: PagerState,
@@ -472,9 +472,9 @@ private fun NavTab(
     modifier: Modifier = Modifier
 ) {
     val scheme = MaterialTheme.colorScheme
-    // The continuous pager position is read here rather than in the parent, so a
-    // swipe only recomposes these two small tabs. The travelling indicator reads
-    // it inside graphicsLayer and never triggers a recomposition at all.
+    
+    
+    
     val position = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
         .coerceIn(0f, 1f)
     val selection = selectionOf(position, index)

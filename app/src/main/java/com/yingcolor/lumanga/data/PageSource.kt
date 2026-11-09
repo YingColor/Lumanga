@@ -19,18 +19,18 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.channels.SeekableByteChannel
 
-/**
- * One opened book, regardless of how its pages are stored. A `.zip` / `.cbz`,
- * a `.rar`, a `.7z` and a plain folder of images all look identical from here,
- * so the reader, the cover pipeline and the continuous-scroll mode need no
- * special cases.
- */
+
+
+
+
+
+
 interface PageSource : Closeable {
     val pageCount: Int
 
     fun pageName(index: Int): String
 
-    /** Only the first few KB, enough for an image header. */
+    
     fun readHeader(index: Int, limit: Int = HEADER_BYTES): ByteArray?
 
     fun readPage(index: Int): ByteArray
@@ -48,7 +48,7 @@ interface PageSource : Closeable {
     }
 }
 
-/** A seekable view of a document plus everything that must be closed with it. */
+
 internal class SeekableSource(
     val channel: SeekableByteChannel,
     private val handles: List<Closeable>
@@ -59,11 +59,11 @@ internal class SeekableSource(
     }
 }
 
-/**
- * Opens a document as a random-access byte channel. Some providers return a
- * descriptor with a non-zero start offset (the document is embedded in a
- * container); [OffsetChannel] hides that so callers can seek from zero.
- */
+
+
+
+
+
 @Throws(IOException::class)
 internal fun openSeekable(context: Context, uri: Uri): SeekableSource {
     val assetFd = context.contentResolver.openAssetFileDescriptor(uri, "r")
@@ -83,7 +83,7 @@ internal fun openSeekable(context: Context, uri: Uri): SeekableSource {
     return SeekableSource(channel, listOf(fis, assetFd))
 }
 
-/** Wraps a FileChannel whose provider returned a non-zero start offset. */
+
 internal class OffsetChannel(
     private val delegate: FileChannel,
     private val offset: Long
@@ -101,10 +101,10 @@ internal class OffsetChannel(
     override fun close() = delegate.close()
 }
 
-/**
- * A 7z archive read in place through a seekable channel — the same approach as
- * the ZIP reader: no entry is ever written to disk.
- */
+
+
+
+
 class SevenZReader private constructor(
     private val file: SevenZFile,
     private val handle: Closeable,
@@ -194,15 +194,15 @@ class SevenZReader private constructor(
     }
 }
 
-/**
- * A RAR archive (RAR 1.5 – 5.x) through junrar.
- *
- * junrar works on a real `File`, so the document is opened as a descriptor and
- * exposed through `/proc/self/fd/<n>`: no copy of the archive is made, and its
- * seekable channel lets extraction jump straight to the page's compressed block.
- * Only providers that do not hand out a regular file fall back to a temporary
- * copy in the app's cache (deleted as soon as the book is closed).
- */
+
+
+
+
+
+
+
+
+
 class RarReader private constructor(
     private val archive: Archive,
     private val closeables: List<Closeable>,
@@ -222,8 +222,8 @@ class RarReader private constructor(
             throw ArchiveException(ArchiveException.Kind.ENCRYPTED, "encrypted rar entry")
         }
         val capped = CappedStream(limit)
-        // extractFile() stops by throwing once the cap is hit; the bytes read so
-        // far are exactly the image header we wanted.
+        
+        
         runCatching { archive.extractFile(header, capped) }
         val bytes = capped.toByteArray()
         if (bytes.isEmpty()) null else bytes
@@ -254,7 +254,7 @@ class RarReader private constructor(
         closeables.forEach { runCatching { it.close() } }
     }
 
-    /** Collects at most [limit] bytes, then aborts the extraction. */
+    
     private class CappedStream(private val limit: Int) : OutputStream() {
         private val buffer = ByteArray(limit)
         private var size = 0
@@ -277,7 +277,7 @@ class RarReader private constructor(
 
     companion object {
         fun open(context: Context, uri: Uri): RarReader {
-            // 1) Preferred: read straight from the open descriptor.
+            
             val pfd = runCatching { context.contentResolver.openFileDescriptor(uri, "r") }.getOrNull()
             if (pfd != null) {
                 val direct = runCatching { Archive(File("/proc/self/fd/${pfd.fd}")) }.getOrNull()
@@ -286,8 +286,8 @@ class RarReader private constructor(
                 }
                 runCatching { pfd.close() }
             }
-            // 2) Fallback: a provider that only streams (cloud, unusual document
-            // providers). Copy once into the app's private cache and clean up on close.
+            
+            
             val dir = File(context.cacheDir, "rar")
             runCatching { if (!dir.exists()) dir.mkdirs() }
             val temp = File(dir, "open-${System.nanoTime()}.rar")
@@ -323,14 +323,14 @@ class RarReader private constructor(
     }
 }
 
-/**
- * Lists the images inside one directory of the user-picked tree.
- *
- * `DocumentFile` cannot list a sub-directory reliably (a child uri does not
- * carry the tree root id), so the child-documents uri is built from the document
- * id directly — this is what the Storage Access Framework expects, and it works
- * for every provider that exposes a directory as a document.
- */
+
+
+
+
+
+
+
+
 object FolderPages {
     data class Entry(val uri: Uri, val name: String)
 
@@ -366,13 +366,13 @@ object FolderPages {
     }
 }
 
-/**
- * A book that is simply a folder of images (already-extracted comics, Webtoon
- * episode dumps, scanned pages exported as files).
- *
- * Pages are read one at a time through the provider and decoded in memory, the
- * same way archive pages are: nothing is copied to another directory.
- */
+
+
+
+
+
+
+
 class FolderReader private constructor(
     private val context: Context,
     private val entries: List<FolderPages.Entry>

@@ -28,12 +28,12 @@ import kotlinx.coroutines.launch
 private const val RELEASES_PAGE =
     "https://github.com/YingColor/Lumanga/releases/latest"
 
-/**
- * Short "about" card. Checking for updates is a deliberate, single tap: the app
- * stays offline until this button is pressed, and the result never installs
- * anything by itself — a newer build is handed to the browser, so the user
- * decides whether to download and install it.
- */
+
+
+
+
+
+
 @Composable
 fun AboutDialog(
     versionName: String,
@@ -71,10 +71,10 @@ fun AboutDialog(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-                // Some networks (or per-app proxies) let the browser reach
-                // GitHub while the app itself cannot resolve it. Never leave the
-                // reader without a way forward: hand the release page to the
-                // browser instead.
+                
+                
+                
+                
                 if (failed) {
                     TextButton(
                         onClick = {

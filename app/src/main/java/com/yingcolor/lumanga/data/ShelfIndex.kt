@@ -6,14 +6,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-/**
- * A small local index of the bookshelf: file paths and metadata only, never comic
- * content. It lives in the app's private filesDir (not cacheDir), so the shelf can
- * be drawn the instant the app opens instead of walking the whole tree first.
- *
- * The folder URI is part of the index. Picking a different folder invalidates it
- * automatically, and a failed re-read simply falls back to a normal scan.
- */
+
+
+
+
+
+
+
+
 class ShelfIndex(context: Context) {
     private val file = File(context.applicationContext.filesDir, FILE_NAME)
 
@@ -44,7 +44,7 @@ class ShelfIndex(context: Context) {
         return result
     }
 
-    /** Atomic replace, so a killed process can never leave a half-written index. */
+    
     fun save(folder: String, books: List<Book>) {
         runCatching {
             val array = JSONArray()
