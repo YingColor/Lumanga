@@ -6,6 +6,7 @@ import android.graphics.BitmapRegionDecoder
 import android.graphics.ImageDecoder
 import android.graphics.Rect
 import android.os.Build
+import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
@@ -74,7 +75,9 @@ object PageDecoder {
     @Suppress("DEPRECATION")
     fun decodeRegion(bytes: ByteArray, top: Int, bottom: Int, targetWidth: Int): Bitmap? {
         val decoder = runCatching {
-            BitmapRegionDecoder.newInstance(bytes, 0, bytes.size, false)
+            // The byte[] overload only exists from Android 12; the stream one has
+            // been there since API 10, so it works all the way down to Android 5.
+            BitmapRegionDecoder.newInstance(ByteArrayInputStream(bytes), false)
         }.getOrNull()
         if (decoder != null) {
             try {

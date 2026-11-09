@@ -12,9 +12,13 @@ android {
         // The public identity of the app. The Kotlin namespace stays put so the
         // source tree and resource references do not need to move.
         applicationId = "com.yingcolor.lumanga"
-        minSdk = 28
+        // Android 8.0 (API 26) is the oldest release that ships the file and time
+        // APIs the RAR / 7z readers need (java.nio.file, java.time,
+        // SeekableByteChannel). Going lower would break those two formats, so 26
+        // is the real floor rather than a preference.
+        minSdk = 26
         targetSdk = 36
-        versionCode = 15
+        versionCode = 16
         versionName = "1.0.0"
         vectorDrawables { useSupportLibrary = true }
     }
