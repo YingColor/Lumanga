@@ -15,8 +15,7 @@ third-party libraries are used at build time.
   channel, so nothing is extracted to disk.
 
 The full Apache-2.0 text is available at
-https://www.apache.org/licenses/LICENSE-2.0 . No source files from Commons Compress
-are vendored into this repository; the library is resolved at build time from Maven Central.
+https://www.apache.org/licenses/LICENSE-2.0 . The library is resolved at build time from Maven Central.
 
 ## AndroidX / Jetpack Compose / Kotlin (build dependencies)
 

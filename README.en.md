@@ -3,9 +3,10 @@
 <img src="assets/images/logo/logo.png" width=200>
 </div>
 
-An offline-first comic reader for Android. It reads archives straight from a
-folder on the device and displays pages **without extracting any image to disk**.
-The only network request is the optional "check for updates" button in About.
+An offline-first comic reader for Android (it only touches the network when you
+tap "check for updates"). It reads `.zip` / `.cbz`
+archives straight from a folder on the device and displays pages **without
+extracting any image to disk**.
 
 - Android 8.0 (API 26) and newer
 - Multi-gigabyte archives (ZIP64) are read in place through a seekable file
@@ -45,12 +46,35 @@ The only network request is the optional "check for updates" button in About.
   always turn one page each instead of being folded into a single gesture;
   a burst snaps to the target page while a single tap still plays the animation
 - Cover thumbnails cached in the app's private cache for instant re-opening; comic pages themselves are decoded in memory only
+- Only the INTERNET permission is declared, used solely by the optional update check
 
 Full documentation is in [README.md](README.md) (Chinese).
 Installation steps for non-technical users: [使用说明.md](使用说明.md).
 
-Full documentation: [README.md](README.md) (Chinese).
-Installation steps: [使用说明.md](使用说明.md).
-Latest APK: [Releases](https://github.com/YingColor/Lumanga/releases/latest).
+## This project is AI-generated
 
-Source is provided under the [LICENSE](LICENSE) (MIT).
+**The code, UI copy and documentation were produced by a large language model.**
+The maintainer wrote the requirements, checked the result on a real device,
+gave feedback for revision, and decided what shipped.
+
+- Nothing was typed by hand line by line: every implementation was generated and then kept only after it actually ran;
+- Feature choices, visual design, the icon and the release schedule are the maintainer's;
+- The commit history keeps release points only, not the development process.
+
+This note is here so you can judge the project before adopting it; the source is
+provided "as is" under the [LICENSE](LICENSE) (MIT).
+
+## Long Webtoon strips
+
+A new **scroll** reading mode joins all pages into one continuous vertical list,
+with no page breaks. Very tall strips are decoded in ~1000 px bands via
+`BitmapRegionDecoder`, so an 800 x 20,000 px image never becomes a single
+64 MB bitmap; page sizes come from only the first 64 KB of each entry. Fit
+mode, alignment, screen orientation, image smoothing and an app-only
+brightness override are available as general reader settings.
+
+The settings window is a translucent floating card, so a change can be judged
+against the page behind it instead of a full-screen panel.
+
+
+Build with `./gradlew assembleRelease` (or `assembleDebug` for debugging only).
