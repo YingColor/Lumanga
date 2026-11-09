@@ -3,9 +3,9 @@
 <img src="assets/images/logo/logo.png" width=200>
 </div>
 
-一款**完全离线、零权限**的安卓本地漫画阅读器：直接读取手机文件夹里的 `.zip` / `.cbz` 漫画包，点开即看，**不把图片解压到磁盘**。
+一款**本地离线优先、只在检测更新时联网**的安卓漫画阅读器：直接读取手机文件夹里的 `.zip` / `.cbz` 漫画包，点开即看，**不把图片解压到磁盘**。
 
-支持 Android 9（API 28）到最新版本。界面采用 Material 3 Expressive 风格。
+支持 Android 8.0（API 26）到最新版本。界面采用 Material 3 Expressive 风格。
 
 ---
 
@@ -202,7 +202,7 @@
 ## 项目结构
 
 ```
-app/src/main/java/com/yingcolor/comicviewer/
+app/src/main/java/com/yingcolor/lumanga/
 ├── MainActivity.kt        入口与页面切换
 ├── UiStrings.kt           全部界面文案
 ├── theme/Theme.kt         M3 Expressive 形状 / 动效 / 配色过渡

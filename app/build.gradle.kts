@@ -5,12 +5,13 @@ plugins {
 }
 
 android {
-    namespace = "com.yingcolor.comicviewer"
+    namespace = "com.yingcolor.lumanga"
     compileSdk = 36
 
     defaultConfig {
-        // The public identity of the app. The Kotlin namespace stays put so the
-        // source tree and resource references do not need to move.
+        // Public identity of the app, and the package the source tree, R and
+        // BuildConfig live in. Both are Lumanga now; keeping them equal means
+        // an upgrade still installs over the previous build with no data loss.
         applicationId = "com.yingcolor.lumanga"
         // Android 8.0 (API 26) is the oldest release that ships the file and time
         // APIs the RAR / 7z readers need (java.nio.file, java.time,
@@ -18,7 +19,7 @@ android {
         // is the real floor rather than a preference.
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
+        versionCode = 17
         versionName = "1.0.0"
         vectorDrawables { useSupportLibrary = true }
     }

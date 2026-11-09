@@ -3,11 +3,12 @@
 <img src="assets/images/logo/logo.png" width=200>
 </div>
 
-An offline, zero-permission comic reader for Android. It reads `.zip` / `.cbz`
+An offline-first comic reader for Android (it only touches the network when you
+tap "check for updates"). It reads `.zip` / `.cbz`
 archives straight from a folder on the device and displays pages **without
 extracting any image to disk**.
 
-- Android 9 (API 28) and newer
+- Android 8.0 (API 26) and newer
 - Multi-gigabyte archives (ZIP64) are read in place through a seekable file
   descriptor — no copy, no extra storage
 - ZIP / CBZ, RAR (4 and 5, solid included), 7z and plain **folders of images**;

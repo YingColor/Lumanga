@@ -17,5 +17,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ComicViewer"
+rootProject.name = "Lumanga"
 include(":app")
