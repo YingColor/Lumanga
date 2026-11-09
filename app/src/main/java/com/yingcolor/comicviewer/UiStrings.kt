@@ -73,7 +73,7 @@ object S {
     const val aboutTitle = "关于这个应用"
     const val aboutBody = "完全离线，不申请任何权限，不上传任何数据。图片只在内存里解码，不会往磁盘上多写一份。"
     const val close = "关闭"
-    const val zoomHint = "轻点左右边缘可连续翻页 · 画面超出屏幕时拖到边缘再继续滑也会翻页 · 点中间显示/收起工具条 · 双指放大 · 放大后双击复原"
+    const val zoomHint = "轻点左右边缘可连续翻页 · 画面超出屏幕时可拖动查看 · 点中间显示/收起工具条 · 双指放大 · 放大后双击复原"
     const val scrollHint = "上下滑动连续阅读 · 点中间显示/收起工具条 · 点左右侧滚动一屏"
     const val scrollHintH = "左右滑动连续阅读 · 点中间显示/收起工具条 · 点左右侧滚动一屏"
     const val readMode = "阅读模式"
