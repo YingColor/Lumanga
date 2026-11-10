@@ -1,7 +1,7 @@
 # Third-party notices
 
-This project is distributed under the MIT License (see `LICENSE`). The following
-third-party libraries are used at build time.
+This project is distributed under the GNU General Public License, version 3
+(see `LICENSE`). The following third-party libraries are used at build time.
 
 ## Apache Commons Compress (runtime dependency)
 

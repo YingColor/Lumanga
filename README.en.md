@@ -62,7 +62,7 @@ gave feedback for revision, and decided what shipped.
 - The commit history keeps release points only, not the development process.
 
 This note is here so you can judge the project before adopting it; the source is
-provided "as is" under the [LICENSE](LICENSE) (MIT).
+provided "as is" under the [LICENSE](LICENSE) (GPL-3.0).
 
 ## Long Webtoon strips
 

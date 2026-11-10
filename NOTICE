@@ -1,7 +1,8 @@
 Lumanga
-Copyright (c) 2026 Lumanga contributors
+Copyright (C) 2026 YingColor
 
-This product is licensed under the MIT License. See LICENSE.
+This product is licensed under the GNU General Public License, version 3
+(GPL-3.0). See LICENSE.
 
 Runtime library:
   Apache Commons Compress - https://commons.apache.org/proper/commons-compress/
