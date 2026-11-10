@@ -3,6 +3,7 @@ package com.yingcolor.lumanga.ui
 import android.app.Activity
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.os.SystemClock
 import android.util.LruCache
 import android.view.WindowManager
@@ -66,6 +67,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -99,10 +101,12 @@ import androidx.lifecycle.viewModelScope
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.ArchiveException
 import com.yingcolor.lumanga.data.Book
+import com.yingcolor.lumanga.data.BubbleGroup
 import com.yingcolor.lumanga.data.PageAnimation
 import com.yingcolor.lumanga.data.PageDecoder
 import com.yingcolor.lumanga.data.PageSource
 import com.yingcolor.lumanga.data.Prefs
+import com.yingcolor.lumanga.data.TextRegion
 import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.data.ZoomMode
@@ -137,6 +141,32 @@ private const val WARM_AHEAD = 5
 
 
 
+
+enum class TranslateKind { IDLE, WORKING, EMPTY, NOT_JAPANESE, FAILED }
+
+data class TranslateState(
+    val kind: TranslateKind = TranslateKind.IDLE,
+    val detail: String = ""
+)
+
+private sealed class TranslateOutcome {
+    class Done(val bitmap: Bitmap) : TranslateOutcome()
+    object NoText : TranslateOutcome()
+    object NotJapanese : TranslateOutcome()
+    object Stale : TranslateOutcome()
+    class Failed(val reason: String) : TranslateOutcome()
+}
+
+/** OCR result plus translations for one page, kept so zooming does not repeat the work. */
+private class PageResult(
+    val width: Int,
+    val height: Int,
+    val groups: List<BubbleGroup>,
+    val lines: List<String>
+)
+
+private const val STAGE_OCR = "ocr"
+private const val STAGE_API = "api"
 
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
@@ -220,8 +250,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val wakeWarm = Channel<Unit>(Channel.CONFLATED)
 
     
-    @Volatile
-    private var focusIndex = 0
+    var focusIndex by mutableStateOf(0)
+        private set
 
     private companion object {
         const val WARM_RADIUS = 16
@@ -570,52 +600,161 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val translatedCache = object : LruCache<String, Bitmap>(32 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
-    private val translating = HashMap<String, Deferred<Bitmap?>>()
+    private val pageResults = object : LruCache<String, PageResult>(16) {}
+    private val translating = HashMap<String, Deferred<TranslateOutcome>>()
     private val translationLock = Any()
     private val translationContext = LinkedHashMap<Int, List<String>>(6)
     private val contextLock = Any()
 
+    private val translationStates = mutableStateMapOf<Int, TranslateState>()
+
+    /** Bumped by [retryTranslation] so the page pipeline runs again for the same index. */
+    var translationRetry by mutableStateOf(0)
+        private set
+
+    fun statusOf(index: Int): TranslateState = translationStates[index] ?: TranslateState()
+
+    fun retryTranslation(index: Int) {
+        translatedCache.evictAll()
+        pageResults.evictAll()
+        synchronized(translationLock) { translating.clear() }
+        translationStates[index] = TranslateState()
+        translationRetry++
+    }
+
+    private fun publish(index: Int, state: TranslateState) {
+        translationStates[index] = state
+    }
+
     suspend fun translate(index: Int, source: Bitmap, api: String, model: String): Bitmap? {
         val key = "$index-${source.width}x${source.height}-${(api + model).hashCode()}"
-        translatedCache.get(key)?.let { return it }
+        translatedCache.get(key)?.let {
+            publish(index, TranslateState())
+            return it
+        }
+        publish(index, TranslateState(TranslateKind.WORKING))
         val deferred = synchronized(translationLock) {
             translating[key] ?: viewModelScope.async(Dispatchers.IO) {
-                val regions = TranslationEngine.recognize(source)
-                android.util.Log.i("Translate", "TR ocr index=$index regions=${regions.size}")
-                if (regions.isEmpty()) return@async null
-                val groups = TranslationEngine.groupBubbles(regions, source.width, source.height)
-                android.util.Log.i("Translate", "TR bubbles index=$index groups=${groups.size}")
-                val previous = synchronized(contextLock) {
-                    translationContext.entries
-                        .filter { it.key < index }
-                        .maxByOrNull { it.key }
-                        ?.value ?: emptyList()
-                }
-                android.util.Log.i("Translate", "TR ctx index=$index prev=${previous.size}")
-                val lines = TranslationEngine.translate(groups, api, model, previous)
-                android.util.Log.i("Translate", "TR api index=$index lines=${lines?.size ?: -1}")
-                if (lines == null) return@async null
-                synchronized(contextLock) {
-                    translationContext[index] = lines
-                    while (translationContext.size > 6) {
-                        translationContext.remove(translationContext.keys.first())
-                    }
-                }
-                val rendered = TranslationEngine.render(source, groups, lines)
-                android.util.Log.i("Translate", "TR done index=$index")
-                rendered
+                runTranslate(index, key, source, api, model)
             }.also { translating[key] = it }
         }
-        val result = runCatching { deferred.await() }.getOrNull()
-        if (result != null) translatedCache.put(key, result)
+        val outcome = runCatching { deferred.await() }.getOrElse {
+            TranslateOutcome.Failed(it.javaClass.simpleName)
+        }
         synchronized(translationLock) { translating.remove(key) }
-        return result
+        return when (outcome) {
+            is TranslateOutcome.Done -> {
+                translatedCache.put(key, outcome.bitmap)
+                publish(index, TranslateState())
+                outcome.bitmap
+            }
+            TranslateOutcome.NoText -> {
+                publish(index, TranslateState(TranslateKind.EMPTY))
+                null
+            }
+            TranslateOutcome.NotJapanese -> {
+                publish(index, TranslateState(TranslateKind.NOT_JAPANESE))
+                null
+            }
+            is TranslateOutcome.Failed -> {
+                android.util.Log.w("Translate", "TR failed index=$index reason=${outcome.reason}")
+                publish(index, TranslateState(TranslateKind.FAILED, outcome.reason))
+                null
+            }
+            TranslateOutcome.Stale -> null
+        }
     }
+
+    private suspend fun runTranslate(
+        index: Int,
+        key: String,
+        source: Bitmap,
+        api: String,
+        model: String
+    ): TranslateOutcome {
+        val rk = resultKey(index, api, model)
+        pageResults.get(rk)?.let { cached ->
+            android.util.Log.i("Translate", "TR reuse index=$index")
+            return TranslateOutcome.Done(renderScaled(source, cached))
+        }
+        // the reader may still be holding a neighbouring page from a spread or a turn; those
+        // would otherwise queue behind the page the user is actually looking at
+        if (abs(index - focusIndex) > 1) {
+            android.util.Log.i("Translate", "TR stale index=$index focus=$focusIndex")
+            return TranslateOutcome.Stale
+        }
+        publish(index, TranslateState(TranslateKind.WORKING, STAGE_OCR))
+        val regions = TranslationEngine.recognize(source)
+        android.util.Log.i("Translate", "TR ocr index=$index regions=${regions.size}")
+        if (regions.isEmpty()) return TranslateOutcome.NoText
+        if (!TranslationEngine.looksJapanese(regions)) {
+            android.util.Log.i("Translate", "TR skip index=$index not japanese")
+            return TranslateOutcome.NotJapanese
+        }
+        val groups = TranslationEngine.groupBubbles(regions, source.width, source.height)
+        android.util.Log.i("Translate", "TR bubbles index=$index groups=${groups.size}")
+        if (groups.isEmpty()) return TranslateOutcome.NoText
+        val previous = synchronized(contextLock) {
+            translationContext.entries
+                .filter { it.key < index }
+                .maxByOrNull { it.key }
+                ?.value ?: emptyList()
+        }
+        publish(index, TranslateState(TranslateKind.WORKING, STAGE_API))
+        val started = System.currentTimeMillis()
+        val lines = TranslationEngine.translate(groups, api, model, previous)
+        android.util.Log.i(
+            "Translate",
+            "TR api index=$index lines=${lines?.size ?: -1} ms=${System.currentTimeMillis() - started}"
+        )
+        if (lines == null) return TranslateOutcome.Failed("network")
+        if (lines.all { it.isBlank() }) return TranslateOutcome.Failed("empty reply")
+        synchronized(contextLock) {
+            translationContext[index] = lines
+            while (translationContext.size > 6) {
+                translationContext.remove(translationContext.keys.first())
+            }
+        }
+        pageResults.put(rk, PageResult(source.width, source.height, groups, lines))
+        val rendered = TranslationEngine.render(source, groups, lines)
+        android.util.Log.i("Translate", "TR done index=$index")
+        return TranslateOutcome.Done(rendered)
+    }
+
+    private fun resultKey(index: Int, api: String, model: String): String =
+        "$index-${(api + model).hashCode()}"
+
+    /** Re-draws a cached page at a different decode size instead of running OCR again. */
+    private fun renderScaled(source: Bitmap, cached: PageResult): Bitmap {
+        if (cached.width == source.width && cached.height == source.height) {
+            return TranslationEngine.render(source, cached.groups, cached.lines)
+        }
+        val sx = source.width.toFloat() / cached.width
+        val sy = source.height.toFloat() / cached.height
+        val scaled = cached.groups.map { group ->
+            group.copy(
+                regions = group.regions.map { region ->
+                    region.copy(box = scaleRect(region.box, sx, sy))
+                },
+                bubble = scaleRect(group.bubble, sx, sy)
+            )
+        }
+        return TranslationEngine.render(source, scaled, cached.lines)
+    }
+
+    private fun scaleRect(rect: Rect, sx: Float, sy: Float): Rect = Rect(
+        (rect.left * sx).toInt(),
+        (rect.top * sy).toInt(),
+        (rect.right * sx).toInt(),
+        (rect.bottom * sy).toInt()
+    )
 
     fun clearTranslations() {
         translatedCache.evictAll()
+        pageResults.evictAll()
         synchronized(translationLock) { translating.clear() }
         synchronized(contextLock) { translationContext.clear() }
+        translationStates.clear()
     }
 
     suspend fun quickPage(index: Int): Bitmap? {
@@ -1918,7 +2057,7 @@ private fun rememberPageBitmap(
         initialValue = vm.peekPage(index, quality) ?: vm.peekPlaceholder(index),
         key1 = index,
         key2 = quality,
-        key3 = "$decodeW-$decodeH-$translate-$api-$model"
+        key3 = "$decodeW-$decodeH-$translate-$api-$model-${vm.translationRetry}"
     ) {
         
         
@@ -2125,6 +2264,47 @@ private fun PageSpread(
                     )
                 }
             }
+            val badgeIndex = if (indices.contains(vm.focusIndex)) vm.focusIndex else indices.first()
+            TranslateBadge(
+                status = vm.statusOf(badgeIndex),
+                onRetry = { vm.retryTranslation(badgeIndex) },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 18.dp)
+            )
         }
     }
+}
+
+@Composable
+private fun TranslateBadge(
+    status: TranslateState,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (status.kind == TranslateKind.IDLE) return
+    val scheme = MaterialTheme.colorScheme
+    val (label, tone) = when (status.kind) {
+        TranslateKind.WORKING ->
+            (if (status.detail == STAGE_OCR) S.translateReading else S.translateWorking) to scheme.surfaceVariant
+        TranslateKind.EMPTY -> S.translateNoText to scheme.surfaceVariant
+        TranslateKind.NOT_JAPANESE -> S.translateNotJapanese to scheme.surfaceVariant
+        TranslateKind.FAILED -> S.translateFailed to scheme.errorContainer
+        else -> return
+    }
+    val content = if (status.kind == TranslateKind.FAILED) scheme.onErrorContainer else scheme.onSurfaceVariant
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        color = content,
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(tone.copy(alpha = 0.92f))
+            .then(
+                if (status.kind == TranslateKind.FAILED) {
+                    Modifier.clickable { onRetry() }
+                } else Modifier
+            )
+            .padding(horizontal = 14.dp, vertical = 7.dp)
+    )
 }

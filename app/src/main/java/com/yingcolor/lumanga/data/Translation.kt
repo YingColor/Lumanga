@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -64,6 +65,22 @@ object TranslationEngine {
         val meaningful = region.text.count { it !in PUNCTUATION && !it.isDigit() && !it.isWhitespace() }
         if (meaningful < 2) return false
         return true
+    }
+
+    /** Pages that are already Chinese (or English) must not be re-translated into gibberish. */
+    fun looksJapanese(regions: List<TextRegion>): Boolean {
+        var letters = 0
+        var kana = 0
+        for (region in regions) {
+            for (ch in region.text) {
+                if (!isJapaneseLetter(ch)) continue
+                letters++
+                val code = ch.code
+                if (code in 0x3041..0x309F || code in 0x30A0..0x30FF) kana++
+            }
+        }
+        if (letters < 16) return true
+        return kana.toFloat() / letters >= 0.04f
     }
 
     fun groupBubbles(regions: List<TextRegion>, width: Int, height: Int): List<BubbleGroup> {
@@ -143,40 +160,49 @@ object TranslationEngine {
             .toString()
         val endpoint = api.trim().trimEnd('/') + "/chat/completions"
         val payload = body.toByteArray(Charsets.UTF_8)
-        val outcome = runCatching {
-            val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 8000
-                readTimeout = 25000
-                doOutput = true
-                setFixedLengthStreamingMode(payload.size)
-                setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("User-Agent", "Lumanga/1.0")
-            }
-            connection.outputStream.use { it.write(payload) }
-            val code = connection.responseCode
-            if (code !in 200..299) {
-                val detail = runCatching {
-                    connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-                }.getOrNull()
-                android.util.Log.w("Translate", "TR http=$code body=${detail?.take(180)}")
+        var lastError = "unknown"
+        repeat(2) { attempt ->
+            val outcome = runCatching {
+                val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 6000
+                    readTimeout = 12000
+                    doOutput = true
+                    setFixedLengthStreamingMode(payload.size)
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("User-Agent", "Lumanga/1.0")
+                }
+                connection.outputStream.use { it.write(payload) }
+                val code = connection.responseCode
+                if (code !in 200..299) {
+                    val detail = runCatching {
+                        connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                    }.getOrNull()
+                    lastError = "http $code"
+                    android.util.Log.w("Translate", "TR http=$code body=${detail?.take(180)}")
+                    connection.disconnect()
+                    return@runCatching null
+                }
+                val response = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                 connection.disconnect()
-                return@runCatching null
+                val content = JSONObject(response)
+                    .getJSONArray("choices")
+                    .getJSONObject(0)
+                    .getJSONObject("message")
+                    .optString("content")
+                parse(content, groups.size)
             }
-            val response = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            connection.disconnect()
-            val content = JSONObject(response)
-                .getJSONArray("choices")
-                .getJSONObject(0)
-                .getJSONObject("message")
-                .optString("content")
-            parse(content, groups.size)
+            val value = outcome.getOrNull()
+            if (value != null) return@withContext value
+            outcome.exceptionOrNull()?.let {
+                lastError = it.javaClass.simpleName
+                android.util.Log.w("Translate", "TR fail ${it.javaClass.simpleName}: ${it.message}")
+            }
+            if (attempt == 0) delay(600)
         }
-        outcome.exceptionOrNull()?.let {
-            android.util.Log.w("Translate", "TR fail ${it.javaClass.simpleName}: ${it.message}")
-        }
-        outcome.getOrNull()
+        android.util.Log.w("Translate", "TR gave up: $lastError")
+        null
     }
 
     private fun parse(content: String, count: Int): List<String> {
@@ -201,6 +227,9 @@ object TranslationEngine {
         groups.forEachIndexed { i, group ->
             val value = translated.getOrNull(i)?.trim().orEmpty()
             if (value.isEmpty()) return@forEachIndexed
+            // light lettering on dark artwork (titles, black bubbles) cannot be erased without
+            // painting a bright patch over the drawing, so it is left alone
+            if (medianLuminance(source, group.bubble) < 100) return@forEachIndexed
             var background = Color.WHITE
             for (region in group.regions) {
                 val box = Rect(region.box)
@@ -214,9 +243,33 @@ object TranslationEngine {
                 eraseInk(out, box, background)
             }
             paint.color = if (luminance(background) > 140) Color.rgb(18, 18, 18) else Color.WHITE
-            drawFittedText(canvas, paint, value, group.bubble, group.vertical)
+            val glyph = group.regions.maxOf {
+                if (group.vertical) it.box.width() else it.box.height()
+            }.toFloat()
+            drawFittedText(canvas, paint, value, group.bubble, group.vertical, glyph * 1.15f)
         }
         return out
+    }
+
+    private fun medianLuminance(source: Bitmap, box: Rect): Int {
+        val right = box.right.coerceAtMost(source.width)
+        val bottom = box.bottom.coerceAtMost(source.height)
+        if (right <= box.left || bottom <= box.top) return 255
+        val stepX = ((right - box.left) / 12).coerceAtLeast(1)
+        val stepY = ((bottom - box.top) / 12).coerceAtLeast(1)
+        val samples = ArrayList<Int>(256)
+        var y = box.top
+        while (y < bottom) {
+            var x = box.left
+            while (x < right) {
+                samples.add(luminance(source.getPixel(x, y)))
+                x += stepX
+            }
+            y += stepY
+        }
+        if (samples.isEmpty()) return 255
+        samples.sort()
+        return samples[samples.size / 2]
     }
 
     private fun luminance(color: Int): Int =
@@ -294,7 +347,8 @@ object TranslationEngine {
         paint: Paint,
         text: String,
         box: Rect,
-        vertical: Boolean
+        vertical: Boolean,
+        maxGlyph: Float
     ) {
         if (box.width() < 10 || box.height() < 10) return
         val pad = maxOf(1.5f, minOf(box.width(), box.height()) * 0.035f)
@@ -303,7 +357,8 @@ object TranslationEngine {
         if (availW < 8f || availH < 8f) return
 
         var fit: Fit? = null
-        var size = min(min(availW, availH) * 1.15f, 96f)
+        // never blow the lettering up beyond what the original text occupied
+        var size = min(min(min(availW, availH) * 1.15f, 96f), maxGlyph.coerceAtLeast(9f))
         while (size >= 7f) {
             fit = layout(text, paint, size, availW, availH, vertical)
             if (fit != null) break
