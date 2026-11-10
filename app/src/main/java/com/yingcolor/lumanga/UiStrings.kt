@@ -171,6 +171,20 @@ object S {
     }
 
     
+    const val translate = "漫画实时翻译"
+    const val translateSummary = "把画面里的外文认出来，译好再贴回页面"
+    const val translateEnable = "开启实时翻译"
+    const val translateEnableTip = "默认关闭。开着时只处理你正在看的这一页，识别出的文字会发给翻译服务，图片始终留在手机里。"
+    const val translateApi = "翻译服务地址"
+    const val translateModel = "模型名称"
+    const val translateApiTip = "填 OpenAI 兼容接口地址。默认这个是公开测试服务，可能限流或停用，建议改成你自己的地址。"
+    const val translateFillDemo = "填入公开测试地址"
+    const val translateOnlyText = "只发送识别出的文字，不上传图片"
+    const val translateTest = "测试连接"
+    const val translateTesting = "测试中…"
+    const val translateTestOk = "连接成功，翻译可用"
+    const val translateTestFail = "连不上。请检查手机是否允许本应用联网，以及地址是否正确"
+
     fun pageProgressCompact(page: Int, total: Int): String {
         if (total <= 0) return "已读"
         return "${(page + 1).coerceIn(1, total)}/$total"

@@ -151,6 +151,20 @@ class Prefs(context: Context) {
         set(value) = sp.edit().putBoolean(KEY_TAP_TURN, value).apply()
 
     
+    var translateEnabled: Boolean
+        get() = sp.getBoolean(KEY_TRANSLATE, false)
+        set(value) = sp.edit().putBoolean(KEY_TRANSLATE, value).apply()
+
+    var translateApi: String
+        get() = sp.getString(KEY_TRANSLATE_API, TranslationConfig.DEFAULT_API)
+            ?: TranslationConfig.DEFAULT_API
+        set(value) = sp.edit().putString(KEY_TRANSLATE_API, value.trim()).apply()
+
+    var translateModel: String
+        get() = sp.getString(KEY_TRANSLATE_MODEL, TranslationConfig.DEFAULT_MODEL)
+            ?: TranslationConfig.DEFAULT_MODEL
+        set(value) = sp.edit().putString(KEY_TRANSLATE_MODEL, value.trim()).apply()
+
     var readMode: Int
         get() = sp.getInt(KEY_READ_MODE, 0).coerceIn(0, 2)
         set(value) = sp.edit().putInt(KEY_READ_MODE, value.coerceIn(0, 2)).apply()
@@ -294,6 +308,9 @@ class Prefs(context: Context) {
         const val KEY_FAVORITES = "favorites"
         const val KEY_SMOOTHING = "smoothing"
         const val KEY_BRIGHTNESS = "brightness"
+        const val KEY_TRANSLATE = "translate_enabled"
+        const val KEY_TRANSLATE_API = "translate_api"
+        const val KEY_TRANSLATE_MODEL = "translate_model"
 
         const val MIN_ZOOM_PERCENT = 40
         const val MAX_ZOOM_PERCENT = 400

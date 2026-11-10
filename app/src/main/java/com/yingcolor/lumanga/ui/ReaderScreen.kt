@@ -103,11 +103,13 @@ import com.yingcolor.lumanga.data.PageAnimation
 import com.yingcolor.lumanga.data.PageDecoder
 import com.yingcolor.lumanga.data.PageSource
 import com.yingcolor.lumanga.data.Prefs
+import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.data.ZoomMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -489,6 +491,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         error = null
         pageCount = 0
         dropPending()
+        clearTranslations()
         pageCache.evictAll()
         thumbCache.evictAll()
         placeholderCache.evictAll()
@@ -563,6 +566,39 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
 
 
+
+    private val translatedCache = object : LruCache<String, Bitmap>(32 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
+    }
+    private val translating = HashMap<String, Deferred<Bitmap?>>()
+    private val translationLock = Any()
+
+    suspend fun translate(index: Int, source: Bitmap, api: String, model: String): Bitmap? {
+        val key = "$index-${source.width}x${source.height}-${(api + model).hashCode()}"
+        translatedCache.get(key)?.let { return it }
+        val deferred = synchronized(translationLock) {
+            translating[key] ?: viewModelScope.async(Dispatchers.IO) {
+                val regions = TranslationEngine.recognize(source)
+                android.util.Log.i("Translate", "TR ocr index=$index regions=${regions.size}")
+                if (regions.isEmpty()) return@async null
+                val lines = TranslationEngine.translate(regions, api, model)
+                android.util.Log.i("Translate", "TR api index=$index lines=${lines?.size ?: -1}")
+                if (lines == null) return@async null
+                val rendered = TranslationEngine.render(source, regions, lines)
+                android.util.Log.i("Translate", "TR done index=$index")
+                rendered
+            }.also { translating[key] = it }
+        }
+        val result = runCatching { deferred.await() }.getOrNull()
+        if (result != null) translatedCache.put(key, result)
+        synchronized(translationLock) { translating.remove(key) }
+        return result
+    }
+
+    fun clearTranslations() {
+        translatedCache.evictAll()
+        synchronized(translationLock) { translating.clear() }
+    }
 
     suspend fun quickPage(index: Int): Bitmap? {
         repeat(2) { attempt ->
@@ -1814,6 +1850,9 @@ private fun PageRow(
         zoomMode = settings.fitMode,
         zoomPercent = settings.zoomPercent,
         entrySide = entrySide,
+        translate = settings.translateEnabled,
+        api = settings.translateApi,
+        model = settings.translateModel,
         modifier = modifier
     )
 }
@@ -1827,7 +1866,10 @@ private fun rememberPageBitmap(
     targetH: Int,
     quality: Int,
     zoomMode: Int,
-    zoomPercent: Int
+    zoomPercent: Int,
+    translate: Boolean,
+    api: String,
+    model: String
 ): Bitmap? {
     
     
@@ -1858,7 +1900,7 @@ private fun rememberPageBitmap(
         initialValue = vm.peekPage(index, quality) ?: vm.peekPlaceholder(index),
         key1 = index,
         key2 = quality,
-        key3 = "$decodeW-$decodeH"
+        key3 = "$decodeW-$decodeH-$translate-$api-$model"
     ) {
         
         
@@ -1870,6 +1912,10 @@ private fun rememberPageBitmap(
         }
         val full = vm.page(index, decodeW, decodeH, quality)
         if (full != null) value = full
+        if (translate && full != null) {
+            val rendered = vm.translate(index, full, api, model)
+            if (rendered != null) value = rendered
+        }
     }
     return state.value
 }
@@ -1893,6 +1939,9 @@ private fun PageSpread(
     zoomMode: Int,
     zoomPercent: Int,
     entrySide: Int,
+    translate: Boolean,
+    api: String,
+    model: String,
     modifier: Modifier = Modifier
 ) {
     var panX by remember(indices, zoomMode, zoomPercent) { mutableStateOf(0f) }
@@ -1910,7 +1959,10 @@ private fun PageSpread(
         
         val loaded = ArrayList<Bitmap?>(indices.size)
         for (i in indices) {
-            loaded += rememberPageBitmap(vm, i, targetW, targetH, quality, zoomMode, zoomPercent)
+            loaded += rememberPageBitmap(
+                vm, i, targetW, targetH, quality, zoomMode, zoomPercent,
+                translate, api, model
+            )
         }
 
         

@@ -51,6 +51,30 @@ class UiSettings(private val prefs: Prefs) {
     private var stateTapToTurn by mutableStateOf(prefs.tapToTurn)
     val tapToTurn: Boolean get() = stateTapToTurn
 
+    private var stateTranslateEnabled by mutableStateOf(prefs.translateEnabled)
+    val translateEnabled: Boolean get() = stateTranslateEnabled
+
+    private var stateTranslateApi by mutableStateOf(prefs.translateApi)
+    val translateApi: String get() = stateTranslateApi
+
+    private var stateTranslateModel by mutableStateOf(prefs.translateModel)
+    val translateModel: String get() = stateTranslateModel
+
+    fun setTranslateEnabled(value: Boolean) {
+        stateTranslateEnabled = value
+        prefs.translateEnabled = value
+    }
+
+    fun setTranslateApi(value: String) {
+        stateTranslateApi = value
+        prefs.translateApi = value
+    }
+
+    fun setTranslateModel(value: String) {
+        stateTranslateModel = value
+        prefs.translateModel = value
+    }
+
     private var stateReadMode by mutableStateOf(prefs.readMode)
     val readMode: Int get() = stateReadMode
 
