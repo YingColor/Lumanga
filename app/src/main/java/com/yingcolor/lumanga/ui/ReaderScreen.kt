@@ -583,6 +583,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 val regions = TranslationEngine.recognize(source)
                 android.util.Log.i("Translate", "TR ocr index=$index regions=${regions.size}")
                 if (regions.isEmpty()) return@async null
+                val groups = TranslationEngine.groupBubbles(regions, source.width, source.height)
+                android.util.Log.i("Translate", "TR bubbles index=$index groups=${groups.size}")
                 val previous = synchronized(contextLock) {
                     translationContext.entries
                         .filter { it.key < index }
@@ -590,7 +592,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                         ?.value ?: emptyList()
                 }
                 android.util.Log.i("Translate", "TR ctx index=$index prev=${previous.size}")
-                val lines = TranslationEngine.translate(regions, api, model, previous)
+                val lines = TranslationEngine.translate(groups, api, model, previous)
                 android.util.Log.i("Translate", "TR api index=$index lines=${lines?.size ?: -1}")
                 if (lines == null) return@async null
                 synchronized(contextLock) {
@@ -599,7 +601,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                         translationContext.remove(translationContext.keys.first())
                     }
                 }
-                val rendered = TranslationEngine.render(source, regions, lines)
+                val rendered = TranslationEngine.render(source, groups, lines)
                 android.util.Log.i("Translate", "TR done index=$index")
                 rendered
             }.also { translating[key] = it }

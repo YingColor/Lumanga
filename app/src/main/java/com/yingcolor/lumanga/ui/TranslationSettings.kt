@@ -106,7 +106,8 @@ fun TranslationSettings(settings: UiSettings) {
                 testResult = null
                 scope.launch {
                     val probe = listOf(TextRegion("お前はもう死んでいる。", Rect(0, 0, 100, 40)))
-                    val result = TranslationEngine.translate(probe, api, model)
+                    val groups = TranslationEngine.groupBubbles(probe, 200, 80)
+                    val result = TranslationEngine.translate(groups, api, model)
                     testResult = if (result != null && result.firstOrNull()?.isNotBlank() == true)
                         S.translateTestOk
                     else

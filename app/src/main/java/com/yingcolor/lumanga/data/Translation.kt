@@ -20,12 +20,20 @@ object TranslationConfig {
 
 data class TextRegion(val text: String, val box: Rect)
 
+data class BubbleGroup(
+    val regions: List<TextRegion>,
+    val bubble: Rect,
+    val source: String
+)
+
 object TranslationEngine {
     private const val SYSTEM_PROMPT =
-        "你是漫画翻译助手。输入是从漫画页面识别出来的日文，可能含识别错字。" +
-            "请结合上下文先纠正明显的错字，再逐条翻译成简体中文。" +
-            "只输出译文，条数必须与输入一致，每行严格按「编号. 译文」格式，" +
-            "不要解释、不要复述原文、不要添加原文没有的内容。" +
+        "你是漫画翻译助手。输入按【编号】分组，每组是一个对话气泡里 OCR 出来的日文片段。" +
+            "漫画竖排文字常被切碎、顺序颠倒，也可能有识别错字。" +
+            "请先按漫画竖排的正确顺序（从右到左、从上到下）重排并纠正明显错字，" +
+            "理解整句含义后，为每个气泡输出一句通顺自然的简体中文。" +
+            "只输出译文，条数必须与气泡数一致，每行严格按「编号. 译文」格式。" +
+            "不要解释、不要复述原文、不要逐字硬译、不要添加原文没有的内容。" +
             "若有上一页译文，人名和称呼必须与之一致。"
 
     @Volatile
@@ -33,21 +41,60 @@ object TranslationEngine {
 
     suspend fun recognize(bitmap: Bitmap): List<TextRegion> = ocr.recognize(bitmap)
 
+    fun groupBubbles(regions: List<TextRegion>, width: Int, height: Int): List<BubbleGroup> {
+        if (regions.isEmpty()) return emptyList()
+        val ordered = regions.sortedWith(
+            compareByDescending<TextRegion> { it.box.centerX() }
+                .thenBy { it.box.centerY() }
+        )
+        val clusters = ArrayList<MutableList<TextRegion>>()
+        for (region in ordered) {
+            val target = clusters.firstOrNull { cluster ->
+                cluster.any { near(region.box, it.box) }
+            }
+            if (target != null) target.add(region) else clusters.add(mutableListOf(region))
+        }
+        return clusters.map { cluster ->
+            val union = Rect(cluster[0].box)
+            cluster.forEach { union.union(it.box) }
+            BubbleGroup(cluster, expand(union, width, height), cluster.joinToString("") { it.text })
+        }
+    }
+
+    private fun near(a: Rect, b: Rect): Boolean {
+        val dx = maxOf(0, maxOf(a.left - b.right, b.left - a.right))
+        val dy = maxOf(0, maxOf(a.top - b.bottom, b.top - a.bottom))
+        return dx < 70 && dy < 90
+    }
+
+    private fun expand(seed: Rect, width: Int, height: Int): Rect {
+        val cx = seed.centerX()
+        val cy = seed.centerY()
+        val w = (seed.width() * 1.35f).toInt().coerceAtLeast(seed.width() + 24)
+        val h = (seed.height() * 1.35f).toInt().coerceAtLeast(seed.height() + 24)
+        return Rect(
+            (cx - w / 2).coerceAtLeast(0),
+            (cy - h / 2).coerceAtLeast(0),
+            (cx + w / 2).coerceAtMost(width),
+            (cy + h / 2).coerceAtMost(height)
+        )
+    }
+
     suspend fun translate(
-        regions: List<TextRegion>,
+        groups: List<BubbleGroup>,
         api: String,
         model: String,
         context: List<String> = emptyList()
     ): List<String>? = withContext(Dispatchers.IO) {
-        if (regions.isEmpty()) return@withContext emptyList()
+        if (groups.isEmpty()) return@withContext emptyList()
         val numbered = buildString {
             if (context.isNotEmpty()) {
                 append("【上一页译文，仅供保持人名、称呼和语气一致】\n")
                 context.forEach { append(it).append('\n') }
                 append("\n【本页原文】\n")
             }
-            regions.forEachIndexed { i, region ->
-                append(i + 1).append(". ").append(region.text).append('\n')
+            groups.forEachIndexed { i, group ->
+                append(i + 1).append(". ").append(group.source).append('\n')
             }
         }
         val body = JSONObject()
@@ -91,7 +138,7 @@ object TranslationEngine {
                 .getJSONObject(0)
                 .getJSONObject("message")
                 .optString("content")
-            parse(content, regions.size)
+            parse(content, groups.size)
         }
         outcome.exceptionOrNull()?.let {
             android.util.Log.w("Translate", "TR fail ${it.javaClass.simpleName}: ${it.message}")
@@ -112,37 +159,40 @@ object TranslationEngine {
         return List(count) { lines.getOrNull(it).orEmpty() }
     }
 
-    fun render(source: Bitmap, regions: List<TextRegion>, translated: List<String>): Bitmap {
+    fun render(source: Bitmap, groups: List<BubbleGroup>, translated: List<String>): Bitmap {
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(out)
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
-        regions.forEachIndexed { i, region ->
+        groups.forEachIndexed { i, group ->
             val value = translated.getOrNull(i)?.trim().orEmpty()
             if (value.isEmpty()) return@forEachIndexed
-            val box = Rect(region.box)
-            val grow = (minOf(box.width(), box.height()) * 0.08f).toInt().coerceIn(2, 10)
-            box.inset(-grow, -grow)
-            box.left = box.left.coerceAtLeast(0)
-            box.top = box.top.coerceAtLeast(0)
-            box.right = box.right.coerceAtMost(source.width)
-            box.bottom = box.bottom.coerceAtMost(source.height)
-            if (box.width() < 8 || box.height() < 8) return@forEachIndexed
-
-            val background = sampleBubbleColor(out, box)
-            eraseInk(out, box, background)
+            var background = Color.WHITE
+            for (region in group.regions) {
+                val box = Rect(region.box)
+                val grow = (minOf(box.width(), box.height()) * 0.04f).toInt().coerceIn(0, 3)
+                box.inset(-grow, -grow)
+                box.left = box.left.coerceAtLeast(0)
+                box.top = box.top.coerceAtLeast(0)
+                box.right = box.right.coerceAtMost(source.width)
+                box.bottom = box.bottom.coerceAtMost(source.height)
+                if (box.width() < 8 || box.height() < 8) continue
+                background = sampleBubbleColor(out, box)
+                eraseInk(out, box, background)
+            }
             textPaint.color = if (luminance(background) > 140) {
                 Color.rgb(20, 20, 20)
             } else {
                 Color.WHITE
             }
+            val bubble = group.bubble
             drawFittedText(
                 canvas,
                 textPaint,
                 value,
-                box,
-                box.height() >= box.width() * 1.35f
+                bubble,
+                bubble.height() >= bubble.width() * 1.5f
             )
         }
         return out
@@ -175,10 +225,44 @@ object TranslationEngine {
         val h = box.height().coerceAtLeast(1)
         val pixels = IntArray(w * h)
         bitmap.getPixels(pixels, 0, w, box.left, box.top, w, h)
-        val threshold = maxOf(120, (luminance(background) * 0.88f).toInt())
+        val backgroundLum = luminance(background)
+        val inkThreshold = maxOf(120, (backgroundLum * 0.88f).toInt())
+        val brightThreshold = (backgroundLum * 0.85f).toInt()
+        val marked = BooleanArray(w * h)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val i = y * w + x
+                if (luminance(pixels[i]) >= inkThreshold) continue
+                var brightNeighbours = 0
+                for (dy in -2..2) {
+                    val ny = y + dy
+                    if (ny < 0 || ny >= h) continue
+                    for (dx in -2..2) {
+                        val nx = x + dx
+                        if (nx < 0 || nx >= w || (dx == 0 && dy == 0)) continue
+                        if (luminance(pixels[ny * w + nx]) >= brightThreshold) brightNeighbours++
+                    }
+                }
+                if (brightNeighbours >= 2) marked[i] = true
+            }
+        }
+        val expanded = marked.clone()
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                if (!marked[y * w + x]) continue
+                for (dy in -2..2) {
+                    val ny = y + dy
+                    if (ny < 0 || ny >= h) continue
+                    for (dx in -2..2) {
+                        val nx = x + dx
+                        if (nx in 0 until w) expanded[ny * w + nx] = true
+                    }
+                }
+            }
+        }
         var changed = false
         for (i in pixels.indices) {
-            if (luminance(pixels[i]) < threshold) {
+            if (expanded[i] && luminance(pixels[i]) < brightThreshold) {
                 pixels[i] = background
                 changed = true
             }
@@ -199,7 +283,7 @@ object TranslationEngine {
         var size = if (vertical) {
             minOf(availW / 2.1f, availH / 6f).coerceIn(11f, 60f)
         } else {
-            minOf(availH / 2.6f, availW / 3.2f).coerceIn(11f, 76f)
+            minOf(availW / 4.0f, availH / 3.0f).coerceIn(11f, 52f)
         }
         for (attempt in 0 until 28) {
             paint.textSize = size
