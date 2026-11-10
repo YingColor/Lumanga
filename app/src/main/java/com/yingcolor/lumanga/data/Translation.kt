@@ -7,17 +7,12 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import kotlin.coroutines.resume
 
 object TranslationConfig {
     const val DEFAULT_API = "https://index-translate.bilibili.com/v1"
@@ -31,33 +26,27 @@ object TranslationEngine {
         "你是漫画翻译助手。输入是从漫画页面识别出来的日文，可能含识别错字。" +
             "请结合上下文先纠正明显的错字，再逐条翻译成简体中文。" +
             "只输出译文，条数必须与输入一致，每行严格按「编号. 译文」格式，" +
-            "不要解释、不要复述原文、不要添加原文没有的内容。"
+            "不要解释、不要复述原文、不要添加原文没有的内容。" +
+            "若有上一页译文，人名和称呼必须与之一致。"
 
-    suspend fun recognize(bitmap: Bitmap): List<TextRegion> = suspendCancellableCoroutine { cont ->
-        val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
-        recognizer.process(InputImage.fromBitmap(bitmap, 0))
-            .addOnSuccessListener { result ->
-                val regions = result.textBlocks.mapNotNull { block ->
-                    val box = block.boundingBox ?: return@mapNotNull null
-                    val text = block.text.replace('\n', ' ').trim()
-                    if (text.isEmpty()) null else TextRegion(text, box)
-                }
-                recognizer.close()
-                if (cont.isActive) cont.resume(regions)
-            }
-            .addOnFailureListener {
-                recognizer.close()
-                if (cont.isActive) cont.resume(emptyList())
-            }
-    }
+    @Volatile
+    var ocr: OcrEngine = MlKitOcrEngine
+
+    suspend fun recognize(bitmap: Bitmap): List<TextRegion> = ocr.recognize(bitmap)
 
     suspend fun translate(
         regions: List<TextRegion>,
         api: String,
-        model: String
+        model: String,
+        context: List<String> = emptyList()
     ): List<String>? = withContext(Dispatchers.IO) {
         if (regions.isEmpty()) return@withContext emptyList()
         val numbered = buildString {
+            if (context.isNotEmpty()) {
+                append("【上一页译文，仅供保持人名、称呼和语气一致】\n")
+                context.forEach { append(it).append('\n') }
+                append("\n【本页原文】\n")
+            }
             regions.forEachIndexed { i, region ->
                 append(i + 1).append(". ").append(region.text).append('\n')
             }

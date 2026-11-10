@@ -572,6 +572,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
     private val translating = HashMap<String, Deferred<Bitmap?>>()
     private val translationLock = Any()
+    private val translationContext = LinkedHashMap<Int, List<String>>(6)
+    private val contextLock = Any()
 
     suspend fun translate(index: Int, source: Bitmap, api: String, model: String): Bitmap? {
         val key = "$index-${source.width}x${source.height}-${(api + model).hashCode()}"
@@ -581,9 +583,22 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 val regions = TranslationEngine.recognize(source)
                 android.util.Log.i("Translate", "TR ocr index=$index regions=${regions.size}")
                 if (regions.isEmpty()) return@async null
-                val lines = TranslationEngine.translate(regions, api, model)
+                val previous = synchronized(contextLock) {
+                    translationContext.entries
+                        .filter { it.key < index }
+                        .maxByOrNull { it.key }
+                        ?.value ?: emptyList()
+                }
+                android.util.Log.i("Translate", "TR ctx index=$index prev=${previous.size}")
+                val lines = TranslationEngine.translate(regions, api, model, previous)
                 android.util.Log.i("Translate", "TR api index=$index lines=${lines?.size ?: -1}")
                 if (lines == null) return@async null
+                synchronized(contextLock) {
+                    translationContext[index] = lines
+                    while (translationContext.size > 6) {
+                        translationContext.remove(translationContext.keys.first())
+                    }
+                }
                 val rendered = TranslationEngine.render(source, regions, lines)
                 android.util.Log.i("Translate", "TR done index=$index")
                 rendered
@@ -598,6 +613,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun clearTranslations() {
         translatedCache.evictAll()
         synchronized(translationLock) { translating.clear() }
+        synchronized(contextLock) { translationContext.clear() }
     }
 
     suspend fun quickPage(index: Int): Bitmap? {
