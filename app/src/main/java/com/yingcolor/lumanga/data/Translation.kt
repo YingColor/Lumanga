@@ -5,7 +5,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
-import android.graphics.RectF
 import android.graphics.Typeface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -116,58 +115,166 @@ object TranslationEngine {
     fun render(source: Bitmap, regions: List<TextRegion>, translated: List<String>): Bitmap {
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(out)
-        val background = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(232, 250, 250, 250)
-            style = Paint.Style.FILL
-        }
-        val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(110, 25, 25, 25)
-            style = Paint.Style.STROKE
-            strokeWidth = 2f
-        }
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(18, 18, 18)
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
         regions.forEachIndexed { i, region ->
             val value = translated.getOrNull(i)?.trim().orEmpty()
             if (value.isEmpty()) return@forEachIndexed
-            val box = region.box
-            val cx = box.centerX().toFloat()
-            val cy = box.centerY().toFloat()
-            val boxW = maxOf(box.width() + 40f, minOf(source.width / 3f, 460f))
-                .coerceAtMost(source.width - 24f)
-            val pad = 16f
-            textPaint.textSize = (boxW / 14f).coerceIn(24f, 46f)
-            val lines = wrap(value, textPaint, (boxW - 2f * pad).coerceAtLeast(40f))
-            if (lines.isEmpty()) return@forEachIndexed
-            val lineH = textPaint.fontSpacing
-            val boxH = (lines.size * lineH + 2f * pad).coerceAtMost(source.height - 24f)
-            val maxLeft = (source.width - boxW - 8f).coerceAtLeast(8f)
-            val maxTop = (source.height - boxH - 8f).coerceAtLeast(8f)
-            val left = (cx - boxW / 2f).coerceIn(8f, maxLeft)
-            val top = (cy - boxH / 2f).coerceIn(8f, maxTop)
-            val rect = RectF(left, top, left + boxW, top + boxH)
-            canvas.drawRoundRect(rect, 14f, 14f, background)
-            canvas.drawRoundRect(rect, 14f, 14f, border)
-            val visible = ((boxH - 2f * pad) / lineH).toInt().coerceAtMost(lines.size)
-            for (k in 0 until visible) {
-                canvas.drawText(
-                    lines[k],
-                    left + pad,
-                    top + pad + textPaint.textSize + k * lineH,
-                    textPaint
-                )
+            val box = Rect(region.box)
+            val grow = (minOf(box.width(), box.height()) * 0.08f).toInt().coerceIn(2, 10)
+            box.inset(-grow, -grow)
+            box.left = box.left.coerceAtLeast(0)
+            box.top = box.top.coerceAtLeast(0)
+            box.right = box.right.coerceAtMost(source.width)
+            box.bottom = box.bottom.coerceAtMost(source.height)
+            if (box.width() < 8 || box.height() < 8) return@forEachIndexed
+
+            val background = sampleBubbleColor(out, box)
+            eraseInk(out, box, background)
+            textPaint.color = if (luminance(background) > 140) {
+                Color.rgb(20, 20, 20)
+            } else {
+                Color.WHITE
             }
+            drawFittedText(
+                canvas,
+                textPaint,
+                value,
+                box,
+                box.height() >= box.width() * 1.35f
+            )
         }
         return out
+    }
+
+    private fun luminance(color: Int): Int =
+        (
+            Color.red(color) * 299 +
+                Color.green(color) * 587 +
+                Color.blue(color) * 114
+            ) / 1000
+
+    private fun sampleBubbleColor(source: Bitmap, box: Rect): Int {
+        val w = box.width().coerceAtLeast(1)
+        val h = box.height().coerceAtLeast(1)
+        val pixels = IntArray(w * h)
+        source.getPixels(pixels, 0, w, box.left, box.top, w, h)
+        val bright = ArrayList<Int>(pixels.size / 4)
+        for (pixel in pixels) {
+            if (luminance(pixel) > 120) bright.add(pixel)
+        }
+        val pool = if (bright.size >= pixels.size / 6) bright else pixels.toList()
+        val sorted = pool.sortedBy { luminance(it) }
+        val picked = sorted[sorted.size / 2]
+        return Color.rgb(Color.red(picked), Color.green(picked), Color.blue(picked))
+    }
+
+    private fun eraseInk(bitmap: Bitmap, box: Rect, background: Int) {
+        val w = box.width().coerceAtLeast(1)
+        val h = box.height().coerceAtLeast(1)
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, box.left, box.top, w, h)
+        val threshold = maxOf(120, (luminance(background) * 0.88f).toInt())
+        var changed = false
+        for (i in pixels.indices) {
+            if (luminance(pixels[i]) < threshold) {
+                pixels[i] = background
+                changed = true
+            }
+        }
+        if (changed) bitmap.setPixels(pixels, 0, w, box.left, box.top, w, h)
+    }
+
+    private fun drawFittedText(
+        canvas: Canvas,
+        paint: Paint,
+        text: String,
+        box: Rect,
+        vertical: Boolean
+    ) {
+        val pad = maxOf(3f, minOf(box.width(), box.height()) * 0.06f)
+        val availW = (box.width() - 2f * pad).coerceAtLeast(12f)
+        val availH = (box.height() - 2f * pad).coerceAtLeast(12f)
+        var size = if (vertical) {
+            minOf(availW / 2.1f, availH / 6f).coerceIn(11f, 60f)
+        } else {
+            minOf(availH / 2.6f, availW / 3.2f).coerceIn(11f, 76f)
+        }
+        for (attempt in 0 until 28) {
+            paint.textSize = size
+            val lineH = size * 1.18f
+            val colW = size * 1.12f
+            val fits = if (vertical) {
+                val perColumn = (availH / lineH).toInt().coerceAtLeast(1)
+                chunk(text, perColumn).size * colW <= availW
+            } else {
+                wrap(text, paint, availW).size * lineH <= availH
+            }
+            if (fits) break
+            size = (size * 0.88f).coerceAtLeast(9f)
+        }
+        paint.textSize = size
+        val lineH = size * 1.18f
+        val colW = size * 1.12f
+        if (vertical) {
+            val perColumn = (availH / lineH).toInt().coerceAtLeast(1)
+            val columns = chunk(text, perColumn)
+            val totalW = columns.size * colW
+            var x = box.left + (box.width() - totalW) / 2f + totalW - colW
+            for (column in columns) {
+                var y = box.top + (box.height() - column.length * lineH) / 2f + size * 0.86f
+                for (ch in column) {
+                    val px = x + (colW - size) / 2f
+                    if (px >= box.left && px + size <= box.right && y - size <= box.bottom) {
+                        canvas.drawText(ch.toString(), px, y, paint)
+                    }
+                    y += lineH
+                }
+                x -= colW
+            }
+        } else {
+            val lines = wrap(text, paint, availW)
+            var y = box.top + (box.height() - lines.size * lineH) / 2f + size * 0.86f
+            for (line in lines) {
+                val tw = paint.measureText(line)
+                val px = box.left + (box.width() - tw) / 2f
+                if (y - size <= box.bottom && px >= box.left) {
+                    canvas.drawText(line, px, y, paint)
+                }
+                y += lineH
+            }
+        }
+    }
+
+    private fun isPunctuation(ch: Char): Boolean =
+        "，。！？、；：,.!?;:」』）)]}".contains(ch)
+
+    private fun chunk(text: String, per: Int): List<String> {
+        val columns = ArrayList<String>(4)
+        var i = 0
+        while (i < text.length) {
+            val end = (i + per).coerceAtMost(text.length)
+            columns.add(text.substring(i, end))
+            i = end
+        }
+        if (columns.size > 1) {
+            val last = columns.last()
+            if (last.length == 1 && isPunctuation(last[0])) {
+                columns[columns.size - 2] = columns[columns.size - 2] + last
+                columns.removeAt(columns.size - 1)
+            }
+        }
+        return columns
     }
 
     private fun wrap(text: String, paint: Paint, maxWidth: Float): List<String> {
         val lines = ArrayList<String>(4)
         val current = StringBuilder()
         for (ch in text) {
-            if (current.isNotEmpty() && paint.measureText(current.toString() + ch) > maxWidth) {
+            val exceeds = current.isNotEmpty() &&
+                paint.measureText(current.toString() + ch) > maxWidth
+            if (exceeds && !isPunctuation(ch)) {
                 lines.add(current.toString())
                 current.setLength(0)
             }
