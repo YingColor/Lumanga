@@ -12,18 +12,28 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
 
 object TranslationConfig {
     const val DEFAULT_API = "https://index-translate.bilibili.com/v1"
     const val DEFAULT_MODEL = "Index-Translate-9B"
 }
 
-data class TextRegion(val text: String, val box: Rect)
+data class TextRegion(
+    val text: String,
+    val box: Rect,
+    val confidence: Float = 1f,
+    val vertical: Boolean = false
+)
 
 data class BubbleGroup(
     val regions: List<TextRegion>,
     val bubble: Rect,
-    val source: String
+    val source: String,
+    val vertical: Boolean
 )
 
 object TranslationEngine {
@@ -41,43 +51,66 @@ object TranslationEngine {
 
     suspend fun recognize(bitmap: Bitmap): List<TextRegion> = ocr.recognize(bitmap)
 
+    /** Drops detection noise, sound effects and single stray glyphs before translating. */
+    fun isUsable(region: TextRegion): Boolean {
+        if (region.confidence < 0.55f) return false
+        if (region.box.width() < 10 || region.box.height() < 10) return false
+        if (region.vertical && region.box.height() < region.box.width() * 1.2f) return false
+        var letters = 0
+        for (ch in region.text) {
+            if (isJapaneseLetter(ch)) letters++
+        }
+        if (letters < 2) return false
+        val meaningful = region.text.count { it !in PUNCTUATION && !it.isDigit() && !it.isWhitespace() }
+        if (meaningful < 2) return false
+        return true
+    }
+
     fun groupBubbles(regions: List<TextRegion>, width: Int, height: Int): List<BubbleGroup> {
-        if (regions.isEmpty()) return emptyList()
-        val ordered = regions.sortedWith(
-            compareByDescending<TextRegion> { it.box.centerX() }
-                .thenBy { it.box.centerY() }
+        val usable = regions.filter { isUsable(it) }
+        if (usable.isEmpty()) return emptyList()
+        val ordered = usable.sortedWith(
+            compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top }
         )
         val clusters = ArrayList<MutableList<TextRegion>>()
         for (region in ordered) {
-            val target = clusters.firstOrNull { cluster ->
-                cluster.any { near(region.box, it.box) }
+            var target: MutableList<TextRegion>? = null
+            var bestGap = Float.MAX_VALUE
+            for (cluster in clusters) {
+                for (member in cluster) {
+                    // columns of one bubble sit side by side and share the same vertical span;
+                    // they often overlap slightly, so a negative gap counts as touching
+                    val gap = horizontalGap(region.box, member.box)
+                    val verticalOverlap = overlap(region.box, member.box)
+                    if (verticalOverlap < 0.45f) continue
+                    val unit = min(min(region.box.width(), member.box.width()).toFloat(), 96f)
+                        .coerceAtLeast(12f)
+                    if (gap < unit * 0.75f && gap < bestGap) {
+                        target = cluster
+                        bestGap = gap
+                    }
+                }
             }
             if (target != null) target.add(region) else clusters.add(mutableListOf(region))
         }
         return clusters.map { cluster ->
+            cluster.sortWith(compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top })
             val union = Rect(cluster[0].box)
             cluster.forEach { union.union(it.box) }
-            BubbleGroup(cluster, expand(union, width, height), cluster.joinToString("") { it.text })
-        }
+            val vertical = cluster.count { it.vertical } * 2 >= cluster.size
+            BubbleGroup(cluster, union, cluster.joinToString("") { it.text }, vertical)
+        }.sortedWith(compareByDescending<BubbleGroup> { it.bubble.centerX() }.thenBy { it.bubble.top })
     }
 
-    private fun near(a: Rect, b: Rect): Boolean {
-        val dx = maxOf(0, maxOf(a.left - b.right, b.left - a.right))
-        val dy = maxOf(0, maxOf(a.top - b.bottom, b.top - a.bottom))
-        return dx < 70 && dy < 90
-    }
+    private fun horizontalGap(a: Rect, b: Rect): Float =
+        maxOf(0f, maxOf(a.left - b.right, b.left - a.right).toFloat())
 
-    private fun expand(seed: Rect, width: Int, height: Int): Rect {
-        val cx = seed.centerX()
-        val cy = seed.centerY()
-        val w = (seed.width() * 1.35f).toInt().coerceAtLeast(seed.width() + 24)
-        val h = (seed.height() * 1.35f).toInt().coerceAtLeast(seed.height() + 24)
-        return Rect(
-            (cx - w / 2).coerceAtLeast(0),
-            (cy - h / 2).coerceAtLeast(0),
-            (cx + w / 2).coerceAtMost(width),
-            (cy + h / 2).coerceAtMost(height)
-        )
+    private fun overlap(a: Rect, b: Rect): Float {
+        val top = maxOf(a.top, b.top)
+        val bottom = minOf(a.bottom, b.bottom)
+        val shared = bottom - top
+        val shorter = minOf(a.height(), b.height()).coerceAtLeast(1)
+        return (shared.toFloat() / shorter).coerceAtLeast(0f)
     }
 
     suspend fun translate(
@@ -162,8 +195,8 @@ object TranslationEngine {
     fun render(source: Bitmap, groups: List<BubbleGroup>, translated: List<String>): Bitmap {
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(out)
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         }
         groups.forEachIndexed { i, group ->
             val value = translated.getOrNull(i)?.trim().orEmpty()
@@ -171,39 +204,23 @@ object TranslationEngine {
             var background = Color.WHITE
             for (region in group.regions) {
                 val box = Rect(region.box)
-                val grow = (minOf(box.width(), box.height()) * 0.04f).toInt().coerceIn(0, 3)
-                box.inset(-grow, -grow)
+                box.inset(-2, -2)
                 box.left = box.left.coerceAtLeast(0)
                 box.top = box.top.coerceAtLeast(0)
                 box.right = box.right.coerceAtMost(source.width)
                 box.bottom = box.bottom.coerceAtMost(source.height)
-                if (box.width() < 8 || box.height() < 8) continue
+                if (box.width() < 6 || box.height() < 6) continue
                 background = sampleBubbleColor(out, box)
                 eraseInk(out, box, background)
             }
-            textPaint.color = if (luminance(background) > 140) {
-                Color.rgb(20, 20, 20)
-            } else {
-                Color.WHITE
-            }
-            val bubble = group.bubble
-            drawFittedText(
-                canvas,
-                textPaint,
-                value,
-                bubble,
-                bubble.height() >= bubble.width() * 1.5f
-            )
+            paint.color = if (luminance(background) > 140) Color.rgb(18, 18, 18) else Color.WHITE
+            drawFittedText(canvas, paint, value, group.bubble, group.vertical)
         }
         return out
     }
 
     private fun luminance(color: Int): Int =
-        (
-            Color.red(color) * 299 +
-                Color.green(color) * 587 +
-                Color.blue(color) * 114
-            ) / 1000
+        (Color.red(color) * 299 + Color.green(color) * 587 + Color.blue(color) * 114) / 1000
 
     private fun sampleBubbleColor(source: Bitmap, box: Rect): Int {
         val w = box.width().coerceAtLeast(1)
@@ -220,55 +237,57 @@ object TranslationEngine {
         return Color.rgb(Color.red(picked), Color.green(picked), Color.blue(picked))
     }
 
+    /**
+     * Removes the original lettering inside [box]: find ink, grow it by a few pixels to catch
+     * the anti-aliased fringe, then paint those pixels with the bubble colour. The halo is what
+     * used to survive as a grey ghost.
+     */
     private fun eraseInk(bitmap: Bitmap, box: Rect, background: Int) {
         val w = box.width().coerceAtLeast(1)
         val h = box.height().coerceAtLeast(1)
         val pixels = IntArray(w * h)
         bitmap.getPixels(pixels, 0, w, box.left, box.top, w, h)
         val backgroundLum = luminance(background)
-        val inkThreshold = maxOf(120, (backgroundLum * 0.88f).toInt())
-        val brightThreshold = (backgroundLum * 0.85f).toInt()
-        val marked = BooleanArray(w * h)
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                val i = y * w + x
-                if (luminance(pixels[i]) >= inkThreshold) continue
-                var brightNeighbours = 0
-                for (dy in -2..2) {
-                    val ny = y + dy
-                    if (ny < 0 || ny >= h) continue
-                    for (dx in -2..2) {
-                        val nx = x + dx
-                        if (nx < 0 || nx >= w || (dx == 0 && dy == 0)) continue
-                        if (luminance(pixels[ny * w + nx]) >= brightThreshold) brightNeighbours++
-                    }
-                }
-                if (brightNeighbours >= 2) marked[i] = true
-            }
-        }
-        val expanded = marked.clone()
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                if (!marked[y * w + x]) continue
-                for (dy in -2..2) {
-                    val ny = y + dy
-                    if (ny < 0 || ny >= h) continue
-                    for (dx in -2..2) {
-                        val nx = x + dx
-                        if (nx in 0 until w) expanded[ny * w + nx] = true
-                    }
-                }
-            }
-        }
-        var changed = false
+        if (backgroundLum < 90) return
+        val core = BooleanArray(w * h)
+        val coreThreshold = (backgroundLum * 0.80f).toInt()
         for (i in pixels.indices) {
-            if (expanded[i] && luminance(pixels[i]) < brightThreshold) {
-                pixels[i] = background
-                changed = true
+            if (luminance(pixels[i]) < coreThreshold) core[i] = true
+        }
+        val reach = 2
+        var changed = false
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val index = y * w + x
+                if (luminance(pixels[index]) >= backgroundLum - 6) continue
+                var nearInk = false
+                for (dy in -reach..reach) {
+                    if (nearInk) break
+                    val ny = y + dy
+                    if (ny < 0 || ny >= h) continue
+                    for (dx in -reach..reach) {
+                        val nx = x + dx
+                        if (nx < 0 || nx >= w) continue
+                        if (core[ny * w + nx]) {
+                            nearInk = true
+                            break
+                        }
+                    }
+                }
+                if (nearInk) {
+                    pixels[index] = background
+                    changed = true
+                }
             }
         }
         if (changed) bitmap.setPixels(pixels, 0, w, box.left, box.top, w, h)
     }
+
+    private class Fit(
+        val columns: List<String>,
+        val lines: List<String>,
+        val size: Float
+    )
 
     private fun drawFittedText(
         canvas: Canvas,
@@ -277,68 +296,108 @@ object TranslationEngine {
         box: Rect,
         vertical: Boolean
     ) {
-        val pad = maxOf(3f, minOf(box.width(), box.height()) * 0.06f)
-        val availW = (box.width() - 2f * pad).coerceAtLeast(12f)
-        val availH = (box.height() - 2f * pad).coerceAtLeast(12f)
-        var size = if (vertical) {
-            minOf(availW / 2.1f, availH / 6f).coerceIn(11f, 60f)
-        } else {
-            minOf(availW / 4.0f, availH / 3.0f).coerceIn(11f, 52f)
+        if (box.width() < 10 || box.height() < 10) return
+        val pad = maxOf(1.5f, minOf(box.width(), box.height()) * 0.035f)
+        val availW = box.width() - 2f * pad
+        val availH = box.height() - 2f * pad
+        if (availW < 8f || availH < 8f) return
+
+        var fit: Fit? = null
+        var size = min(min(availW, availH) * 1.15f, 96f)
+        while (size >= 7f) {
+            fit = layout(text, paint, size, availW, availH, vertical)
+            if (fit != null) break
+            size -= 1f
         }
-        for (attempt in 0 until 28) {
-            paint.textSize = size
-            val lineH = size * 1.18f
-            val colW = size * 1.12f
-            val fits = if (vertical) {
-                val perColumn = (availH / lineH).toInt().coerceAtLeast(1)
-                chunk(text, perColumn).size * colW <= availW
-            } else {
-                wrap(text, paint, availW).size * lineH <= availH
+        if (fit == null) {
+            // nothing fits even at the floor: shorten instead of drawing outside the bubble
+            var keep = text.length
+            while (keep > 1) {
+                keep -= 1
+                fit = layout(text.take(keep) + "…", paint, 7f, availW, availH, vertical)
+                if (fit != null) break
             }
-            if (fits) break
-            size = (size * 0.88f).coerceAtLeast(9f)
         }
-        paint.textSize = size
-        val lineH = size * 1.18f
-        val colW = size * 1.12f
+        val chosen = fit ?: return
+        paint.textSize = chosen.size
+
+        canvas.save()
+        canvas.clipRect(box)
+        val metrics = paint.fontMetrics
+        val glyphH = metrics.descent - metrics.ascent
         if (vertical) {
-            val perColumn = (availH / lineH).toInt().coerceAtLeast(1)
-            val columns = chunk(text, perColumn)
-            val totalW = columns.size * colW
+            val colW = chosen.size * 1.10f
+            val lineH = chosen.size * 1.12f
+            val totalW = chosen.columns.size * colW
             var x = box.left + (box.width() - totalW) / 2f + totalW - colW
-            for (column in columns) {
-                var y = box.top + (box.height() - column.length * lineH) / 2f + size * 0.86f
+            for (column in chosen.columns) {
+                val blockH = column.length * lineH
+                var y = box.top + (box.height() - blockH) / 2f
                 for (ch in column) {
-                    val px = x + (colW - size) / 2f
-                    if (px >= box.left && px + size <= box.right && y - size <= box.bottom) {
-                        canvas.drawText(ch.toString(), px, y, paint)
-                    }
+                    val gx = x + (colW - chosen.size) / 2f
+                    val gy = y + (lineH - glyphH) / 2f - metrics.ascent
+                    canvas.drawText(ch.toString(), gx, gy, paint)
                     y += lineH
                 }
                 x -= colW
             }
         } else {
-            val lines = wrap(text, paint, availW)
-            var y = box.top + (box.height() - lines.size * lineH) / 2f + size * 0.86f
-            for (line in lines) {
-                val tw = paint.measureText(line)
-                val px = box.left + (box.width() - tw) / 2f
-                if (y - size <= box.bottom && px >= box.left) {
-                    canvas.drawText(line, px, y, paint)
-                }
+            val lineH = chosen.size * 1.18f
+            val blockH = chosen.lines.size * lineH
+            var y = box.top + (box.height() - blockH) / 2f
+            for (line in chosen.lines) {
+                val width = paint.measureText(line)
+                val gx = box.left + (box.width() - width) / 2f
+                val gy = y + (lineH - glyphH) / 2f - metrics.ascent
+                canvas.drawText(line, gx, gy, paint)
                 y += lineH
             }
         }
+        canvas.restore()
     }
 
-    private fun isPunctuation(ch: Char): Boolean =
-        "，。！？、；：,.!?;:」』）)]}".contains(ch)
+    private fun layout(
+        text: String,
+        paint: Paint,
+        size: Float,
+        availW: Float,
+        availH: Float,
+        vertical: Boolean
+    ): Fit? {
+        if (text.isEmpty()) return null
+        if (vertical) {
+            val lineH = size * 1.12f
+            val colW = size * 1.10f
+            val per = floor(availH / lineH).toInt()
+            if (per < 1) return null
+            val columns = chunk(text, per)
+            if (columns.size * colW > availW + 0.5f) return null
+            val longest = columns.maxOf { it.length }
+            if (longest * lineH > availH + 0.5f) return null
+            return Fit(columns, emptyList(), size)
+        }
+        paint.textSize = size
+        val lineH = size * 1.18f
+        val lines = wrap(text, paint, availW)
+        if (lines.size * lineH > availH + 0.5f) return null
+        if (lines.size == 1 && paint.measureText(lines[0]) > availW + 0.5f) return null
+        return Fit(emptyList(), lines, size)
+    }
+
+    private val PUNCTUATION = "，。！？、；：,.!?;:…‥「」『』（）()[]【】〈〉《》—―-~～·・"
+
+    private fun isJapaneseLetter(ch: Char): Boolean {
+        val code = ch.code
+        return (code in 0x3041..0x309F) || (code in 0x30A0..0x30FF) || (code in 0x4E00..0x9FFF)
+    }
+
+    private fun isPunctuation(ch: Char): Boolean = ch in PUNCTUATION
 
     private fun chunk(text: String, per: Int): List<String> {
         val columns = ArrayList<String>(4)
         var i = 0
         while (i < text.length) {
-            val end = (i + per).coerceAtMost(text.length)
+            val end = min(i + per, text.length)
             columns.add(text.substring(i, end))
             i = end
         }

@@ -62,6 +62,8 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
 }
 
 private class PaddleRuntime(private val dir: File) {
+    /** Longest tile edge fed to the 640 detector; keeps text near its native size. */
+    private val TILE_TARGET = 860
     private val det = Session(File(dir, "ppocrv6_small_det_640_fp32.tflite"), 3 * 640 * 640, 640 * 640)
     private val rec = Session(File(dir, "ppocrv6_small_rec_640_fp32.tflite"), 3 * 48 * 640, 80 * 18710)
     private val vocabulary: List<String> =
@@ -90,9 +92,75 @@ private class PaddleRuntime(private val dir: File) {
     }
 
     fun recognize(bitmap: Bitmap): List<TextRegion> {
-        val scale = 640f / max(bitmap.width, bitmap.height)
-        val scaledW = max(1, Math.round(bitmap.width * scale))
-        val scaledH = max(1, Math.round(bitmap.height * scale))
+        val boxes = detectColumns(bitmap)
+        val regions = ArrayList<TextRegion>(boxes.size)
+        for (column in boxes) {
+            val pad = 3
+            val left = (column.left - pad).coerceIn(0, bitmap.width - 2)
+            val top = (column.top - pad).coerceIn(0, bitmap.height - 2)
+            val right = (column.right + pad).coerceIn(left + 2, bitmap.width)
+            val bottom = (column.bottom + pad).coerceIn(top + 2, bitmap.height)
+            if (right - left < 6 || bottom - top < 6) continue
+            var crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+            val vertical = bottom - top >= (right - left) * 1.5f
+            if (vertical) crop = rotate(crop)
+            val (text, confidence) = recognizeLine(crop)
+            crop.recycle()
+            if (text.isBlank()) continue
+            val rect = Rect(left, top, right, bottom)
+            regions.add(TextRegion(text, rect, confidence, vertical))
+        }
+        return regions.sortedWith(
+            compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top }
+        )
+    }
+
+    /**
+     * Runs the detector over overlapping tiles instead of one shrunken full page.
+     * A 1240x1754 page squeezed into 640 leaves columns ~18 px wide, which the recognizer then
+     * has to blow up again; tiling keeps them around 25-35 px and lifts confidence a lot.
+     */
+    private fun detectColumns(bitmap: Bitmap): List<Rect> {
+        val w = bitmap.width
+        val h = bitmap.height
+        val cols = ((w + TILE_TARGET - 1) / TILE_TARGET).coerceIn(1, 3)
+        val rows = ((h + TILE_TARGET - 1) / TILE_TARGET).coerceIn(1, 3)
+        val tileW = (w + cols - 1) / cols
+        val tileH = (h + rows - 1) / rows
+        val collected = ArrayList<Rect>()
+        for (row in 0 until rows) {
+            for (col in 0 until cols) {
+                val overlapX = (tileW * 0.08f).toInt()
+                val overlapY = (tileH * 0.08f).toInt()
+                val x0 = (col * tileW - overlapX).coerceAtLeast(0)
+                val y0 = (row * tileH - overlapY).coerceAtLeast(0)
+                val x1 = ((col + 1) * tileW + overlapX).coerceAtMost(w)
+                val y1 = ((row + 1) * tileH + overlapY).coerceAtMost(h)
+                collected.addAll(detectTile(bitmap, x0, y0, x1, y1))
+            }
+        }
+        val kept = ArrayList<Rect>()
+        for (box in collected.sortedByDescending { it.width() * it.height() }) {
+            val duplicate = kept.any { existing ->
+                val iw = min(existing.right, box.right) - max(existing.left, box.left)
+                val ih = min(existing.bottom, box.bottom) - max(existing.top, box.top)
+                if (iw <= 0 || ih <= 0) return@any false
+                val smaller = min(existing.width() * existing.height(), box.width() * box.height())
+                    .coerceAtLeast(1)
+                (iw * ih).toFloat() / smaller > 0.4f
+            }
+            if (!duplicate) kept.add(box)
+        }
+        return kept
+    }
+
+    private fun detectTile(bitmap: Bitmap, x0: Int, y0: Int, x1: Int, y1: Int): List<Rect> {
+        val tileW = x1 - x0
+        val tileH = y1 - y0
+        if (tileW < 24 || tileH < 24) return emptyList()
+        val scale = 640f / max(tileW, tileH)
+        val scaledW = max(1, Math.round(tileW * scale))
+        val scaledH = max(1, Math.round(tileH * scale))
         val offsetX = (640 - scaledW) / 2
         val offsetY = (640 - scaledH) / 2
 
@@ -101,7 +169,7 @@ private class PaddleRuntime(private val dir: File) {
         canvas.drawColor(Color.WHITE)
         canvas.drawBitmap(
             bitmap,
-            Rect(0, 0, bitmap.width, bitmap.height),
+            Rect(x0, y0, x1, y1),
             Rect(offsetX, offsetY, offsetX + scaledW, offsetY + scaledH),
             Paint(Paint.FILTER_BITMAP_FLAG)
         )
@@ -111,6 +179,7 @@ private class PaddleRuntime(private val dir: File) {
         val detectorInput = FloatArray(3 * planeSize)
         val pixels = IntArray(planeSize)
         square.getPixels(pixels, 0, side, 0, 0, side, side)
+        square.recycle()
         val mean = floatArrayOf(0.406f * 255f, 0.456f * 255f, 0.485f * 255f)
         val std = floatArrayOf(0.225f * 255f, 0.224f * 255f, 0.229f * 255f)
         for (i in 0 until planeSize) {
@@ -126,38 +195,20 @@ private class PaddleRuntime(private val dir: File) {
         val probabilities = det.run(detectorInput)
         val mask = BooleanArray(planeSize)
         for (i in mask.indices) mask[i] = probabilities[i] > 0.2f
-
         val columns = mergeIntoColumns(connectedComponents(mask))
-        if (columns.isEmpty()) {
-            square.recycle()
-            return emptyList()
-        }
-
-        val ordered = columns.sortedWith(
-            compareByDescending<Rect> { it.centerX() }.thenBy { it.top }
-        )
-        val regions = ArrayList<TextRegion>(ordered.size)
-        for (column in ordered) {
-            val pad = 4
-            val left = (column.left - pad).coerceIn(0, side - 2)
-            val top = (column.top - pad).coerceIn(0, side - 2)
-            val right = (column.right + pad).coerceIn(left + 2, side)
-            val bottom = (column.bottom + pad).coerceIn(top + 2, side)
-            var crop = Bitmap.createBitmap(square, left, top, right - left, bottom - top)
-            if (bottom - top >= (right - left) * 1.5f) crop = rotate(crop)
-            val text = recognizeLine(crop)
-            crop.recycle()
-            if (text.isBlank()) continue
+        return columns.mapNotNull { column ->
+            val left = x0 + ((column.left - offsetX) / scale).toInt()
+            val top = y0 + ((column.top - offsetY) / scale).toInt()
+            val right = x0 + ((column.right - offsetX) / scale).toInt()
+            val bottom = y0 + ((column.bottom - offsetY) / scale).toInt()
             val rect = Rect(
-                ((left - offsetX) / scale).toInt().coerceIn(0, bitmap.width - 1),
-                ((top - offsetY) / scale).toInt().coerceIn(0, bitmap.height - 1),
-                ((right - offsetX) / scale).toInt().coerceIn(1, bitmap.width),
-                ((bottom - offsetY) / scale).toInt().coerceIn(1, bitmap.height)
+                left.coerceIn(0, bitmap.width - 1),
+                top.coerceIn(0, bitmap.height - 1),
+                right.coerceIn(1, bitmap.width),
+                bottom.coerceIn(1, bitmap.height)
             )
-            regions.add(TextRegion(text, rect))
+            if (rect.width() < 6 || rect.height() < 6) null else rect
         }
-        square.recycle()
-        return regions
     }
 
     private fun rotate(source: Bitmap): Bitmap {
@@ -165,7 +216,7 @@ private class PaddleRuntime(private val dir: File) {
         return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
     }
 
-    private fun recognizeLine(crop: Bitmap): String {
+    private fun recognizeLine(crop: Bitmap): Pair<String, Float> {
         val targetW = 640
         val naturalW = max(1, ceil(48.0 * crop.width / crop.height.toDouble()).toInt())
         val resizedW = min(naturalW, targetW)
@@ -193,16 +244,23 @@ private class PaddleRuntime(private val dir: File) {
         val steps = output.size / vocabulary.size
         val text = StringBuilder()
         var previous = -1
+        var confidenceSum = 0f
+        var confidenceCount = 0
         for (t in 0 until steps) {
             val offset = t * vocabulary.size
             var best = 0
             for (c in 1 until vocabulary.size) {
                 if (output[offset + c] > output[offset + best]) best = c
             }
-            if (best != previous && best != 0) text.append(vocabulary[best])
+            if (best != previous && best != 0) {
+                text.append(vocabulary[best])
+                confidenceSum += output[offset + best]
+                confidenceCount++
+            }
             previous = best
         }
-        return text.toString().trim()
+        val confidence = if (confidenceCount == 0) 0f else confidenceSum / confidenceCount
+        return text.toString().trim() to confidence
     }
 
     private fun connectedComponents(mask: BooleanArray): List<Rect> {
@@ -253,13 +311,20 @@ private class PaddleRuntime(private val dir: File) {
         return result
     }
 
+    /**
+     * Joins the character blobs of one text column. The vertical gap check matters: without it
+     * columns that happen to share the same x range in two different bubbles (or two panels)
+     * were fused into one tall box, which then swallowed the artwork between them.
+     */
     private fun mergeIntoColumns(components: List<Rect>): List<Rect> {
         val columns = ArrayList<Rect>()
         for (component in components.sortedBy { it.centerX() }) {
             val target = columns.firstOrNull { column ->
                 val overlap = min(column.right, component.right) - max(column.left, component.left)
                 val minWidth = min(column.width(), component.width()).coerceAtLeast(1)
-                overlap.toFloat() / minWidth > 0.5f
+                val gap = maxOf(column.top, component.top) - min(column.bottom, component.bottom)
+                val allowedGap = maxOf(4f, minWidth * 1.1f)
+                overlap.toFloat() / minWidth > 0.5f && gap <= allowedGap
             }
             if (target == null) columns.add(Rect(component)) else target.union(component)
         }
