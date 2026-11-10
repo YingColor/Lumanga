@@ -54,3 +54,24 @@ https://www.apache.org/licenses/LICENSE-2.0 . The library is resolved at build t
 - License: MIT
 - Project: https://www.slf4j.org/
 - Usage: logging facade required by junrar; no provider is shipped, so it stays a no-op.
+
+## TensorFlow Lite (runtime dependency)
+
+- Version: 2.16.1
+- License: Apache License, Version 2.0
+- Project: https://www.tensorflow.org/lite
+- Usage: runs the on-device OCR models bundled in `app/src/main/assets/ocr`.
+
+## PP-OCRv6 Small — on-device OCR models
+
+- Files: `ppocrv6_small_det_640_fp32.tflite`,
+  `ppocrv6_small_rec_640_fp32.tflite`, `characters.json`
+  (bundled in `app/src/main/assets/ocr`)
+- License: Apache License, Version 2.0
+- Source: https://huggingface.co/litert-community/PP-OCRv6-Small-LiteRT
+- Upstream weights: PaddleOCR PP-OCRv6 small detection / recognition models
+  (https://github.com/PaddlePaddle/PaddleOCR), converted by the LiteRT Community
+  with no retraining.
+- Usage: detects comic text lines and recognises Japanese text on device.
+  Images never leave the device; only the recognised text is sent to the
+  translation service the user configures.

@@ -69,7 +69,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yingcolor.lumanga.data.Book
+import com.yingcolor.lumanga.data.PaddleOcr
 import com.yingcolor.lumanga.data.Prefs
+import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.theme.ComicTheme
 import com.yingcolor.lumanga.ui.Backdrop
@@ -93,6 +95,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        TranslationEngine.ocr = PaddleOcr.engine(this)
         enableEdgeToEdge()
         setContent { ComicApp() }
     }

@@ -82,7 +82,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.documentfile:documentfile:1.0.1")
-    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
     
     
     implementation("androidx.profileinstaller:profileinstaller:1.3.1")

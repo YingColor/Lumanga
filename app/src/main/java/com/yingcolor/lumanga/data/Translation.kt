@@ -37,7 +37,7 @@ object TranslationEngine {
             "若有上一页译文，人名和称呼必须与之一致。"
 
     @Volatile
-    var ocr: OcrEngine = MlKitOcrEngine
+    var ocr: OcrEngine = NoOpOcrEngine
 
     suspend fun recognize(bitmap: Bitmap): List<TextRegion> = ocr.recognize(bitmap)
 
