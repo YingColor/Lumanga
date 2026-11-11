@@ -802,7 +802,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             android.util.Log.i("Translate", "TR skip index=$index not japanese")
             return TranslateOutcome.NotJapanese
         }
-        val groups = TranslationEngine.groupBubbles(regions, source.width, source.height)
+        val groups = TranslationEngine.groupBubbles(regions, source.width, source.height, source)
         android.util.Log.i("Translate", "TR bubbles index=$index groups=${groups.size}")
         if (groups.isEmpty()) return TranslateOutcome.NoText
         val previous = synchronized(contextLock) {

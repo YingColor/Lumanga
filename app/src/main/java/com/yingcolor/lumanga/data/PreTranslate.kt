@@ -68,7 +68,7 @@ object PreTranslate {
                         done++
                         continue
                     }
-                    val groups = TranslationEngine.groupBubbles(regions, page.width, page.height)
+                    val groups = TranslationEngine.groupBubbles(regions, page.width, page.height, page)
                     if (groups.isEmpty()) {
                         TranslationStore.save(
                             context, book.id, index,

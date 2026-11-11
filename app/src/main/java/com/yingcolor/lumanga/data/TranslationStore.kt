@@ -32,7 +32,7 @@ data class PageTranslation(
  * keeps a killed process from losing more than the page in flight.
  */
 object TranslationStore {
-    private const val VERSION = 1
+    private const val VERSION = 2
     private const val DIR = "translations"
 
     private val cache = ConcurrentHashMap<String, MutableMap<Int, PageTranslation>>()
@@ -89,6 +89,8 @@ object TranslationStore {
         if (!file.isFile) return emptyMap()
         return runCatching {
             val root = JSONObject(file.readText(Charsets.UTF_8))
+            // Layouts saved by an older grouping rule can hold two sentences for one bubble.
+            if (root.optInt("v", 0) != VERSION) return@runCatching emptyMap()
             val pages = root.optJSONObject("pages") ?: return emptyMap()
             val out = HashMap<Int, PageTranslation>(pages.length())
             for (key in pages.keys()) {

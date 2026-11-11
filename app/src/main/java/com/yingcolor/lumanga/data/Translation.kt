@@ -87,7 +87,12 @@ object TranslationEngine {
         return kana.toFloat() / letters >= 0.04f
     }
 
-    fun groupBubbles(regions: List<TextRegion>, width: Int, height: Int): List<BubbleGroup> {
+    fun groupBubbles(
+        regions: List<TextRegion>,
+        width: Int,
+        height: Int,
+        bitmap: Bitmap? = null
+    ): List<BubbleGroup> {
         val usable = regions.filter { isUsable(it) }
         if (usable.isEmpty()) return emptyList()
         val ordered = usable.sortedWith(
@@ -114,13 +119,85 @@ object TranslationEngine {
             }
             if (target != null) target.add(region) else clusters.add(mutableListOf(region))
         }
-        return clusters.map { cluster ->
+        // When the detector drops a column between two others, the surviving columns end up too
+        // far apart for the pass above and are translated as two bubbles. Both translations then
+        // fill the same bubble and overwrite each other. Joining them here keeps one sentence per
+        // bubble; the paper between them tells whether that is really one bubble.
+        val groups = if (bitmap == null) {
+            clusters
+        } else {
+            val merged = mergeNeighbours(clusters, bitmap)
+            if (merged.size != clusters.size) {
+                android.util.Log.i("Translate", "TR merge ${clusters.size}->${merged.size}")
+            }
+            merged
+        }
+        return groups.map { cluster ->
             cluster.sortWith(compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top })
             val union = Rect(cluster[0].box)
             cluster.forEach { union.union(it.box) }
             val vertical = cluster.count { it.vertical } * 2 >= cluster.size
             BubbleGroup(cluster, union, cluster.joinToString("") { it.text }, vertical)
         }.sortedWith(compareByDescending<BubbleGroup> { it.bubble.centerX() }.thenBy { it.bubble.top })
+    }
+
+    private fun mergeNeighbours(
+        clusters: List<MutableList<TextRegion>>,
+        source: Bitmap
+    ): List<MutableList<TextRegion>> {
+        val groups = clusters.map { ArrayList(it) }.toMutableList()
+        var merged = true
+        while (merged) {
+            merged = false
+            var i = 0
+            while (i < groups.size && !merged) {
+                var j = i + 1
+                while (j < groups.size) {
+                    if (sameBubble(source, unionOf(groups[i]), unionOf(groups[j]))) {
+                        groups[i].addAll(groups[j])
+                        groups.removeAt(j)
+                        merged = true
+                        break
+                    }
+                    j++
+                }
+                i++
+            }
+        }
+        return groups
+    }
+
+    private fun unionOf(cluster: List<TextRegion>): Rect {
+        val union = Rect(cluster[0].box)
+        cluster.forEach { union.union(it.box) }
+        return union
+    }
+
+    /** True when the strip between two boxes is bare paper instead of a bubble outline. */
+    private fun sameBubble(source: Bitmap, a: Rect, b: Rect): Boolean {
+        val top = maxOf(a.top, b.top)
+        val bottom = minOf(a.bottom, b.bottom)
+        if (bottom - top < minOf(a.height(), b.height()) * 0.25f) return false
+        val gapLeft = minOf(a.right, b.right)
+        val gapRight = maxOf(a.left, b.left)
+        val gap = gapRight - gapLeft
+        if (gap <= 2) return false
+        val unit = minOf(a.width(), b.width()).coerceAtLeast(8)
+        if (gap > unit * 2.5f) return false
+        val x0 = gapLeft.coerceAtLeast(0)
+        val x1 = gapRight.coerceAtMost(source.width)
+        val y0 = top.coerceAtLeast(0)
+        val y1 = bottom.coerceAtMost(source.height)
+        if (x1 - x0 < 1 || y1 - y0 < 1) return false
+        val w = x1 - x0
+        val h = y1 - y0
+        val pixels = IntArray(w * h)
+        source.getPixels(pixels, 0, w, x0, y0, w, h)
+        var dark = 0
+        for (pixel in pixels) {
+            if (luminance(pixel) < 165) dark++
+        }
+        return dark.toFloat() / pixels.size < 0.16f
     }
 
     private fun horizontalGap(a: Rect, b: Rect): Float =
@@ -290,6 +367,8 @@ object TranslationEngine {
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         }
         val patches = ArrayList<Patch>()
+        val seeds = groups.map { it.bubble }
+        val placed = ArrayList<Rect>()
         groups.forEachIndexed { i, group ->
             val value = translated.getOrNull(i)?.trim().orEmpty()
             if (value.isEmpty()) return@forEachIndexed
@@ -304,8 +383,15 @@ object TranslationEngine {
             // patch across the blank interior of the bubble, then clear all lettering in it.
             val unit = columnWidth(group)
             val clean = insideWhiteBubble(source, group.bubble)
-            val area = if (clean) bubbleSafeArea(source, group.bubble, unit)
-            else conservativeArea(source, group.bubble)
+            val area = if (clean) {
+                bubbleSafeArea(
+                    source, group.bubble, unit,
+                    seeds.filterIndexed { j, _ -> j != i } + placed
+                )
+            } else {
+                conservativeArea(source, group.bubble)
+            }
+            placed.add(area)
             // Sample from the patch itself: a halftone bubble needs its own grey as the fill,
             // otherwise erased lettering turns into bright white glyph-shaped holes.
             val background = sampleBubbleColor(out, area)
@@ -390,7 +476,12 @@ object TranslationEngine {
      * or an artwork stroke); scattered ink is lettering, which we cross and erase. Growth is
      * capped so a patch can never swallow a neighbouring panel.
      */
-    private fun bubbleSafeArea(source: Bitmap, seed: Rect, unit: Int): Rect {
+    private fun bubbleSafeArea(
+        source: Bitmap,
+        seed: Rect,
+        unit: Int,
+        obstacles: List<Rect>
+    ): Rect {
         var left = seed.left
         var right = seed.right
         var top = seed.top
@@ -400,19 +491,23 @@ object TranslationEngine {
         val maxY = (unit * 0.5f).toInt().coerceIn(6, source.height / 12)
         var grown = 0
         while (grown + step <= maxX && left - step >= 0 &&
-            blankStrip(source, left - step, left, top, bottom, true)
+            blankStrip(source, left - step, left, top, bottom, true) &&
+            !touchesObstacle(left - step, top, right, bottom, obstacles)
         ) { left -= step; grown += step }
         grown = 0
         while (grown + step <= maxX && right + step <= source.width &&
-            blankStrip(source, right, right + step, top, bottom, true)
+            blankStrip(source, right, right + step, top, bottom, true) &&
+            !touchesObstacle(left, top, right + step, bottom, obstacles)
         ) { right += step; grown += step }
         grown = 0
         while (grown + step <= maxY && top - step >= 0 &&
-            blankStrip(source, left, right, top - step, top, false)
+            blankStrip(source, left, right, top - step, top, false) &&
+            !touchesObstacle(left, top - step, right, bottom, obstacles)
         ) { top -= step; grown += step }
         grown = 0
         while (grown + step <= maxY && bottom + step <= source.height &&
-            blankStrip(source, left, right, bottom, bottom + step, false)
+            blankStrip(source, left, right, bottom, bottom + step, false) &&
+            !touchesObstacle(left, top, right, bottom + step, obstacles)
         ) { bottom += step; grown += step }
 
         // Keep clear of the outline; never return less than what OCR actually found.
@@ -423,6 +518,13 @@ object TranslationEngine {
         area.right = area.right.coerceAtMost(source.width)
         area.bottom = area.bottom.coerceAtMost(source.height)
         return area
+    }
+
+    /** A patch must never grow into a neighbouring bubble's lettering. */
+    private fun touchesObstacle(
+        l: Int, t: Int, r: Int, b: Int, obstacles: List<Rect>
+    ): Boolean = obstacles.any {
+        it.left < r + 3 && it.right > l - 3 && it.top < b + 3 && it.bottom > t - 3
     }
 
     /**
