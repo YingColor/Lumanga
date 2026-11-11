@@ -173,17 +173,24 @@ object TranslationEngine {
         return union
     }
 
-    /** True when the strip between two boxes is bare paper instead of a bubble outline. */
+    /**
+     * Tells whether two clusters are two halves of one bubble or two separate bubbles.
+     *
+     * The strip joining them decides: a bubble outline (or a panel border) is a continuous dark
+     * line, while the gap left by a dropped column is blank paper with scattered lettering. Only
+     * scattered ink may be crossed — a single dark line anywhere in the strip keeps them apart,
+     * so two bubbles standing next to each other are never translated as one sentence.
+     */
     private fun sameBubble(source: Bitmap, a: Rect, b: Rect): Boolean {
         val top = maxOf(a.top, b.top)
         val bottom = minOf(a.bottom, b.bottom)
-        if (bottom - top < minOf(a.height(), b.height()) * 0.25f) return false
+        val shared = bottom - top
+        if (shared < minOf(a.height(), b.height()) * 0.4f) return false
         val gapLeft = minOf(a.right, b.right)
         val gapRight = maxOf(a.left, b.left)
         val gap = gapRight - gapLeft
-        if (gap <= 2) return false
         val unit = minOf(a.width(), b.width()).coerceAtLeast(8)
-        if (gap > unit * 2.5f) return false
+        if (gap <= 2 || gap > unit * 2.0f) return false
         val x0 = gapLeft.coerceAtLeast(0)
         val x1 = gapRight.coerceAtMost(source.width)
         val y0 = top.coerceAtLeast(0)
@@ -193,13 +200,32 @@ object TranslationEngine {
         val h = y1 - y0
         val pixels = IntArray(w * h)
         source.getPixels(pixels, 0, w, x0, y0, w, h)
-        var dark = 0
-        for (pixel in pixels) {
-            if (luminance(pixel) < 165) dark++
-        }
-        return dark.toFloat() / pixels.size < 0.16f
-    }
 
+        var longestLine = 0f
+        var darkTotal = 0
+        for (x in 0 until w) {
+            var run = 0
+            var longest = 0
+            for (y in 0 until h) {
+                if (luminance(pixels[y * w + x]) < 165) {
+                    run++
+                    if (run > longest) longest = run
+                    darkTotal++
+                } else {
+                    run = 0
+                }
+            }
+            val ratio = longest.toFloat() / h
+            if (ratio > longestLine) longestLine = ratio
+        }
+        val merge = longestLine < 0.6f
+        android.util.Log.d(
+            "Translate",
+            "TR pair gap=$gap unit=$unit shared=$shared line=${"%.2f".format(longestLine)} " +
+                "dark=${"%.2f".format(darkTotal.toFloat() / pixels.size)} merge=$merge"
+        )
+        return merge
+    }
     private fun horizontalGap(a: Rect, b: Rect): Float =
         maxOf(0f, maxOf(a.left - b.right, b.left - a.right).toFloat())
 
