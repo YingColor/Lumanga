@@ -174,7 +174,7 @@ object S {
 
     
     const val translateConfig = "翻译配置"
-    const val translateConfigTip = "填好翻译服务，阅读时点「译」就能用；预翻译整本也用这套配置。"
+    const val translateConfigTip = "填好翻译服务，阅读时点「译」就能用；预翻译整本也用这套配置。阅读时长按「译」1 秒也能打开这里。"
     const val translate = "漫画实时翻译"
     const val translateSummary = "把画面里的外文认出来，译好再贴回页面"
     const val translateEnable = "开启实时翻译"
@@ -205,7 +205,12 @@ object S {
     const val preTranslateApiKey = "API Key"
     const val preTranslateApiKeyTip = "接口需要鉴权时填，不需要就留空。只保存在本机。"
     const val preTranslateOcr = "文字识别模型"
-    const val preTranslateOcrValue = "PP-OCRv6 Small（内置，唯一）"
+    const val ocrModelTitle = "文字识别模型"
+    const val ocrModelTip = "两款都内置在手机里，不用下载。切换后从下一页开始生效，预翻译整本也用选中的这一款。"
+    const val ocrModelSmallTip = "轻快省电，识别速度优先，适合边看边译"
+    const val ocrModelMediumTip = "识别更准、小字更稳，但模型更大、明显更慢更耗电，建议预翻译时用"
+    const val ocrModelSwitching = "正在加载模型…"
+    fun preTranslateOcrValue(name: String): String = "$name · 在「翻译配置」里可切换"
     const val preTranslatePages = "要翻译的页 · 点缩略图勾选"
     const val preTranslateSelectAll = "全选"
     const val preTranslateSelectNone = "全不选"

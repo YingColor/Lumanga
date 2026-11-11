@@ -12,3 +12,6 @@
 -dontwarn org.slf4j.**
 
 -keep class androidx.profileinstaller.** { *; }
+
+-keep class ai.onnxruntime.** { *; }
+-dontwarn ai.onnxruntime.**

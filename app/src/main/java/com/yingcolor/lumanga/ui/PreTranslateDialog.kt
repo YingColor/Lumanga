@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.yingcolor.lumanga.S
+import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BookPreview
 import com.yingcolor.lumanga.data.PreTranslate
@@ -195,7 +196,7 @@ fun PreTranslateDialog(
                     )
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = S.preTranslateOcrValue,
+                        text = S.preTranslateOcrValue(OcrModel.from(settings.ocrModel).label),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )

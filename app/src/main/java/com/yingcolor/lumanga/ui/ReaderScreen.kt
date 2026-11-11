@@ -18,7 +18,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -71,6 +74,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -102,6 +106,7 @@ import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.ArchiveException
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BubbleGroup
+import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.PageAnimation
 import com.yingcolor.lumanga.data.PageDecoder
 import com.yingcolor.lumanga.data.PageSource
@@ -113,6 +118,7 @@ import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.data.ZoomMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -175,11 +181,16 @@ private const val PAGE_BUDGET_MS = 70_000L
 
 /** OCR alone should never take this long; a wedged interpreter should fail fast instead. */
 private const val OCR_BUDGET_MS = 25_000L
+private const val MEDIUM_OCR_BUDGET_MS = 70_000L
+private const val MEDIUM_PAGE_BUDGET_MS = 110_000L
 
 /** How long a neighbouring page waits for the focused page to start before it goes ahead. */
 private const val YIELD_BUDGET_MS = 3_000L
 
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
+    private val prefs = Prefs(app)
+    private val mediumOcr: Boolean get() = prefs.ocrModel == OcrModel.MEDIUM.id
+
     @Volatile
     private var reader: PageSource? = null
 
@@ -676,12 +687,13 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             }.also { translating[key] = it }
         }
         val started = System.currentTimeMillis()
+        val pageBudget = if (mediumOcr) MEDIUM_PAGE_BUDGET_MS else PAGE_BUDGET_MS
         val outcome = try {
-            val done = withTimeoutOrNull(PAGE_BUDGET_MS) { deferred.await() }
+            val done = withTimeoutOrNull(pageBudget) { deferred.await() }
             if (done == null) {
                 deferred.cancel()
                 synchronized(translationLock) { translating.remove(key) }
-                android.util.Log.w("Translate", "TR watchdog index=$index ${PAGE_BUDGET_MS}ms")
+                android.util.Log.w("Translate", "TR watchdog index=$index ${pageBudget}ms")
                 publish(index, TranslateState(TranslateKind.FAILED, "timeout"))
                 return null
             }
@@ -690,6 +702,11 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             // The page left the screen. Keep the shared job running: it writes its own result.
             throw cancel
         } catch (t: Throwable) {
+            android.util.Log.e(
+                "Translate",
+                "TR error index=$index ${t.javaClass.name}: ${t.message}",
+                t
+            )
             TranslateOutcome.Failed(t.javaClass.simpleName)
         }
         val elapsed = System.currentTimeMillis() - started
@@ -768,7 +785,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
         publish(index, TranslateState(TranslateKind.WORKING, STAGE_OCR))
         val ocrStarted = System.currentTimeMillis()
-        val regions = withTimeoutOrNull(OCR_BUDGET_MS) { TranslationEngine.recognize(source) }
+        // The medium OCR model is several times slower than the small one; give it room to
+        // finish instead of throwing away a full recognition at the 25 s mark.
+        val ocrBudget = if (mediumOcr) MEDIUM_OCR_BUDGET_MS else OCR_BUDGET_MS
+        val regions = withTimeoutOrNull(ocrBudget) { TranslationEngine.recognize(source) }
             ?: run {
                 android.util.Log.w("Translate", "TR ocr timeout index=$index")
                 return TranslateOutcome.Failed("ocr timeout")
@@ -1736,14 +1756,45 @@ private fun ReaderContent(
                         // Translation on/off without leaving the page: filled when on, hollow when
                         // off, so the current state reads at a glance. Sits just left of the gear.
                         val translateOn = settings.translateEnabled
-                        IconButton(
-                            onClick = {
-                                // Nothing to translate with yet: send them to the endpoint field
-                                // instead of flipping a switch that can only fail.
-                                if (!translateOn && settings.translateApi.isBlank()) onTranslateConfig()
-                                else settings.setTranslateEnabled(!translateOn)
-                            },
-                            modifier = iconBox
+                        // Short tap toggles translation; holding the button for a full second
+                        // opens the config. The system long-press is 500 ms, so this uses a
+                        // custom timer. UpdatedState keeps the callbacks fresh without ever
+                        // restarting the pointerInput block (which would reset the 1 s timer).
+                        val tapToggle = rememberUpdatedState<() -> Unit> {
+                            if (!translateOn && settings.translateApi.isBlank()) onTranslateConfig()
+                            else settings.setTranslateEnabled(!translateOn)
+                        }
+                        val openConfig = rememberUpdatedState(onTranslateConfig)
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = (if (compactBar) Modifier.size(30.dp) else Modifier.size(48.dp))
+                                .clip(CircleShape)
+                                .pointerInput(Unit) {
+                                    coroutineScope {
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = false)
+                                            down.consume()
+                                            var longFired = false
+                                            // A separate timer means "finger left the button"
+                                            // (a cancelled press) can never be mistaken for a
+                                            // long press, and the release is still consumed.
+                                            val timer = launch {
+                                                delay(1000L)
+                                                longFired = true
+                                                openConfig.value()
+                                            }
+                                            try {
+                                                val up = waitForUpOrCancellation()
+                                                if (up != null) {
+                                                    up.consume()
+                                                    if (!longFired) tapToggle.value()
+                                                }
+                                            } finally {
+                                                timer.cancel()
+                                            }
+                                        }
+                                    }
+                                }
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,

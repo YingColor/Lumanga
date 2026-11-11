@@ -22,6 +22,9 @@ android {
         versionCode = 23
         versionName = "1.5.0"
         vectorDrawables { useSupportLibrary = true }
+        // Both OCR backends ship native libs for four ABIs. Only real phones matter here;
+        // dropping the emulator-only x86 ones keeps the APK from growing by another ~40 MB.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     buildTypes {
@@ -83,6 +86,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    // ONNX Runtime runs the bundled PP-OCRv6_medium FP16 models; the small model stays on LiteRT.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     
     
     implementation("androidx.profileinstaller:profileinstaller:1.3.1")

@@ -70,6 +70,15 @@ https://www.apache.org/licenses/LICENSE-2.0 . The library is resolved at build t
 - Project: https://www.tensorflow.org/lite
 - Usage: runs the on-device OCR models bundled in `app/src/main/assets/ocr`.
 
+## ONNX Runtime for Android (runtime dependency)
+
+- Version: 1.20.0
+- License: MIT License
+- Project: https://github.com/microsoft/onnxruntime
+- Usage: runs the bundled `PP-OCRv6_medium` FP16 OCR models. Only the
+  `arm64-v8a` and `armeabi-v7a` native libraries are packaged.
+- The full MIT text is available at https://opensource.org/licenses/MIT .
+
 ## PP-OCRv6 Small — on-device OCR models
 
 - Files: `ppocrv6_small_det_640_fp32.tflite`,
@@ -83,3 +92,18 @@ https://www.apache.org/licenses/LICENSE-2.0 . The library is resolved at build t
 - Usage: detects comic text lines and recognises Japanese text on device.
   Images never leave the device; only the recognised text is sent to the
   translation service the user configures.
+
+## PP-OCRv6 Medium — on-device OCR models
+
+- Files: `ppocrv6_medium_det_640_fp16.onnx`,
+  `ppocrv6_medium_rec_640_fp16.onnx` (bundled in `app/src/main/assets/ocr`)
+- License: Apache License, Version 2.0
+- Source: PaddlePaddle's official ONNX exports
+  https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det_onnx and
+  https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx
+- Upstream project: https://github.com/PaddlePaddle/PaddleOCR
+- Modifications: weights converted from FP32 to FP16 to halve the download
+  size (verified byte-identical recognition output on reference pages), and the
+  recognition graph's opset declaration raised from 11 to 12 so ONNX Runtime's
+  ARM NHWC optimiser can find its MaxPool kernel. No retraining, no new weights.
+- Shares `characters.json` with the small model. Images never leave the device.

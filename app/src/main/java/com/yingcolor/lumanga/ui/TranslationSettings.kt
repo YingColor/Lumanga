@@ -46,6 +46,10 @@ fun TranslationSettings(settings: UiSettings) {
     )
     Spacer(Modifier.height(12.dp))
 
+    Spacer(Modifier.height(16.dp))
+    OcrModelPicker(settings)
+    Spacer(Modifier.height(16.dp))
+
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
             Text(text = S.translateEnable, style = MaterialTheme.typography.bodyLarge)

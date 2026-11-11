@@ -1,5 +1,8 @@
 package com.yingcolor.lumanga.data
 
+import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -14,6 +17,7 @@ import org.tensorflow.lite.Interpreter
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Collections
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import kotlin.math.ceil
@@ -31,47 +35,147 @@ object PaddleOcr {
 }
 
 class PaddleOcrEngine(private val context: Context) : OcrEngine {
+    /** Bump whenever a bundled model file changes, so old installs refresh their cache. */
+    private val MODEL_BUNDLE_REV = 2
+    private val prefs = Prefs(context.applicationContext)
     private var runtime: PaddleRuntime? = null
+    private var runtimeModel: OcrModel? = null
     private val lock = Any()
 
     override suspend fun recognize(bitmap: Bitmap): List<TextRegion> = withContext(Dispatchers.IO) {
         synchronized(lock) {
-            val engine = runtime ?: PaddleRuntime(copyModels(context)).also { runtime = it }
-            engine.recognize(bitmap)
+            // Re-read on every page so switching the model in 翻译配置 takes effect without
+            // restarting the app; the previous sessions are released before the new ones load.
+            val model = OcrModel.from(prefs.ocrModel)
+            if (runtime == null || runtimeModel != model) {
+                android.util.Log.i("Ocr", "loading ${model.label}")
+                runtime?.close()
+                runtime = PaddleRuntime(copyModels(context, model), model)
+                runtimeModel = model
+            }
+            runtime!!.recognize(bitmap)
         }
     }
 
-    private fun copyModels(context: Context): File {
+    /**
+     * Bundled models are copied out of assets once, but a plain "file exists" check means an
+     * app update never replaces a stale model. The stamp ties the cache to both the model and
+     * the bundle revision, so a changed model is re-copied on the next run.
+     */
+    private fun copyModels(context: Context, model: OcrModel): File {
         val dir = File(context.filesDir, "ocr")
         if (!dir.exists()) dir.mkdirs()
-        for (name in MODELS) {
+        val stamp = File(dir, ".bundle_${model.id}")
+        val expected = "$MODEL_BUNDLE_REV"
+        val unchanged = runCatching { stamp.readText() }.getOrNull() == expected
+        for (name in model.files) {
             val target = File(dir, name)
-            if (target.exists() && target.length() > 0) continue
+            if (unchanged && target.exists() && target.length() > 0) continue
+            val temp = File(dir, "$name.tmp")
             context.assets.open("ocr/$name").use { input ->
-                target.outputStream().use { output -> input.copyTo(output, 64 * 1024) }
+                temp.outputStream().use { output -> input.copyTo(output, 64 * 1024) }
+            }
+            if (target.exists()) target.delete()
+            if (!temp.renameTo(target)) {
+                temp.copyTo(target, overwrite = true)
+                temp.delete()
             }
         }
+        stamp.writeText(expected)
         return dir
-    }
-
-    private companion object {
-        val MODELS = listOf(
-            "ppocrv6_small_det_640_fp32.tflite",
-            "ppocrv6_small_rec_640_fp32.tflite",
-            "characters.json"
-        )
     }
 }
 
-private class PaddleRuntime(private val dir: File) {
+/** One inference call: fills [out] with the raw logits. Callers own the reusable buffers. */
+private interface OcrSession {
+    fun run(values: FloatArray, out: FloatArray)
+    fun close()
+}
+
+/** The original LiteRT backend used by the small model. Not thread-safe, so one per worker. */
+private class TfLiteSession(path: File, inputElements: Int, outputElements: Int) : OcrSession {
+    private val interpreter = Interpreter(path, Interpreter.Options().setNumThreads(2))
+    private val inputBuffer =
+        ByteBuffer.allocateDirect(inputElements * 4).order(ByteOrder.nativeOrder())
+    private val outputBuffer =
+        ByteBuffer.allocateDirect(outputElements * 4).order(ByteOrder.nativeOrder())
+
+    override fun run(values: FloatArray, out: FloatArray) {
+        inputBuffer.rewind()
+        inputBuffer.asFloatBuffer().put(values)
+        inputBuffer.rewind()
+        outputBuffer.rewind()
+        interpreter.run(inputBuffer, outputBuffer)
+        outputBuffer.rewind()
+        outputBuffer.asFloatBuffer().get(out)
+    }
+
+    override fun close() {
+        interpreter.close()
+    }
+}
+
+/**
+ * ONNX Runtime backend for the medium model. OrtSession.run is thread-safe and every call
+ * owns its input tensor and result, so one session is shared by all workers and the 67 MB
+ * of FP16 weights are loaded only once.
+ */
+private class OnnxSession(path: File, private val shape: LongArray, inputElements: Int) : OcrSession {
+    private val env = OrtEnvironment.getEnvironment()
+    private val session: OrtSession
+    private val inputName: String
+    // OrtSession.run is thread-safe, but a FloatBuffer is not: each worker needs its own.
+    private val inputBuffers = ThreadLocal.withInitial {
+        ByteBuffer.allocateDirect(inputElements * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+    }
+
+    init {
+        val options = OrtSession.SessionOptions()
+        // Two intra-op threads per session, matching the two workers. XNNPACK was tried here
+        // but crashed with SIGSEGV inside OrtSession.run on this device, so the plain CPU
+        // provider is used instead — slower, but stable.
+        options.setIntraOpNumThreads(2)
+        session = env.createSession(path.absolutePath, options)
+        inputName = session.inputNames.first()
+    }
+
+    override fun run(values: FloatArray, out: FloatArray) {
+        val inputBuffer = inputBuffers.get()!!
+        inputBuffer.rewind()
+        inputBuffer.put(values)
+        inputBuffer.rewind()
+        val tensor = OnnxTensor.createTensor(env, inputBuffer, shape)
+        val result = session.run(Collections.singletonMap(inputName, tensor))
+        try {
+            val buffer = (result.get(0) as OnnxTensor).floatBuffer
+            buffer.rewind()
+            buffer.get(out)
+        } finally {
+            result.close()
+            tensor.close()
+        }
+    }
+
+    override fun close() {
+        session.close()
+    }
+}
+
+private class PaddleRuntime(private val dir: File, private val model: OcrModel) {
     /** Longest tile edge fed to the 640 detector; keeps text near its native size. */
     private val TILE_TARGET = 860
-    private val detFile = File(dir, "ppocrv6_small_det_640_fp32.tflite")
-    private val recFile = File(dir, "ppocrv6_small_rec_640_fp32.tflite")
+    private val detFile = File(dir, model.det)
+    private val recFile = File(dir, model.rec)
     private val recOutSize = 80 * 18710
     private val vocabulary: List<String> =
         JSONArray(File(dir, "characters.json").readText(Charsets.UTF_8))
             .let { array -> List(array.length()) { array.getString(it) } }
+
+    private val detShared: OnnxSession? =
+        if (model.onnx) OnnxSession(detFile, longArrayOf(1, 3, 640, 640), 3 * 640 * 640) else null
+    private val recShared: OnnxSession? =
+        if (model.onnx) OnnxSession(recFile, longArrayOf(1, 3, 48, 640), 3 * 48 * 640) else null
+    private val owned = Collections.synchronizedList(mutableListOf<OcrSession>())
 
     /**
      * Recognising a page is one inference per text column, and those columns are independent, so
@@ -81,50 +185,46 @@ private class PaddleRuntime(private val dir: File) {
     private val recWorkers = Executors.newFixedThreadPool(2) { runnable ->
         Thread(runnable, "ocr-rec").apply { isDaemon = true }
     }
-    private val recLocal = ThreadLocal.withInitial { RecWorker(Session(recFile, 3 * 48 * 640, recOutSize)) }
+    private val recLocal = ThreadLocal.withInitial {
+        val session: OcrSession = recShared
+            ?: TfLiteSession(recFile, 3 * 48 * 640, recOutSize).also { owned.add(it) }
+        RecWorker(session, recOutSize)
+    }
 
     private val detWorkers = Executors.newFixedThreadPool(2) { runnable ->
         Thread(runnable, "ocr-det").apply { isDaemon = true }
     }
-    private val detLocal = ThreadLocal.withInitial { DetWorker(Session(detFile, 3 * 640 * 640, 640 * 640)) }
-
-    private class Session(path: File, inputElements: Int, outputElements: Int) {
-        private val interpreter = Interpreter(path, Interpreter.Options().setNumThreads(2))
-        private val inputBuffer =
-            ByteBuffer.allocateDirect(inputElements * 4).order(ByteOrder.nativeOrder())
-        private val outputBuffer =
-            ByteBuffer.allocateDirect(outputElements * 4).order(ByteOrder.nativeOrder())
-        val outputSize = outputElements
-
-        /** Fills [out] with the raw logits. The caller owns the buffer and reuses it. */
-        fun run(values: FloatArray, out: FloatArray) {
-            inputBuffer.rewind()
-            inputBuffer.asFloatBuffer().put(values)
-            inputBuffer.rewind()
-            outputBuffer.rewind()
-            interpreter.run(inputBuffer, outputBuffer)
-            outputBuffer.rewind()
-            outputBuffer.asFloatBuffer().get(out)
-        }
+    private val detLocal = ThreadLocal.withInitial {
+        val session: OcrSession = detShared
+            ?: TfLiteSession(detFile, 3 * 640 * 640, 640 * 640).also { owned.add(it) }
+        DetWorker(session)
     }
 
     /** One detector plus its reusable buffers, owned by a single worker thread. */
-    private class DetWorker(val session: Session) {
+    private class DetWorker(val session: OcrSession) {
         val input = FloatArray(3 * 640 * 640)
         val output = FloatArray(640 * 640)
         val pixels = IntArray(640 * 640)
     }
 
     /** One recogniser plus its reusable buffers, owned by a single worker thread. */
-    private class RecWorker(private val session: Session) {
+    private class RecWorker(private val session: OcrSession, outputSize: Int) {
         val input = FloatArray(3 * 48 * 640)
-        private val output = FloatArray(session.outputSize)
+        private val output = FloatArray(outputSize)
 
         fun run() {
             session.run(input, output)
         }
 
         fun logits(): FloatArray = output
+    }
+
+    fun close() {
+        detShared?.close()
+        recShared?.close()
+        owned.forEach { runCatching { it.close() } }
+        detWorkers.shutdownNow()
+        recWorkers.shutdownNow()
     }
 
     fun recognize(bitmap: Bitmap): List<TextRegion> {

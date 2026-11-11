@@ -63,6 +63,9 @@ class UiSettings(private val prefs: Prefs) {
     private var stateTranslateApiKey by mutableStateOf(prefs.translateApiKey)
     val translateApiKey: String get() = stateTranslateApiKey
 
+    private var stateOcrModel by mutableIntStateOf(OcrModel.from(prefs.ocrModel).id)
+    val ocrModel: Int get() = stateOcrModel
+
     fun setTranslateEnabled(value: Boolean) {
         stateTranslateEnabled = value
         prefs.translateEnabled = value
@@ -81,6 +84,12 @@ class UiSettings(private val prefs: Prefs) {
     fun setTranslateApiKey(value: String) {
         stateTranslateApiKey = value
         prefs.translateApiKey = value
+    }
+
+    fun setOcrModel(value: Int) {
+        val safe = OcrModel.from(value).id
+        stateOcrModel = safe
+        prefs.ocrModel = safe
     }
 
     private var stateReadMode by mutableStateOf(prefs.readMode)

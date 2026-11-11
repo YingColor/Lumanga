@@ -170,6 +170,11 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_TRANSLATE_KEY, "") ?: ""
         set(value) = sp.edit().putString(KEY_TRANSLATE_KEY, value.trim()).apply()
 
+    /** 0 = PP-OCRv6 Small (LiteRT), 1 = PP-OCRv6 Medium (ONNX Runtime). */
+    var ocrModel: Int
+        get() = sp.getInt(KEY_OCR_MODEL, OcrModel.SMALL.id)
+        set(value) = sp.edit().putInt(KEY_OCR_MODEL, OcrModel.from(value).id).apply()
+
     var readMode: Int
         get() = sp.getInt(KEY_READ_MODE, 0).coerceIn(0, 2)
         set(value) = sp.edit().putInt(KEY_READ_MODE, value.coerceIn(0, 2)).apply()
@@ -317,6 +322,7 @@ class Prefs(context: Context) {
         const val KEY_TRANSLATE_API = "translate_api"
         const val KEY_TRANSLATE_MODEL = "translate_model"
         const val KEY_TRANSLATE_KEY = "translate_api_key"
+        const val KEY_OCR_MODEL = "ocr_model"
 
         const val MIN_ZOOM_PERCENT = 40
         const val MAX_ZOOM_PERCENT = 400
