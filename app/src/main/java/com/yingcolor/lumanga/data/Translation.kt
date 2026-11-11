@@ -19,8 +19,12 @@ import kotlin.math.max
 import kotlin.math.min
 
 object TranslationConfig {
-    const val DEFAULT_API = "https://index-translate.bilibili.com/v1"
-    const val DEFAULT_MODEL = "Index-Translate-9B"
+    /**
+     * No service is bundled. The app talks to whatever OpenAI-compatible endpoint the user
+     * configures, so nothing is sent anywhere until they set it up themselves.
+     */
+    const val DEFAULT_API = ""
+    const val DEFAULT_MODEL = ""
 }
 
 data class TextRegion(

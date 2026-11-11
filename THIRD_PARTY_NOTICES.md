@@ -48,6 +48,14 @@ https://www.apache.org/licenses/LICENSE-2.0 . The library is resolved at build t
 - Project: https://github.com/junrar/junrar
 - Usage: reads `.rar` (RAR 4 and RAR 5) entries without unpacking the archive first.
 
+  Note on licence mixing: the unRAR licence is not an OSI licence, and its extra
+  restriction — the code must not be used to build a RAR-compatible archiver —
+  counts as an additional term when combined with a copyleft licence such as
+  GPL-3.0. Lumanga only reads RAR archives, and this project is not a RAR
+  archiver, but downstream users who need strict licence purity can build
+  without RAR support by removing `app/libs/junrar-8.1.2.jar` and the
+  `RarReader` branch in `PageSource`.
+
 ## SLF4J API (bundled jar, `app/libs/slf4j-api-2.0.17.jar`)
 
 - Version: 2.0.17

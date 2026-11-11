@@ -16,13 +16,11 @@ captures/
 keystore.properties
 .toolchain/
 
-参考软件/
-m3e-canvas*/
-漫画/
 *.dex
 *.cbz
 *.zip
 *.7z
 *.rar
+漫画/
 
 _已删除旧版备份/

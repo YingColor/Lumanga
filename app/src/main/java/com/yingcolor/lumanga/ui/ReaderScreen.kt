@@ -644,7 +644,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Runs the whole page pipeline and returns the rendered page.
      *
-     * Two invariants matter here, both learned from "it sits on 正在翻译 forever" reports:
+     * Two invariants govern the state machine:
      *  - The badge must always leave WORKING. Every exit path publishes a terminal state, and
      *    [PAGE_BUDGET_MS] cancels a pipeline that would otherwise hang on a stalled socket or a
      *    wedged OCR call.
@@ -705,8 +705,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 publish(index, TranslateState(TranslateKind.FAILED, outcome.reason))
                 null
             }
-            // Stale means "not the page the user is looking at". Leaving the badge on WORKING here
-            // was one of the ways a page could sit on 正在翻译 forever.
+            // Stale means the page is far from the viewport: clear the badge instead of leaving it
+            // on WORKING, which would never be resolved by anything else.
             TranslateOutcome.Stale -> {
                 publish(index, TranslateState())
                 null
@@ -1705,6 +1705,39 @@ private fun ReaderContent(
                         Spacer(Modifier.weight(1f))
                         val iconBox = if (compactBar) Modifier.size(30.dp) else Modifier
                         val iconSize = if (compactBar) 18.dp else 24.dp
+                        // Translation on/off without leaving the page: filled when on, hollow when
+                        // off, so the current state reads at a glance. Sits just left of the gear.
+                        val translateOn = settings.translateEnabled
+                        IconButton(
+                            onClick = {
+                                // Nothing to translate with yet: send them to the endpoint field
+                                // instead of flipping a switch that can only fail.
+                                if (!translateOn && settings.translateApi.isBlank()) onSettings()
+                                else settings.setTranslateEnabled(!translateOn)
+                            },
+                            modifier = iconBox
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(iconSize)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (translateOn) MaterialTheme.colorScheme.primary
+                                        else Color.Transparent
+                                    )
+                            ) {
+                                Text(
+                                    text = S.translateToggleMark,
+                                    style = if (compactBar) {
+                                        MaterialTheme.typography.labelMedium
+                                    } else MaterialTheme.typography.labelLarge,
+                                    color = if (translateOn) {
+                                        MaterialTheme.colorScheme.onPrimary
+                                    } else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                         IconButton(onClick = onSettings, modifier = iconBox) {
                             Icon(
                                 imageVector = Icons.Filled.Settings,
@@ -2354,8 +2387,8 @@ private fun TranslateBadge(
 ) {
     if (status.kind == TranslateKind.IDLE) return
     val scheme = MaterialTheme.colorScheme
-    // A ticking counter: the pipeline can legitimately take 30 s on a slow network, and without
-    // this the badge looks frozen, which is exactly what "卡在正在翻译，一点动静都没有" describes.
+    // A ticking counter: a slow network can push one page past 30 s, and without a visible number
+    // the badge is indistinguishable from a frozen screen.
     var seconds by remember(status) { mutableStateOf(0) }
     LaunchedEffect(status) {
         if (status.kind != TranslateKind.WORKING) return@LaunchedEffect

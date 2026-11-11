@@ -3,8 +3,8 @@
 <img src="assets/images/logo/logo.png" width=200>
 </div>
 
-An offline-first comic reader for Android (it only touches the network when you
-tap "check for updates"). It reads `.zip` / `.cbz`
+An offline-first comic reader for Android (it only touches the network for the
+optional update check and for the translation you enable yourself). It reads `.zip` / `.cbz`
 archives straight from a folder on the device and displays pages **without
 extracting any image to disk**.
 
@@ -46,7 +46,12 @@ extracting any image to disk**.
   always turn one page each instead of being folded into a single gesture;
   a burst snaps to the target page while a single tap still plays the animation
 - Cover thumbnails cached in the app's private cache for instant re-opening; comic pages themselves are decoded in memory only
-- Only the INTERNET permission is declared, used solely by the optional update check
+- Optional live translation: on-device OCR reads the Japanese text, you supply an
+  OpenAI-compatible endpoint of your own, and only that recognised text is sent —
+  images never leave the device. No translation service is bundled, the address is
+  empty by default, and the switch lives in the reader's centre menu ("译")
+- Only the INTERNET permission is declared, used by the optional update check and by
+  the translation you configure yourself
 
 Full documentation is in [README.md](README.md) (Chinese).
 Installation steps for non-technical users: [使用说明.md](使用说明.md).

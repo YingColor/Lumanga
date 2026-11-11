@@ -4,9 +4,20 @@ Copyright (C) 2026 YingColor
 This product is licensed under the GNU General Public License, version 3
 (GPL-3.0). See LICENSE.
 
-Runtime library:
+Runtime libraries:
   Apache Commons Compress - https://commons.apache.org/proper/commons-compress/
   Apache License, Version 2.0
+
+  TensorFlow Lite 2.16.1 - https://www.tensorflow.org/lite
+  Apache License, Version 2.0
+
+  PP-OCRv6 Small detection / recognition models (LiteRT conversion)
+  - https://huggingface.co/litert-community/PP-OCRv6-Small-LiteRT
+  Apache License, Version 2.0; upstream weights from PaddleOCR
+  (https://github.com/PaddlePaddle/PaddleOCR)
+
+  junrar 8.1.2 - https://github.com/junrar/junrar
+  UnRAR licence (free to read/extract RAR archives)
 
 Build/runtime libraries:
   AndroidX, Jetpack Compose, Kotlin, AndroidX ProfileInstaller

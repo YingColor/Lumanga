@@ -23,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.TextRegion
-import com.yingcolor.lumanga.data.TranslationConfig
 import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.UiSettings
 import kotlinx.coroutines.launch
@@ -90,22 +89,12 @@ fun TranslationSettings(settings: UiSettings) {
             style = MaterialTheme.typography.bodySmall,
             color = scheme.onSurfaceVariant
         )
-        TextButton(
-            onClick = {
-                api = TranslationConfig.DEFAULT_API
-                model = TranslationConfig.DEFAULT_MODEL
-                settings.setTranslateApi(api)
-                settings.setTranslateModel(model)
-            }
-        ) {
-            Text(S.translateFillDemo)
-        }
         Button(
             onClick = {
                 testing = true
                 testResult = null
                 scope.launch {
-                    val probe = listOf(TextRegion("お前はもう死んでいる。", Rect(0, 0, 100, 40)))
+                    val probe = listOf(TextRegion("今日はいい天気ですね。", Rect(0, 0, 100, 40)))
                     val groups = TranslationEngine.groupBubbles(probe, 200, 80)
                     val result = TranslationEngine.translate(groups, api, model)
                     testResult = if (result != null && result.firstOrNull()?.isNotBlank() == true)
