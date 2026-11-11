@@ -60,6 +60,9 @@ class UiSettings(private val prefs: Prefs) {
     private var stateTranslateModel by mutableStateOf(prefs.translateModel)
     val translateModel: String get() = stateTranslateModel
 
+    private var stateTranslateApiKey by mutableStateOf(prefs.translateApiKey)
+    val translateApiKey: String get() = stateTranslateApiKey
+
     fun setTranslateEnabled(value: Boolean) {
         stateTranslateEnabled = value
         prefs.translateEnabled = value
@@ -73,6 +76,11 @@ class UiSettings(private val prefs: Prefs) {
     fun setTranslateModel(value: String) {
         stateTranslateModel = value
         prefs.translateModel = value
+    }
+
+    fun setTranslateApiKey(value: String) {
+        stateTranslateApiKey = value
+        prefs.translateApiKey = value
     }
 
     private var stateReadMode by mutableStateOf(prefs.readMode)

@@ -28,6 +28,8 @@ import kotlinx.coroutines.launch
 private const val RELEASES_PAGE =
     "https://github.com/YingColor/Lumanga/releases/latest"
 
+private const val REPO_PAGE = "https://github.com/YingColor/Lumanga"
+
 
 
 
@@ -56,7 +58,16 @@ fun AboutDialog(
                     text = S.versionLabel(versionName, versionCode),
                     style = MaterialTheme.typography.labelLarge
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(2.dp))
+                TextButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(REPO_PAGE)))
+                        }
+                    },
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+                ) { Text(S.aboutRepo) }
+                Spacer(Modifier.height(2.dp))
                 Text(
                     text = S.aboutBody,
                     style = MaterialTheme.typography.bodySmall,

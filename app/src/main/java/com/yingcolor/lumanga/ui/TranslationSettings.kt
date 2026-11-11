@@ -32,6 +32,7 @@ fun TranslationSettings(settings: UiSettings) {
     val scheme = MaterialTheme.colorScheme
     var api by remember { mutableStateOf(settings.translateApi) }
     var model by remember { mutableStateOf(settings.translateModel) }
+    var apiKey by remember { mutableStateOf(settings.translateApiKey) }
     var testResult by remember { mutableStateOf<String?>(null) }
     var testing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -74,6 +75,23 @@ fun TranslationSettings(settings: UiSettings) {
         )
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
+            value = apiKey,
+            onValueChange = {
+                apiKey = it
+                settings.setTranslateApiKey(it)
+            },
+            label = { Text(S.preTranslateApiKey) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = S.preTranslateApiKeyTip,
+            style = MaterialTheme.typography.labelSmall,
+            color = scheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
             value = model,
             onValueChange = {
                 model = it
@@ -96,7 +114,7 @@ fun TranslationSettings(settings: UiSettings) {
                 scope.launch {
                     val probe = listOf(TextRegion("今日はいい天気ですね。", Rect(0, 0, 100, 40)))
                     val groups = TranslationEngine.groupBubbles(probe, 200, 80)
-                    val result = TranslationEngine.translate(groups, api, model)
+                    val result = TranslationEngine.translate(groups, api, model, emptyList(), apiKey)
                     testResult = if (result != null && result.firstOrNull()?.isNotBlank() == true)
                         S.translateTestOk
                     else

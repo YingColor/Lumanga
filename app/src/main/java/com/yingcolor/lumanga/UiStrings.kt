@@ -72,10 +72,11 @@ object S {
     const val resume = "继续阅读"
     const val startRead = "开始阅读"
     const val aboutTitle = "关于这个应用"
+    const val aboutRepo = "GitHub 仓库 · github.com/YingColor/Lumanga"
     const val about = "关于软件"
     const val menu = "菜单"
     const val aboutBody = "本地漫画阅读器 · 漫画只从你选的文件夹读取，不上传任何内容\n" +
-        "只有点「检测更新」时才会访问 GitHub\n" +
+        "只有点「检测更新」和你自己开启翻译时才会联网\n" +
         "支持 ZIP / CBZ / RAR / 7Z，单页 / 双页 / 卷轴"
     fun versionLabel(name: String, code: Int) = "版本 $name（构建 $code）"
     const val checkUpdate = "检测更新"
@@ -185,10 +186,37 @@ object S {
     const val translateNoText = "这一页没认出文字"
     const val translateNotJapanese = "这一页不是日文，已跳过"
     const val translateFailed = "翻译失败 · 点这里重试"
+    const val preTranslate = "预翻译"
+    const val preTranslateRetranslate = "重新翻译"
+    const val preTranslateTitle = "预翻译整本"
+    const val preTranslateIntro = "一次性把整本译好存到手机，之后翻页不用再等；没网也能看已经译好的页。"
+    const val preTranslateApiKey = "API Key"
+    const val preTranslateApiKeyTip = "接口需要鉴权时填，不需要就留空。只保存在本机。"
+    const val preTranslateOcr = "文字识别模型"
+    const val preTranslateOcrValue = "PP-OCRv6 Small（内置，唯一）"
+    const val preTranslatePages = "要翻译的页 · 点缩略图勾选"
+    const val preTranslateSelectAll = "全选"
+    const val preTranslateSelectNone = "全不选"
+    const val preTranslateStart = "开始预翻译"
+    const val preTranslateStop = "停止"
+    const val preTranslateKeepOpen = "翻译时请让这个窗口保持打开"
+    const val preTranslateNeedEndpoint = "先填翻译服务地址"
+    const val preTranslateNeedPages = "至少选一页"
+    const val preTranslateCancelled = "已停止，译好的页已经保存"
     const val translateTest = "测试连接"
     const val translateTesting = "测试中…"
     const val translateTestOk = "连接成功，翻译可用"
     const val translateTestFail = "连不上。请检查手机是否允许本应用联网，以及地址是否正确"
+
+    fun preTranslateSelected(selected: Int, total: Int): String = "已选 $selected / $total 页"
+
+    fun preTranslateRunning(done: Int, total: Int): String = "正在翻译 $done / $total…"
+
+    fun preTranslateDone(count: Int): String = "完成，这本共译好 $count 页"
+
+    fun preTranslateFailed(page: Int): String = "第 ${page + 1} 页失败，已译好的页已经保存"
+
+    fun preTranslateStored(count: Int): String = "这本已经存了 $count 页译文，重新翻译会覆盖"
 
     fun pageProgressCompact(page: Int, total: Int): String {
         if (total <= 0) return "已读"

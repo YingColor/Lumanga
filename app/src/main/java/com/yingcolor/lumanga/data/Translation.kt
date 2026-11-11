@@ -138,7 +138,8 @@ object TranslationEngine {
         groups: List<BubbleGroup>,
         api: String,
         model: String,
-        context: List<String> = emptyList()
+        context: List<String> = emptyList(),
+        apiKey: String = ""
     ): List<String>? = withContext(Dispatchers.IO) {
         if (groups.isEmpty()) return@withContext emptyList()
         val numbered = buildString {
@@ -179,6 +180,9 @@ object TranslationEngine {
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
                     setRequestProperty("User-Agent", "Lumanga/1.0")
+                    if (apiKey.isNotBlank()) {
+                        setRequestProperty("Authorization", "Bearer $apiKey")
+                    }
                 }
                 connection.outputStream.use { it.write(payload) }
                 val code = connection.responseCode

@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -59,6 +60,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -88,6 +90,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
@@ -98,6 +101,7 @@ import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BookKind
 import com.yingcolor.lumanga.data.ComicRepository
 import com.yingcolor.lumanga.data.Prefs
+import com.yingcolor.lumanga.data.TranslationStore
 import com.yingcolor.lumanga.data.ShelfIndex
 import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.util.naturalCompare
@@ -316,6 +320,10 @@ fun ShelfScreen(
     var groupMenu by remember { mutableStateOf(false) }
     var columnMenu by remember { mutableStateOf(false) }
     var readFilterMenu by remember { mutableStateOf(false) }
+    var preTarget by remember { mutableStateOf<Book?>(null) }
+    var preClearTarget by remember { mutableStateOf<Book?>(null) }
+    val shelfScope = rememberCoroutineScope()
+    val appContext = LocalContext.current.applicationContext
     
     
     
@@ -640,6 +648,8 @@ fun ShelfScreen(
                                 refreshKey = refreshKey,
                                 favorite = book.id in favorites,
                                 onToggleFavorite = { settings.toggleFavorite(book.id) },
+                                onPreTranslate = { preTarget = book },
+                                onRetranslate = { preClearTarget = book },
                                 onClick = { onOpenBook(book) }
                             )
                         }
@@ -761,6 +771,42 @@ fun ShelfScreen(
             versionName = BuildConfig.VERSION_NAME,
             versionCode = BuildConfig.VERSION_CODE,
             onClose = { showAbout = false }
+        )
+    }
+
+    preTarget?.let { target ->
+        PreTranslateDialog(
+            book = target,
+            settings = settings,
+            onDismiss = { preTarget = null }
+        )
+    }
+
+    // "Translate again" wipes what is stored so the next run really starts over.
+    preClearTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { preClearTarget = null },
+            title = { Text(S.preTranslateRetranslate) },
+            text = {
+                Text(
+                    S.preTranslateStored(TranslationStore.count(appContext, target.id))
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val book = target
+                        preClearTarget = null
+                        shelfScope.launch {
+                            withContext(Dispatchers.IO) { TranslationStore.clear(appContext, book.id) }
+                            preTarget = book
+                        }
+                    }
+                ) { Text(S.preTranslateRetranslate) }
+            },
+            dismissButton = {
+                TextButton(onClick = { preClearTarget = null }) { Text(S.cancel) }
+            }
         )
     }
     }
@@ -892,6 +938,8 @@ private fun BookCard(
     refreshKey: Int,
     favorite: Boolean,
     onToggleFavorite: () -> Unit,
+    onPreTranslate: () -> Unit,
+    onRetranslate: () -> Unit,
     onClick: () -> Unit
 ) {
     var coverMenu by remember { mutableStateOf(false) }
@@ -1024,6 +1072,36 @@ private fun BookCard(
                         onClick = {
                             coverMenu = false
                             onToggleFavorite()
+                        }
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Text(
+                                text = S.translateToggleMark,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.width(20.dp)
+                            )
+                        },
+                        text = { Text(S.preTranslate) },
+                        onClick = {
+                            coverMenu = false
+                            onPreTranslate()
+                        }
+                    )
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.Refresh,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        },
+                        text = { Text(S.preTranslateRetranslate) },
+                        onClick = {
+                            coverMenu = false
+                            onRetranslate()
                         }
                     )
                 }

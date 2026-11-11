@@ -108,6 +108,7 @@ import com.yingcolor.lumanga.data.PageSource
 import com.yingcolor.lumanga.data.Prefs
 import com.yingcolor.lumanga.data.TextRegion
 import com.yingcolor.lumanga.data.TranslationEngine
+import com.yingcolor.lumanga.data.TranslationStore
 import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.data.ZoomMode
 import kotlinx.coroutines.CancellationException
@@ -527,6 +528,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun open(book: Book) {
+        bookId = book.id
         loading = true
         error = null
         pageCount = 0
@@ -616,6 +618,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val translationContext = LinkedHashMap<Int, List<String>>(6)
     private val contextLock = Any()
 
+    /** Book identity for [TranslationStore]; set by [open]. */
+    private var bookId: String = ""
+
     private val translationStates = mutableStateMapOf<Int, TranslateState>()
 
     /** Bumped by [retryTranslation] so the page pipeline runs again for the same index. */
@@ -652,7 +657,13 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
      *    lives in [viewModelScope] and stores its own result, so coming back to the page is
      *    instant instead of restarting the whole pipeline.
      */
-    suspend fun translate(index: Int, source: Bitmap, api: String, model: String): Bitmap? {
+    suspend fun translate(
+        index: Int,
+        source: Bitmap,
+        api: String,
+        apiKey: String,
+        model: String
+    ): Bitmap? {
         val key = "$index-${source.width}x${source.height}-${(api + model).hashCode()}"
         translatedCache.get(key)?.let {
             publish(index, TranslateState())
@@ -661,7 +672,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         publish(index, TranslateState(TranslateKind.WORKING))
         val deferred = synchronized(translationLock) {
             translating[key] ?: viewModelScope.async(Dispatchers.IO) {
-                runTranslate(index, key, source, api, model)
+                runTranslate(index, key, source, api, apiKey, model)
             }.also { translating[key] = it }
         }
         val started = System.currentTimeMillis()
@@ -719,14 +730,28 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         key: String,
         source: Bitmap,
         api: String,
+        apiKey: String,
         model: String
     ): TranslateOutcome {
-        if (api.isBlank()) return TranslateOutcome.Failed("no endpoint")
         val rk = resultKey(index, api, model)
         pageResults.get(rk)?.let { cached ->
             android.util.Log.i("Translate", "TR reuse index=$index")
             return TranslateOutcome.Done(renderScaled(source, cached))
         }
+        // A page translated ahead of time (long-press → 预翻译) needs neither OCR nor network.
+        val stored = TranslationStore.page(getApplication(), bookId, index)
+        if (stored != null) {
+            if (stored.isEmpty) {
+                // Checked during pre-translation and found nothing worth translating.
+                android.util.Log.i("Translate", "TR stored-empty index=$index")
+                return TranslateOutcome.Done(source)
+            }
+            android.util.Log.i("Translate", "TR stored index=$index")
+            val cached = PageResult(stored.width, stored.height, stored.groups, stored.lines)
+            pageResults.put(rk, cached)
+            return TranslateOutcome.Done(renderScaled(source, cached))
+        }
+        if (api.isBlank()) return TranslateOutcome.Failed("no endpoint")
         // The page on screen must never queue behind its neighbours: OCR is serialised, so a
         // neighbour that grabs it first would add its full cost to the page the user is reading.
         // Neighbours wait their turn instead, bounded so a wedged page cannot block them forever.
@@ -768,7 +793,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
         publish(index, TranslateState(TranslateKind.WORKING, STAGE_API))
         val started = System.currentTimeMillis()
-        val lines = TranslationEngine.translate(groups, api, model, previous)
+        val lines = TranslationEngine.translate(groups, api, model, previous, apiKey)
         android.util.Log.i(
             "Translate",
             "TR api index=$index lines=${lines?.size ?: -1} ms=${System.currentTimeMillis() - started}"
@@ -2112,6 +2137,7 @@ private fun PageRow(
         entrySide = entrySide,
         translate = settings.translateEnabled,
         api = settings.translateApi,
+        apiKey = settings.translateApiKey,
         model = settings.translateModel,
         modifier = modifier
     )
@@ -2129,6 +2155,7 @@ private fun rememberPageBitmap(
     zoomPercent: Int,
     translate: Boolean,
     api: String,
+    apiKey: String,
     model: String
 ): Bitmap? {
     
@@ -2173,7 +2200,7 @@ private fun rememberPageBitmap(
         val full = vm.page(index, decodeW, decodeH, quality)
         if (full != null) value = full
         if (translate && full != null) {
-            val rendered = vm.translate(index, full, api, model)
+            val rendered = vm.translate(index, full, api, apiKey, model)
             if (rendered != null) value = rendered
         }
     }
@@ -2201,6 +2228,7 @@ private fun PageSpread(
     entrySide: Int,
     translate: Boolean,
     api: String,
+    apiKey: String,
     model: String,
     modifier: Modifier = Modifier
 ) {
@@ -2221,7 +2249,7 @@ private fun PageSpread(
         for (i in indices) {
             loaded += rememberPageBitmap(
                 vm, i, targetW, targetH, quality, zoomMode, zoomPercent,
-                translate, api, model
+                translate, api, apiKey, model
             )
         }
 
