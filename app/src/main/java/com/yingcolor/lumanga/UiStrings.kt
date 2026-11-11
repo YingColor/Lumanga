@@ -193,7 +193,11 @@ object S {
     const val translateNotJapanese = "这一页不是日文，已跳过"
     const val translateFailed = "翻译失败 · 点这里重试"
     const val preTranslate = "预翻译"
-    const val preTranslateRetranslate = "重新翻译"
+    const val preTranslateDelete = "删除预翻译"
+    const val preTranslateDeleteConfirm = "删除"
+    const val preTranslateDeleted = "已删除这本的预翻译"
+    const val preTranslateDeleteHint = "防误触：下面的「删除」要连点 3 次才生效（中间停超过 2 秒就重新数）"
+    const val preTranslateDeleteEmpty = "这本还没存过译文，没有可删的。"
     const val preTranslateTitle = "预翻译整本"
     const val preTranslateIntro = "一次性把整本译好存到手机，之后翻页不用再等；没网也能看已经译好的页。"
     const val preTranslateApiKey = "API Key"
@@ -216,6 +220,11 @@ object S {
 
     fun modelPickerCount(count: Int): String = "共 $count 个 · 点一下填入"
 
+    fun preTranslateDeleteBody(count: Int): String =
+        "这本已经存了 $count 页译文。删除后这些译文会一起没掉，翻到这些页又得重新识别和联网。"
+
+    fun preTranslateDeleteTapHint(remaining: Int): String = "删除（再点 $remaining 次）"
+
     fun preTranslateSelected(selected: Int, total: Int): String = "已选 $selected / $total 页"
 
     fun preTranslateRunning(done: Int, total: Int): String = "正在翻译 $done / $total…"
@@ -224,7 +233,7 @@ object S {
 
     fun preTranslateFailed(page: Int): String = "第 ${page + 1} 页失败，已译好的页已经保存"
 
-    fun preTranslateStored(count: Int): String = "这本已经存了 $count 页译文，重新翻译会覆盖"
+    fun preTranslateStored(count: Int): String = "这本已经存了 $count 页译文 · 长按封面可删除"
 
     fun pageProgressCompact(page: Int, total: Int): String {
         if (total <= 0) return "已读"

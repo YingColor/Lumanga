@@ -1,6 +1,8 @@
 package com.yingcolor.lumanga.ui
 
 import android.app.Application
+import android.os.SystemClock
+import android.widget.Toast
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
@@ -41,6 +43,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -68,6 +71,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -321,7 +325,9 @@ fun ShelfScreen(
     var columnMenu by remember { mutableStateOf(false) }
     var readFilterMenu by remember { mutableStateOf(false) }
     var preTarget by remember { mutableStateOf<Book?>(null) }
-    var preClearTarget by remember { mutableStateOf<Book?>(null) }
+    var preDeleteTarget by remember { mutableStateOf<Book?>(null) }
+    var deleteTaps by remember { mutableIntStateOf(0) }
+    var lastDeleteTapAt by remember { mutableStateOf(0L) }
     val shelfScope = rememberCoroutineScope()
     val appContext = LocalContext.current.applicationContext
     
@@ -649,7 +655,7 @@ fun ShelfScreen(
                                 favorite = book.id in favorites,
                                 onToggleFavorite = { settings.toggleFavorite(book.id) },
                                 onPreTranslate = { preTarget = book },
-                                onRetranslate = { preClearTarget = book },
+                                onDeletePreTranslate = { preDeleteTarget = book },
                                 onClick = { onOpenBook(book) }
                             )
                         }
@@ -782,30 +788,64 @@ fun ShelfScreen(
         )
     }
 
-    // "Translate again" wipes what is stored so the next run really starts over.
-    preClearTarget?.let { target ->
+    // Deleting a volume is destructive: the confirm button has to be tapped three times
+    // (two seconds between taps, like the clear-progress guard) before anything is removed.
+    // This is a plain delete - no pre-translate panel is opened afterwards.
+    preDeleteTarget?.let { target ->
+        val storedCount = TranslationStore.count(appContext, target.id)
         AlertDialog(
-            onDismissRequest = { preClearTarget = null },
-            title = { Text(S.preTranslateRetranslate) },
+            onDismissRequest = { preDeleteTarget = null; deleteTaps = 0 },
+            title = { Text(S.preTranslateDelete) },
             text = {
-                Text(
-                    S.preTranslateStored(TranslationStore.count(appContext, target.id))
-                )
+                Column {
+                    Text(
+                        if (storedCount > 0) S.preTranslateDeleteBody(storedCount)
+                        else S.preTranslateDeleteEmpty
+                    )
+                    if (storedCount > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            S.preTranslateDeleteHint,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             },
             confirmButton = {
                 TextButton(
+                    enabled = storedCount > 0,
                     onClick = {
-                        val book = target
-                        preClearTarget = null
-                        shelfScope.launch {
-                            withContext(Dispatchers.IO) { TranslationStore.clear(appContext, book.id) }
-                            preTarget = book
+                        val now = SystemClock.uptimeMillis()
+                        deleteTaps = if (now - lastDeleteTapAt > 2000L) 1 else deleteTaps + 1
+                        lastDeleteTapAt = now
+                        if (deleteTaps >= 3) {
+                            deleteTaps = 0
+                            preDeleteTarget = null
+                            val book = target
+                            shelfScope.launch {
+                                withContext(Dispatchers.IO) {
+                                    TranslationStore.clear(appContext, book.id)
+                                }
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(
+                                        appContext, S.preTranslateDeleted, Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
                         }
                     }
-                ) { Text(S.preTranslateRetranslate) }
+                ) {
+                    Text(
+                        if (deleteTaps > 0) S.preTranslateDeleteTapHint(3 - deleteTaps)
+                        else S.preTranslateDeleteConfirm
+                    )
+                }
             },
             dismissButton = {
-                TextButton(onClick = { preClearTarget = null }) { Text(S.cancel) }
+                TextButton(onClick = { preDeleteTarget = null; deleteTaps = 0 }) {
+                    Text(S.cancel)
+                }
             }
         )
     }
@@ -939,7 +979,7 @@ private fun BookCard(
     favorite: Boolean,
     onToggleFavorite: () -> Unit,
     onPreTranslate: () -> Unit,
-    onRetranslate: () -> Unit,
+    onDeletePreTranslate: () -> Unit,
     onClick: () -> Unit
 ) {
     var coverMenu by remember { mutableStateOf(false) }
@@ -1092,16 +1132,16 @@ private fun BookCard(
                     DropdownMenuItem(
                         leadingIcon = {
                             Icon(
-                                imageVector = Icons.Filled.Refresh,
+                                imageVector = Icons.Filled.Delete,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
                             )
                         },
-                        text = { Text(S.preTranslateRetranslate) },
+                        text = { Text(S.preTranslateDelete) },
                         onClick = {
                             coverMenu = false
-                            onRetranslate()
+                            onDeletePreTranslate()
                         }
                     )
                 }

@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BookPreview
@@ -109,18 +110,21 @@ fun PreTranslateDialog(
     val pageCount = preview?.pageCount ?: 0
     val runningText = if (running) S.preTranslateRunning(doneCount, selected.size) else null
 
-    Dialog(onDismissRequest = { if (!running) { job?.cancel(); onDismiss() } }) {
+    Dialog(
+        onDismissRequest = { if (!running) { job?.cancel(); onDismiss() } },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Surface(
             shape = RoundedCornerShape(26.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp)
+                .padding(horizontal = 10.dp)
         ) {
             Column(
                 modifier = Modifier
-                    .padding(horizontal = 18.dp, vertical = 16.dp)
-                    .heightIn(max = 560.dp)
+                    .padding(horizontal = 20.dp, vertical = 20.dp)
+                    .heightIn(max = 700.dp)
             ) {
               // Only the settings and the picker scroll; the action row stays reachable at the
               // bottom once a run has produced a status line.
@@ -347,7 +351,7 @@ private fun PageThumb(
     val border = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
     Box(
         modifier = Modifier
-            .width(58.dp)
+            .width(66.dp)
             .aspectRatio(0.7f)
             .clickable(onClick = onClick)
             .background(
