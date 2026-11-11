@@ -42,18 +42,33 @@ data class BubbleGroup(
 )
 
 object TranslationEngine {
-    /** Marks the boundary between two vertical columns of the same bubble. */
-    private const val COLUMN_BREAK = "｜"
+    /**
+     * Separates two vertical columns of one bubble. A plain space is used on purpose: the model
+     * needs to see where a column ends, but any visible mark (「｜」) leaks into the translation
+     * and is then drawn into the bubble, and the model also starts inserting ellipses at every
+     * break. A space carries the same boundary and costs nothing if one survives.
+     */
+    private const val COLUMN_BREAK = " "
+
+    private val COLUMN_MARKS = Regex("[｜|]")
+    private val WHITESPACE = Regex("\\s+")
+    private val ELLIPSIS_RUN = Regex("…+|⋯+|\\.{2,}|・{2,}")
+    private val DOUBLE_PUNCT = Regex("([，、；：])\\1+")
+    private val ELLIPSIS_CHARS = setOf('…', '⋯', '・')
 
     private const val SYSTEM_PROMPT =
         "你是漫画翻译助手。输入按【编号】分组，每组是一个对话气泡里 OCR 出来的日文片段。" +
-            "竖排气泡里用「｜」分隔的就是一列，读法是列从右到左、列内从上到下。" +
+            "竖排气泡里用空格分开的就是一列，读法是列从右到左、列内从上到下。" +
             "漫画竖排文字常被切碎、顺序颠倒，也可能有识别错字，甚至整组只剩一两个字。" +
             "请先按漫画竖排的正确顺序（从右到左、从上到下）重排并纠正明显错字，" +
             "理解整句含义后，为每个气泡输出一句通顺自然的简体中文。" +
             "若一组只剩一两个字，按上下文和语气补成完整的一句，不要只译那两个字。" +
+            "若某一组本身只有一个省略号，原样输出「……」，不要补全、不要猜内容。" +
             "无法确定的字宁可结合上下文意译，不要音译，也不要在译文里保留日文假名。" +
-            "只输出译文，条数必须与气泡数一致，每行严格按「编号. 译文」格式，译文里不要保留「｜」。" +
+            "只输出译文，条数必须与气泡数一致，每行严格按「编号. 译文」格式。" +
+            "译文要短，长度尽量接近原文：气泡放不下就要缩小字号，所以不要扩写、不要加原文没有的语气词和修饰。" +
+            "原文里的省略号（……）要在译文对应位置保留；但不能用省略号表示停顿、分列或猜不出来的地方，" +
+            "原文没有省略号时也不要自己加。" +
             "不要解释、不要复述原文、不要逐字硬译、不要添加原文没有的内容。" +
             "若有上一页译文，人名和称呼必须与之一致。"
 
@@ -75,8 +90,9 @@ object TranslationEngine {
         }
         // A lone kana is common in manga (「は？」「え？」) and dropping it cuts the sentence in
         // half. Latin-only and digit-only boxes come out of artwork lettering and sound effects,
-        // so they still need at least one Japanese character.
-        if (letters < 1) return false
+        // so they still need at least one Japanese character — except a column holding nothing
+        // but 「…」, which is the pause at the end of a line and is reattached to its bubble later.
+        if (letters < 1) return isEllipsisOnly(region)
         val meaningful = region.text.count { it !in PUNCTUATION && !it.isDigit() && !it.isWhitespace() }
         if (meaningful < 1) return false
         return true
@@ -143,23 +159,92 @@ object TranslationEngine {
             }
             merged
         }
+        // A trailing 「…」 is often detected as its own column on the line below the text. It
+        // carries no kana, so it survives the filter above but forms a group of its own; this
+        // hands it back to the bubble it belongs to.
+        val withMarks = absorbEllipsis(groups)
         // A fragment on its own is noise: one kana that lost the rest of its column would be
         // translated into a stray word floating over the artwork. Two or more letters are kept,
         // because a short but real line like 「よし」 must not disappear.
-        val kept = groups.filter { cluster ->
-            cluster.sumOf { region -> region.text.count { isJapaneseLetter(it) } } >= 2
+        val kept = withMarks.filter { cluster ->
+            cluster.sumOf { region -> region.text.count { isJapaneseLetter(it) } } >= 2 ||
+                // A column of nothing but 「…」 still has to be kept: it covers lettering on the
+                // page, and skipping it leaves the original dots showing between translated lines.
+                cluster.all { isEllipsisOnly(it) }
         }
         return kept.map { cluster ->
             cluster.sortWith(compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top })
             val union = Rect(cluster[0].box)
             cluster.forEach { union.union(it.box) }
             val vertical = cluster.count { it.vertical } * 2 >= cluster.size
-            // Columns are joined with a visible break. Without it a five-column sentence arrives
-            // as one undifferentiated run and the model reorders it by guesswork, which produced
-            // word-salad lines that looked like a recognition error.
-            val joiner = if (vertical) COLUMN_BREAK else ""
-            BubbleGroup(cluster, union, cluster.joinToString(joiner) { it.text }, vertical)
+            // Columns are separated by a space so the model can see where one ends. Without it a
+            // five-column sentence arrives as one run and is reordered by guesswork, which looked
+            // like a recognition error. A lone 「…」 is glued to the column before it instead of
+            // being separated, so it reads as the end of that line.
+            val source = buildString {
+                cluster.forEachIndexed { index, region ->
+                    if (index > 0 && vertical && !isEllipsisOnly(region)) append(COLUMN_BREAK)
+                    append(region.text)
+                }
+            }
+            BubbleGroup(cluster, union, source, vertical)
         }.sortedWith(compareByDescending<BubbleGroup> { it.bubble.centerX() }.thenBy { it.bubble.top })
+            .also { list ->
+                // Grouping decides whether one sentence reaches the model as one piece or as two
+                // that overwrite each other on the page, so it is worth seeing in a bug report.
+                list.forEachIndexed { i, g ->
+                    android.util.Log.d(
+                        "Translate",
+                        "TR src$i box=${g.bubble.left},${g.bubble.top}," +
+                            "${g.bubble.right},${g.bubble.bottom} v=${g.vertical} text=${g.source}"
+                    )
+                }
+            }
+    }
+
+    /** True for a detected column that holds only 「…」 and carries no letters of its own. */
+    private fun isEllipsisOnly(region: TextRegion): Boolean {
+        val stripped = region.text.filter { it !in PUNCTUATION && it != '.' && !it.isWhitespace() }
+        if (stripped.isNotEmpty()) return false
+        return region.text.any { it in ELLIPSIS_CHARS } || region.text.count { it == '.' } >= 2
+    }
+
+    /**
+     * Attaches each standalone 「…」 column to the bubble it sits beside. The pause belongs to
+     * the sentence, but the detector reports it as a separate column, and a group of one
+     * punctuation mark has no letters and would be filtered out as noise.
+     */
+    private fun absorbEllipsis(
+        clusters: List<MutableList<TextRegion>>
+    ): MutableList<MutableList<TextRegion>> {
+        val rest = clusters.filter { cluster -> cluster.none { isEllipsisOnly(it) } }.toMutableList()
+        val marks = clusters.filter { cluster -> cluster.all { isEllipsisOnly(it) } }
+        if (marks.isEmpty()) return rest
+        for (mark in marks) {
+            val box = mark[0].box
+            var best: MutableList<TextRegion>? = null
+            var bestDistance = Float.MAX_VALUE
+            for (cluster in rest) {
+                for (member in cluster) {
+                    val gapX = horizontalGap(box, member.box)
+                    val gapY = verticalGap(box, member.box)
+                    val unit = min(min(box.width(), member.box.width()).toFloat(), 96f)
+                        .coerceAtLeast(12f)
+                    // A column directly above/below, immediately alongside, or diagonally next
+                    // to the text all belong to the same bubble; further away it is somebody
+                    // else's pause and must stay where it is.
+                    val reach = unit * 1.5f
+                    if (gapX > reach || gapY > reach) continue
+                    val distance = gapX + gapY
+                    if (distance < bestDistance) {
+                        best = cluster
+                        bestDistance = distance
+                    }
+                }
+            }
+            if (best != null) best.addAll(mark) else rest.add(mark)
+        }
+        return rest
     }
 
     private fun mergeNeighbours(
@@ -274,6 +359,9 @@ object TranslationEngine {
     private fun horizontalGap(a: Rect, b: Rect): Float =
         maxOf(0f, maxOf(a.left - b.right, b.left - a.right).toFloat())
 
+    private fun verticalGap(a: Rect, b: Rect): Float =
+        maxOf(0f, maxOf(a.top - b.bottom, b.top - a.bottom).toFloat())
+
     private fun overlap(a: Rect, b: Rect): Float {
         val top = maxOf(a.top, b.top)
         val bottom = minOf(a.bottom, b.bottom)
@@ -351,7 +439,7 @@ object TranslationEngine {
                     .getJSONObject(0)
                     .getJSONObject("message")
                     .optString("content")
-                parse(content, groups.size)
+                parse(content, groups)
             }
             val value = outcome.getOrNull()
             if (value != null) return@withContext value
@@ -410,17 +498,53 @@ object TranslationEngine {
             }.getOrNull()
         }
 
-    private fun parse(content: String, count: Int): List<String> {
+    private fun parse(content: String, groups: List<BubbleGroup>): List<String> {
+        val count = groups.size
         val lines = content.lines().map { it.trim() }.filter { it.isNotEmpty() }
         val byIndex = HashMap<Int, String>()
         val numbered = Regex("^(\\d+)[.、)]\\s*(.+)$")
         lines.forEach { line ->
-            val match = numbered.find(line) ?: return@forEach
+            val match = numbered.find(line)
+            if (match == null) {
+                // A long translation is sometimes wrapped onto a second line. Keep it as the
+                // continuation of the entry above instead of dropping that half of the sentence.
+                val last = byIndex.keys.maxOrNull() ?: return@forEach
+                byIndex[last] = byIndex[last] + line
+                return@forEach
+            }
             val index = match.groupValues[1].toIntOrNull()?.minus(1) ?: return@forEach
             byIndex[index] = match.groupValues[2].trim()
         }
-        if (byIndex.isNotEmpty()) return List(count) { byIndex[it].orEmpty() }
-        return List(count) { lines.getOrNull(it).orEmpty() }
+        val sourceOf = { i: Int -> groups.getOrNull(i)?.source.orEmpty() }
+        if (byIndex.isNotEmpty()) {
+            return List(count) { i -> tidy(byIndex[i].orEmpty(), sourceOf(i)) }
+        }
+        return List(count) { i -> tidy(lines.getOrNull(i).orEmpty(), sourceOf(i)) }
+    }
+
+    /**
+     * Strips what must never reach the page. The column marker is an input-only cue, and the
+     * model likes to sprinkle 「……」 wherever it guessed at a break; drawn into a bubble those
+     * read as leftover junk, so they are removed here instead of being trusted to the prompt.
+     * Ellipses that the Japanese original actually contains are kept.
+     */
+    private fun tidy(text: String, source: String): String {
+        // Whitespace is only ever the column boundary leaking through, never part of a Chinese
+        // sentence, so it is dropped along with the old marker.
+        var out = text.replace(WHITESPACE, "").replace(COLUMN_MARKS, "").trim()
+        // The model scatters pauses of its own at guessed breaks. The original is the only
+        // authority on how many there should be, so the count is capped by it — that keeps a
+        // real 「…」 and stops the page filling up with dots.
+        val allowed = ELLIPSIS_RUN.findAll(source).count()
+        if (allowed == 0) {
+            out = out.replace(ELLIPSIS_RUN, "")
+        } else {
+            var seen = 0
+            out = ELLIPSIS_RUN.replace(out) { if (++seen <= allowed) "…" else "" }
+        }
+        // Removing a run can leave doubled or leading punctuation behind.
+        out = out.replace(DOUBLE_PUNCT, "$1").trim()
+        return out.trimStart('，', '、', '。', '；', '：', ',')
     }
 
     private class Patch(
@@ -441,7 +565,7 @@ object TranslationEngine {
         val seeds = groups.map { it.bubble }
         val placed = ArrayList<Rect>()
         groups.forEachIndexed { i, group ->
-            val value = translated.getOrNull(i)?.trim().orEmpty()
+            val value = tidy(translated.getOrNull(i).orEmpty(), group.source)
             if (value.isEmpty()) return@forEachIndexed
             // light lettering on dark artwork (titles, black bubbles) cannot be erased without
             // painting a bright patch over the drawing, so it is left alone
