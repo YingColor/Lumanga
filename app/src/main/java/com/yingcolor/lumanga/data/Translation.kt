@@ -190,7 +190,10 @@ object TranslationEngine {
         val gapRight = maxOf(a.left, b.left)
         val gap = gapRight - gapLeft
         val unit = minOf(a.width(), b.width()).coerceAtLeast(8)
-        if (gap <= 2 || gap > unit * 2.0f) return false
+        // The small detector returns much wider boxes than the medium one (two columns often
+        // arrive as one box), so a width-relative limit has to stay tight: a 2.0 multiplier let
+        // two neighbouring bubbles 108 px apart through on the small model.
+        if (gap <= 2 || gap > unit * 1.8f) return false
         val x0 = gapLeft.coerceAtLeast(0)
         val x1 = gapRight.coerceAtMost(source.width)
         val y0 = top.coerceAtLeast(0)
@@ -218,7 +221,10 @@ object TranslationEngine {
             val ratio = longest.toFloat() / h
             if (ratio > longestLine) longestLine = ratio
         }
-        val merge = longestLine < 0.6f
+        // A partial arc of a bubble outline still reads about half the strip height, so the
+        // limit has to sit below that. Merging is a convenience; keeping two bubbles apart is
+        // a correctness requirement, so this errs towards not merging.
+        val merge = longestLine < 0.4f
         android.util.Log.d(
             "Translate",
             "TR pair gap=$gap unit=$unit shared=$shared line=${"%.2f".format(longestLine)} " +
