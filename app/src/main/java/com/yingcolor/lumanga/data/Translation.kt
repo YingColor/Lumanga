@@ -44,9 +44,11 @@ data class BubbleGroup(
 object TranslationEngine {
     private const val SYSTEM_PROMPT =
         "你是漫画翻译助手。输入按【编号】分组，每组是一个对话气泡里 OCR 出来的日文片段。" +
-            "漫画竖排文字常被切碎、顺序颠倒，也可能有识别错字。" +
+            "漫画竖排文字常被切碎、顺序颠倒，也可能有识别错字，甚至整组只剩一两个字。" +
             "请先按漫画竖排的正确顺序（从右到左、从上到下）重排并纠正明显错字，" +
             "理解整句含义后，为每个气泡输出一句通顺自然的简体中文。" +
+            "若一组只剩一两个字，按上下文和语气补成完整的一句，不要只译那两个字。" +
+            "无法确定的字宁可结合上下文意译，不要音译，也不要在译文里保留日文假名。" +
             "只输出译文，条数必须与气泡数一致，每行严格按「编号. 译文」格式。" +
             "不要解释、不要复述原文、不要逐字硬译、不要添加原文没有的内容。" +
             "若有上一页译文，人名和称呼必须与之一致。"
@@ -58,16 +60,21 @@ object TranslationEngine {
 
     /** Drops detection noise, sound effects and single stray glyphs before translating. */
     fun isUsable(region: TextRegion): Boolean {
-        if (region.confidence < 0.55f) return false
+        // 0.55 used to throw away real but faint lettering: a perfectly readable 「よし」 came
+        // back at 0.51 and vanished from its bubble, cutting the sentence short.
+        if (region.confidence < 0.45f) return false
         if (region.box.width() < 10 || region.box.height() < 10) return false
         if (region.vertical && region.box.height() < region.box.width() * 1.2f) return false
         var letters = 0
         for (ch in region.text) {
             if (isJapaneseLetter(ch)) letters++
         }
-        if (letters < 2) return false
+        // A lone kana is common in manga (「は？」「え？」) and dropping it cuts the sentence in
+        // half. Latin-only and digit-only boxes come out of artwork lettering and sound effects,
+        // so they still need at least one Japanese character.
+        if (letters < 1) return false
         val meaningful = region.text.count { it !in PUNCTUATION && !it.isDigit() && !it.isWhitespace() }
-        if (meaningful < 2) return false
+        if (meaningful < 1) return false
         return true
     }
 
@@ -132,7 +139,13 @@ object TranslationEngine {
             }
             merged
         }
-        return groups.map { cluster ->
+        // A fragment on its own is noise: one kana that lost the rest of its column would be
+        // translated into a stray word floating over the artwork. Two or more letters are kept,
+        // because a short but real line like 「よし」 must not disappear.
+        val kept = groups.filter { cluster ->
+            cluster.sumOf { region -> region.text.count { isJapaneseLetter(it) } } >= 2
+        }
+        return kept.map { cluster ->
             cluster.sortWith(compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top })
             val union = Rect(cluster[0].box)
             cluster.forEach { union.union(it.box) }
