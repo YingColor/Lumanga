@@ -275,37 +275,186 @@ object TranslationEngine {
         return List(count) { lines.getOrNull(it).orEmpty() }
     }
 
+    private class Patch(
+        val text: String,
+        val area: Rect,
+        val background: Int,
+        val vertical: Boolean,
+        val maxGlyph: Float
+    )
+
     fun render(source: Bitmap, groups: List<BubbleGroup>, translated: List<String>): Bitmap {
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(out)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         }
+        val patches = ArrayList<Patch>()
         groups.forEachIndexed { i, group ->
             val value = translated.getOrNull(i)?.trim().orEmpty()
             if (value.isEmpty()) return@forEachIndexed
             // light lettering on dark artwork (titles, black bubbles) cannot be erased without
             // painting a bright patch over the drawing, so it is left alone
             if (medianLuminance(source, group.bubble) < 100) return@forEachIndexed
-            var background = Color.WHITE
-            for (region in group.regions) {
-                val box = Rect(region.box)
-                box.inset(-2, -2)
-                box.left = box.left.coerceAtLeast(0)
-                box.top = box.top.coerceAtLeast(0)
-                box.right = box.right.coerceAtMost(source.width)
-                box.bottom = box.bottom.coerceAtMost(source.height)
-                if (box.width() < 6 || box.height() < 6) continue
-                background = sampleBubbleColor(out, box)
-                eraseInk(out, box, background)
+
+            // The detector returns one tight box per Japanese column. A bubble is drawn around
+            // all of its columns, but short and low-confidence columns are dropped, so using
+            // those boxes as the patch left stray kana beside the translation and squeezed the
+            // Chinese into a sliver (down to the 7 px floor, with the text truncated). Grow the
+            // patch across the blank interior of the bubble, then clear all lettering in it.
+            val unit = columnWidth(group)
+            val clean = insideWhiteBubble(source, group.bubble)
+            val area = if (clean) bubbleSafeArea(source, group.bubble, unit)
+            else conservativeArea(source, group.bubble)
+            // Sample from the patch itself: a halftone bubble needs its own grey as the fill,
+            // otherwise erased lettering turns into bright white glyph-shaped holes.
+            val background = sampleBubbleColor(out, area)
+            patches.add(Patch(value, area, background, group.vertical, unit * 1.45f))
+            android.util.Log.d(
+                "Translate",
+                "TR patch i=$i clean=$clean " +
+                    "seed=${group.bubble.width()}x${group.bubble.height()} " +
+                    "area=${area.width()}x${area.height()} unit=$unit"
+            )
+        }
+        // Erase every patch before drawing any text: a later patch overlapping an earlier one
+        // must not wipe the already-drawn Chinese off the page.
+        patches.forEach { eraseLettering(out, it.area, it.background) }
+        patches.forEach { patch ->
+            paint.color = if (luminance(patch.background) > 140) {
+                Color.rgb(18, 18, 18)
+            } else {
+                Color.WHITE
             }
-            paint.color = if (luminance(background) > 140) Color.rgb(18, 18, 18) else Color.WHITE
-            val glyph = group.regions.maxOf {
-                if (group.vertical) it.box.width() else it.box.height()
-            }.toFloat()
-            drawFittedText(canvas, paint, value, group.bubble, group.vertical, glyph * 1.15f)
+            drawFittedText(
+                canvas, paint, patch.text, patch.area, patch.vertical, patch.maxGlyph
+            )
         }
         return out
+    }
+
+    /** Typical width of one Japanese column, used as the yardstick for growing the patch. */
+    private fun columnWidth(group: BubbleGroup): Int {
+        val sizes = group.regions.map {
+            if (group.vertical) it.box.width() else it.box.height()
+        }.sorted()
+        if (sizes.isEmpty()) return 24
+        return sizes[sizes.size / 2].coerceIn(10, 96)
+    }
+
+    /**
+     * Only a clean white bubble may be grown. Lettering printed directly on the artwork has no
+     * outline to stop at, so growing it would paint a rectangle over the drawing.
+     */
+    private fun insideWhiteBubble(source: Bitmap, seed: Rect): Boolean {
+        val pad = 10
+        val l = (seed.left - pad).coerceAtLeast(0)
+        val t = (seed.top - pad).coerceAtLeast(0)
+        val r = (seed.right + pad).coerceAtMost(source.width)
+        val b = (seed.bottom + pad).coerceAtMost(source.height)
+        if (r - l < 2 || b - t < 2) return false
+        val w = r - l
+        val h = b - t
+        val pixels = IntArray(w * h)
+        source.getPixels(pixels, 0, w, l, t, w, h)
+        var dark = 0
+        var total = 0
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val gx = l + x
+                val gy = t + y
+                if (gx >= seed.left && gx < seed.right &&
+                    gy >= seed.top && gy < seed.bottom
+                ) continue
+                total++
+                if (luminance(pixels[y * w + x]) < 165) dark++
+            }
+        }
+        return total > 0 && dark.toFloat() / total < 0.12f
+    }
+
+    /** Just enough room to clear the anti-aliased fringe when the text sits on artwork. */
+    private fun conservativeArea(source: Bitmap, seed: Rect): Rect {
+        val area = Rect(seed)
+        area.inset(-2, -2)
+        area.left = area.left.coerceAtLeast(0)
+        area.top = area.top.coerceAtLeast(0)
+        area.right = area.right.coerceAtMost(source.width)
+        area.bottom = area.bottom.coerceAtMost(source.height)
+        return area
+    }
+
+    /**
+     * Expands the OCR footprint into the blank interior of its bubble. Each step samples the
+     * strip just outside the rectangle and stops at a continuous dark line (the bubble outline
+     * or an artwork stroke); scattered ink is lettering, which we cross and erase. Growth is
+     * capped so a patch can never swallow a neighbouring panel.
+     */
+    private fun bubbleSafeArea(source: Bitmap, seed: Rect, unit: Int): Rect {
+        var left = seed.left
+        var right = seed.right
+        var top = seed.top
+        var bottom = seed.bottom
+        val step = 2
+        val maxX = (unit * 1.8f).toInt().coerceIn(12, source.width / 5)
+        val maxY = (unit * 0.5f).toInt().coerceIn(6, source.height / 12)
+        var grown = 0
+        while (grown + step <= maxX && left - step >= 0 &&
+            blankStrip(source, left - step, left, top, bottom, true)
+        ) { left -= step; grown += step }
+        grown = 0
+        while (grown + step <= maxX && right + step <= source.width &&
+            blankStrip(source, right, right + step, top, bottom, true)
+        ) { right += step; grown += step }
+        grown = 0
+        while (grown + step <= maxY && top - step >= 0 &&
+            blankStrip(source, left, right, top - step, top, false)
+        ) { top -= step; grown += step }
+        grown = 0
+        while (grown + step <= maxY && bottom + step <= source.height &&
+            blankStrip(source, left, right, bottom, bottom + step, false)
+        ) { bottom += step; grown += step }
+
+        // Keep clear of the outline; never return less than what OCR actually found.
+        val area = Rect(left + 2, top + 2, right - 2, bottom - 2)
+        if (area.width() < seed.width() || area.height() < seed.height()) return Rect(seed)
+        area.left = area.left.coerceAtLeast(0)
+        area.top = area.top.coerceAtLeast(0)
+        area.right = area.right.coerceAtMost(source.width)
+        area.bottom = area.bottom.coerceAtMost(source.height)
+        return area
+    }
+
+    /**
+     * A bubble outline (or an artwork stroke) is one long continuous dark run, while letters
+     * are scattered. Only scattered ink may be crossed.
+     */
+    private fun blankStrip(
+        source: Bitmap, x0: Int, x1: Int, y0: Int, y1: Int, alongY: Boolean
+    ): Boolean {
+        val w = x1 - x0
+        val h = y1 - y0
+        if (w <= 0 || h <= 0) return false
+        val pixels = IntArray(w * h)
+        source.getPixels(pixels, 0, w, x0, y0, w, h)
+        val length = if (alongY) h else w
+        val thickness = if (alongY) w else h
+        var longest = 0
+        var run = 0
+        for (i in 0 until length) {
+            var dark = false
+            for (j in 0 until thickness) {
+                val index = if (alongY) i * w + j else j * w + i
+                if (luminance(pixels[index]) < 165) { dark = true; break }
+            }
+            if (dark) {
+                run++
+                if (run > longest) longest = run
+            } else {
+                run = 0
+            }
+        }
+        return longest.toFloat() / length < 0.5f
     }
 
     private fun medianLuminance(source: Bitmap, box: Rect): Int {
@@ -348,39 +497,42 @@ object TranslationEngine {
     }
 
     /**
-     * Removes the original lettering inside [box]: find ink, grow it by a few pixels to catch
-     * the anti-aliased fringe, then paint those pixels with the bubble colour. The halo is what
-     * used to survive as a grey ghost.
+     * Clears every ink pixel inside the patch (not only the columns the detector found) plus
+     * its dark fringe. Screen tones and light grey artwork must survive: erasing them produced
+     * a conspicuous white rectangle inside halftone bubbles.
      */
-    private fun eraseInk(bitmap: Bitmap, box: Rect, background: Int) {
-        val w = box.width().coerceAtLeast(1)
-        val h = box.height().coerceAtLeast(1)
+    private fun eraseLettering(bitmap: Bitmap, box: Rect, background: Int) {
+        val w = box.width()
+        val h = box.height()
+        if (w < 2 || h < 2) return
         val pixels = IntArray(w * h)
         bitmap.getPixels(pixels, 0, w, box.left, box.top, w, h)
         val backgroundLum = luminance(background)
         if (backgroundLum < 90) return
+        // Halftone dots sit around luminance 200. Only genuinely black lettering and its dark
+        // fringe may be cleared, otherwise the whole patch turns into a white rectangle.
+        val coreThreshold = (backgroundLum * 0.46f).toInt()
+        val haloThreshold = min(170, backgroundLum - 60)
         val core = BooleanArray(w * h)
-        val coreThreshold = (backgroundLum * 0.80f).toInt()
         for (i in pixels.indices) {
             if (luminance(pixels[i]) < coreThreshold) core[i] = true
         }
-        val reach = 2
+        val reach = 1
         var changed = false
         for (y in 0 until h) {
             for (x in 0 until w) {
                 val index = y * w + x
-                if (luminance(pixels[index]) >= backgroundLum - 6) continue
-                var nearInk = false
-                for (dy in -reach..reach) {
-                    if (nearInk) break
-                    val ny = y + dy
-                    if (ny < 0 || ny >= h) continue
-                    for (dx in -reach..reach) {
-                        val nx = x + dx
-                        if (nx < 0 || nx >= w) continue
-                        if (core[ny * w + nx]) {
-                            nearInk = true
-                            break
+                if (luminance(pixels[index]) >= haloThreshold) continue
+                var nearInk = core[index]
+                if (!nearInk) {
+                    for (dy in -reach..reach) {
+                        if (nearInk) break
+                        val ny = y + dy
+                        if (ny < 0 || ny >= h) continue
+                        for (dx in -reach..reach) {
+                            val nx = x + dx
+                            if (nx < 0 || nx >= w) continue
+                            if (core[ny * w + nx]) { nearInk = true; break }
                         }
                     }
                 }
@@ -432,6 +584,11 @@ object TranslationEngine {
         }
         val chosen = fit ?: return
         paint.textSize = chosen.size
+        android.util.Log.d(
+            "Translate",
+            "TR fit size=${chosen.size} box=${box.width()}x${box.height()} " +
+                "chars=${chosen.columns.sumOf { it.length } + chosen.lines.sumOf { it.length }}"
+        )
 
         canvas.save()
         canvas.clipRect(box)
