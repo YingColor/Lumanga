@@ -146,16 +146,41 @@ object TranslationEngine {
         source: Bitmap
     ): List<MutableList<TextRegion>> {
         val groups = clusters.map { ArrayList(it) }.toMutableList()
+        // The patch each cluster would get on its own, exactly as render() computes it. Two
+        // halves of one bubble grow into the same white interior and therefore overlap; two
+        // separate bubbles are each stopped by their own outline and stay apart. Testing the
+        // patches rather than the gap means grouping and drawing can never disagree.
+        val patches = groups.map { patchOf(source, it, neighboursOf(groups, it)) }.toMutableList()
         var merged = true
         while (merged) {
             merged = false
             var i = 0
             while (i < groups.size && !merged) {
+                val a = patches[i]
+                if (a == null) { i++; continue }
                 var j = i + 1
                 while (j < groups.size) {
-                    if (sameBubble(source, unionOf(groups[i]), unionOf(groups[j]))) {
+                    val b = patches[j]
+                    if (b == null) { j++; continue }
+                    val union = unionOf(groups[i])
+                    val other = unionOf(groups[j])
+                    if (!sideBySide(union, other)) { j++; continue }
+                    val shared = intersects(a, b)
+                        .toFloat() / minOf(a.width() * a.height(), b.width() * b.height())
+                    // Measured on real pages: two halves of one bubble grow into the same
+                    // interior and score 0.34~0.44, while two separate bubbles sharing a white
+                    // patch score about 0.12. 0.25 sits in the gap between them.
+                    if (shared >= 0.25f) {
+                        android.util.Log.d(
+                            "Translate",
+                            "TR merge pair share=${"%.2f".format(shared)} " +
+                                "a=${a.left},${a.top},${a.right},${a.bottom} " +
+                                "b=${b.left},${b.top},${b.right},${b.bottom}"
+                        )
                         groups[i].addAll(groups[j])
+                        patches[i] = patchOf(source, groups[i], neighboursOf(groups, groups[i]))
                         groups.removeAt(j)
+                        patches.removeAt(j)
                         merged = true
                         break
                     }
@@ -167,6 +192,12 @@ object TranslationEngine {
         return groups
     }
 
+    /** Footprints of the other clusters, so their lettering is not mistaken for artwork. */
+    private fun neighboursOf(
+        groups: List<MutableList<TextRegion>>,
+        self: List<TextRegion>
+    ): List<Rect> = groups.filter { it !== self }.map { unionOf(it) }
+
     private fun unionOf(cluster: List<TextRegion>): Rect {
         val union = Rect(cluster[0].box)
         cluster.forEach { union.union(it.box) }
@@ -174,64 +205,51 @@ object TranslationEngine {
     }
 
     /**
-     * Tells whether two clusters are two halves of one bubble or two separate bubbles.
-     *
-     * The strip joining them decides: a bubble outline (or a panel border) is a continuous dark
-     * line, while the gap left by a dropped column is blank paper with scattered lettering. Only
-     * scattered ink may be crossed — a single dark line anywhere in the strip keeps them apart,
-     * so two bubbles standing next to each other are never translated as one sentence.
+     * The patch a cluster would be given if it were rendered alone, or null when it sits on
+     * artwork and is therefore not grown at all. Mirrors render() so the two stay consistent.
      */
-    private fun sameBubble(source: Bitmap, a: Rect, b: Rect): Boolean {
-        val top = maxOf(a.top, b.top)
-        val bottom = minOf(a.bottom, b.bottom)
-        val shared = bottom - top
-        if (shared < minOf(a.height(), b.height()) * 0.4f) return false
-        val gapLeft = minOf(a.right, b.right)
-        val gapRight = maxOf(a.left, b.left)
-        val gap = gapRight - gapLeft
-        val unit = minOf(a.width(), b.width()).coerceAtLeast(8)
-        // The small detector returns much wider boxes than the medium one (two columns often
-        // arrive as one box), so a width-relative limit has to stay tight: a 2.0 multiplier let
-        // two neighbouring bubbles 108 px apart through on the small model.
-        if (gap <= 2 || gap > unit * 1.8f) return false
-        val x0 = gapLeft.coerceAtLeast(0)
-        val x1 = gapRight.coerceAtMost(source.width)
-        val y0 = top.coerceAtLeast(0)
-        val y1 = bottom.coerceAtMost(source.height)
-        if (x1 - x0 < 1 || y1 - y0 < 1) return false
-        val w = x1 - x0
-        val h = y1 - y0
-        val pixels = IntArray(w * h)
-        source.getPixels(pixels, 0, w, x0, y0, w, h)
-
-        var longestLine = 0f
-        var darkTotal = 0
-        for (x in 0 until w) {
-            var run = 0
-            var longest = 0
-            for (y in 0 until h) {
-                if (luminance(pixels[y * w + x]) < 165) {
-                    run++
-                    if (run > longest) longest = run
-                    darkTotal++
-                } else {
-                    run = 0
-                }
-            }
-            val ratio = longest.toFloat() / h
-            if (ratio > longestLine) longestLine = ratio
-        }
-        // A partial arc of a bubble outline still reads about half the strip height, so the
-        // limit has to sit below that. Merging is a convenience; keeping two bubbles apart is
-        // a correctness requirement, so this errs towards not merging.
-        val merge = longestLine < 0.4f
-        android.util.Log.d(
-            "Translate",
-            "TR pair gap=$gap unit=$unit shared=$shared line=${"%.2f".format(longestLine)} " +
-                "dark=${"%.2f".format(darkTotal.toFloat() / pixels.size)} merge=$merge"
-        )
-        return merge
+    private fun patchOf(
+        source: Bitmap,
+        cluster: List<TextRegion>,
+        others: List<Rect> = emptyList()
+    ): Rect? {
+        val seed = unionOf(cluster)
+        if (medianLuminance(source, seed) < 100) return null
+        if (!insideWhiteBubble(source, seed, others)) return null
+        val area = bubbleSafeArea(source, seed, clusterUnit(cluster), emptyList())
+        if (area.width() < seed.width() || area.height() < seed.height()) return null
+        return area
     }
+
+    /** Column thickness of a cluster, used as the yardstick when growing its patch. */
+    private fun clusterUnit(cluster: List<TextRegion>): Int {
+        val sizes = cluster.map {
+            if (it.vertical) it.box.width() else it.box.height()
+        }.sorted()
+        if (sizes.isEmpty()) return 24
+        return sizes[sizes.size / 2].coerceIn(10, 96)
+    }
+
+    /**
+     * Coarse geometric gate: only clusters that sit beside each other and share most of their
+     * height can be two halves of one bubble. Keeps a patch that happens to be large from
+     * pairing with anything far away.
+     */
+    private fun sideBySide(a: Rect, b: Rect): Boolean {
+        val shared = minOf(a.bottom, b.bottom) - maxOf(a.top, b.top)
+        if (shared < minOf(a.height(), b.height()) * 0.4f) return false
+        val gap = maxOf(0, maxOf(a.left - b.right, b.left - a.right))
+        val unit = minOf(a.width(), b.width()).coerceAtLeast(8)
+        return gap <= unit * 2.5f
+    }
+
+    private fun intersects(a: Rect, b: Rect): Int {
+        val w = minOf(a.right, b.right) - maxOf(a.left, b.left)
+        val h = minOf(a.bottom, b.bottom) - maxOf(a.top, b.top)
+        if (w <= 0 || h <= 0) return 0
+        return w * h
+    }
+
     private fun horizontalGap(a: Rect, b: Rect): Float =
         maxOf(0f, maxOf(a.left - b.right, b.left - a.right).toFloat())
 
@@ -414,7 +432,10 @@ object TranslationEngine {
             // Chinese into a sliver (down to the 7 px floor, with the text truncated). Grow the
             // patch across the blank interior of the bubble, then clear all lettering in it.
             val unit = columnWidth(group)
-            val clean = insideWhiteBubble(source, group.bubble)
+            val clean = insideWhiteBubble(
+                source, group.bubble,
+                seeds.filterIndexed { j, _ -> j != i }
+            )
             val area = if (clean) {
                 bubbleSafeArea(
                     source, group.bubble, unit,
@@ -464,7 +485,11 @@ object TranslationEngine {
      * Only a clean white bubble may be grown. Lettering printed directly on the artwork has no
      * outline to stop at, so growing it would paint a rectangle over the drawing.
      */
-    private fun insideWhiteBubble(source: Bitmap, seed: Rect): Boolean {
+    private fun insideWhiteBubble(
+        source: Bitmap,
+        seed: Rect,
+        ignore: List<Rect> = emptyList()
+    ): Boolean {
         val pad = 10
         val l = (seed.left - pad).coerceAtLeast(0)
         val t = (seed.top - pad).coerceAtLeast(0)
@@ -484,6 +509,10 @@ object TranslationEngine {
                 if (gx >= seed.left && gx < seed.right &&
                     gy >= seed.top && gy < seed.bottom
                 ) continue
+                // Lettering is what we are about to erase, and the columns of the same bubble
+                // sit right next to each other; counting them here would make every half of a
+                // split bubble look like text printed on the artwork.
+                if (ignore.any { it.contains(gx, gy) }) continue
                 total++
                 if (luminance(pixels[y * w + x]) < 165) dark++
             }
