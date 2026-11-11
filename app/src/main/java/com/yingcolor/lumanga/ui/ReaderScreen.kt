@@ -997,6 +997,7 @@ fun ReaderScreen(
     settings: UiSettings,
     onBack: () -> Unit,
     onSettings: () -> Unit,
+    onTranslateConfig: () -> Unit,
     settingsOpen: Boolean,
     onCloseSettings: () -> Unit,
     onProgress: (Int, Int) -> Unit,
@@ -1076,6 +1077,7 @@ fun ReaderScreen(
                             settings = settings,
                             onBack = onBack,
                             onSettings = onSettings,
+                            onTranslateConfig = onTranslateConfig,
                             settingsOpen = settingsOpen,
                             onCloseSettings = onCloseSettings,
                             onProgress = onProgress,
@@ -1126,6 +1128,7 @@ private fun ReaderContent(
     settings: UiSettings,
     onBack: () -> Unit,
     onSettings: () -> Unit,
+    onTranslateConfig: () -> Unit,
     settingsOpen: Boolean,
     onCloseSettings: () -> Unit,
     onProgress: (Int, Int) -> Unit,
@@ -1737,7 +1740,7 @@ private fun ReaderContent(
                             onClick = {
                                 // Nothing to translate with yet: send them to the endpoint field
                                 // instead of flipping a switch that can only fail.
-                                if (!translateOn && settings.translateApi.isBlank()) onSettings()
+                                if (!translateOn && settings.translateApi.isBlank()) onTranslateConfig()
                                 else settings.setTranslateEnabled(!translateOn)
                             },
                             modifier = iconBox

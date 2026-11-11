@@ -82,6 +82,7 @@ import com.yingcolor.lumanga.ui.ReaderViewModel
 import com.yingcolor.lumanga.ui.SHELF_MODE_HOME
 import com.yingcolor.lumanga.ui.SHELF_MODE_READING
 import com.yingcolor.lumanga.ui.SettingsDialog
+import com.yingcolor.lumanga.ui.TranslateConfigDialog
 import com.yingcolor.lumanga.ui.SettingsRoute
 import com.yingcolor.lumanga.ui.ShelfScreen
 import com.yingcolor.lumanga.ui.ShelfViewModel
@@ -141,6 +142,7 @@ private fun ComicApp() {
     var screen by remember { mutableStateOf("shelf") }
     var currentBook by remember { mutableStateOf<Book?>(null) }
     var settingsRoute by remember { mutableIntStateOf(SettingsRoute.CLOSED) }
+    var translateConfigOpen by remember { mutableStateOf(false) }
     var folders by remember { mutableStateOf(prefs.folderUris) }
     var toast by remember { mutableStateOf<String?>(null) }
 
@@ -268,6 +270,7 @@ private fun ComicApp() {
                             progressVersion++
                         },
                         onSettings = { openSettings(SettingsRoute.READING) },
+                        onTranslateConfig = { translateConfigOpen = true },
                         settingsOpen = settingsRoute != SettingsRoute.CLOSED,
                         onCloseSettings = { settingsRoute = SettingsRoute.CLOSED },
                         onProgress = { page, total -> prefs.setProgress(book.id, page, total) },
@@ -322,6 +325,7 @@ private fun ComicApp() {
                                         readerVm.open(selected)
                                     },
                                     onSettings = { openSettings(SettingsRoute.ROOT) },
+                                    onTranslateConfig = { translateConfigOpen = true },
                                     onGoHome = { scope.launch { mainPagerState.animateScrollToPage(0) } }
                                 )
                             }
@@ -361,6 +365,13 @@ private fun ComicApp() {
                     }
                 }
             )
+
+            if (translateConfigOpen) {
+                TranslateConfigDialog(
+                    settings = settings,
+                    onDismiss = { translateConfigOpen = false }
+                )
+            }
 
             val message = toast
             if (message != null) {

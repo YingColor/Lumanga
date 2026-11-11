@@ -730,8 +730,6 @@ private fun ReadingSettings(settings: UiSettings) {
             onCheckedChange = settings::setKeepAwake
         )
     }
-    Spacer(Modifier.height(22.dp))
-    TranslationSettings(settings)
 }
 
 @Composable

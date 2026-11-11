@@ -3,6 +3,7 @@ package com.yingcolor.lumanga.data
 import com.yingcolor.lumanga.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -34,7 +35,7 @@ sealed interface UpdateResult {
 
 object UpdateChecker {
     private const val API =
-        "https://api.github.com/repos/YingColor/Lumanga/releases/latest"
+        "https://api.github.com/repos/YingColor/Lumanga/releases?per_page=10"
 
     suspend fun check(): UpdateResult = withContext(Dispatchers.IO) {
         var connection: HttpURLConnection? = null
@@ -50,9 +51,14 @@ object UpdateChecker {
                 android.util.Log.w("UpdateCheck", "HTTP $code from $API")
                 return@withContext UpdateResult.Failed("HTTP $code")
             }
-            val json = JSONObject(
+            val releases = JSONArray(
                 connection.inputStream.bufferedReader().use { it.readText() }
             )
+            if (releases.length() == 0) {
+                return@withContext UpdateResult.Failed("没有找到发布")
+            }
+            // Newest first, pre-releases included: the current line is still a beta.
+            val json = releases.getJSONObject(0)
             val tag = json.optString("tag_name").trim()
                 .removePrefix("v").removePrefix("V")
             val notes = json.optString("body")

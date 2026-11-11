@@ -173,6 +173,8 @@ object S {
     }
 
     
+    const val translateConfig = "翻译配置"
+    const val translateConfigTip = "填好翻译服务，阅读时点「译」就能用；预翻译整本也用这套配置。"
     const val translate = "漫画实时翻译"
     const val translateSummary = "把画面里的外文认出来，译好再贴回页面"
     const val translateEnable = "开启实时翻译"

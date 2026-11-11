@@ -45,6 +45,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
@@ -317,6 +318,7 @@ fun ShelfScreen(
     onRefresh: () -> Unit,
     onOpenBook: (Book) -> Unit,
     onSettings: () -> Unit,
+    onTranslateConfig: () -> Unit,
     onGoHome: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -754,10 +756,18 @@ fun ShelfScreen(
                 Spacer(Modifier.height(22.dp))
                 DrawerRow(
                     icon = Icons.Filled.Settings,
-                    label = S.settings,
+                    label = S.settingsRoot,
                     onClick = {
                         drawerOpen = false
                         onSettings()
+                    }
+                )
+                DrawerRow(
+                    icon = Icons.Filled.Edit,
+                    label = S.translateConfig,
+                    onClick = {
+                        drawerOpen = false
+                        onTranslateConfig()
                     }
                 )
                 DrawerRow(
