@@ -179,6 +179,12 @@ object S {
     const val translateEnableTip = "默认关闭。开着时只处理你正在看的这一页，识别出的文字会发给翻译服务，图片始终留在手机里。"
     const val translateApi = "翻译服务地址"
     const val translateModel = "模型名称"
+    const val fetchModels = "获取模型"
+    const val fetchingModels = "获取中…"
+    const val fetchModelsFailed = "获取失败：检查地址、Key 和网络"
+    const val fetchModelsEmpty = "接口没有返回任何模型"
+    const val modelPickerTitle = "选择模型"
+    const val modelPickerPick = "点一个填入"
     const val translateApiTip = "填一个 OpenAI 兼容接口地址（你自建或购买的翻译服务）。应用不内置任何翻译服务，不填就无法翻译。"
     const val translateOnlyText = "只发送识别出的文字，不上传图片"
     const val translateWorking = "正在翻译…"
@@ -207,6 +213,8 @@ object S {
     const val translateTesting = "测试中…"
     const val translateTestOk = "连接成功，翻译可用"
     const val translateTestFail = "连不上。请检查手机是否允许本应用联网，以及地址是否正确"
+
+    fun modelPickerCount(count: Int): String = "共 $count 个 · 点一下填入"
 
     fun preTranslateSelected(selected: Int, total: Int): String = "已选 $selected / $total 页"
 

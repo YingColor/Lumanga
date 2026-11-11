@@ -91,14 +91,15 @@ fun TranslationSettings(settings: UiSettings) {
             color = scheme.onSurfaceVariant
         )
         Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
+        ModelField(
             value = model,
             onValueChange = {
                 model = it
                 settings.setTranslateModel(it)
             },
-            label = { Text(S.translateModel) },
-            singleLine = true,
+            api = api,
+            apiKey = apiKey,
+            enabled = true,
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(6.dp))

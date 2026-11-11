@@ -221,6 +221,47 @@ object TranslationEngine {
         null
     }
 
+    /**
+     * Lists the models the endpoint offers (`GET {api}/models`, the OpenAI-compatible route).
+     * Returns null when the request itself failed, and an empty list when the service answered
+     * but exposed nothing — the two cases need different messages in the UI.
+     */
+    suspend fun fetchModels(api: String, apiKey: String): List<String>? =
+        withContext(Dispatchers.IO) {
+            if (api.isBlank()) return@withContext null
+            val endpoint = api.trim().trimEnd('/') + "/models"
+            runCatching {
+                val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 6000
+                    readTimeout = 12000
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("User-Agent", "Lumanga/1.0")
+                    if (apiKey.isNotBlank()) {
+                        setRequestProperty("Authorization", "Bearer $apiKey")
+                    }
+                }
+                try {
+                    val code = connection.responseCode
+                    if (code !in 200..299) {
+                        android.util.Log.w("Translate", "models http=$code")
+                        return@runCatching null
+                    }
+                    val response = connection.inputStream.bufferedReader(Charsets.UTF_8)
+                        .use { it.readText() }
+                    val data = JSONObject(response).optJSONArray("data") ?: JSONArray()
+                    val ids = LinkedHashSet<String>()
+                    for (i in 0 until data.length()) {
+                        val id = data.optJSONObject(i)?.optString("id").orEmpty()
+                        if (id.isNotBlank()) ids.add(id)
+                    }
+                    ids.toList()
+                } finally {
+                    connection.disconnect()
+                }
+            }.getOrNull()
+        }
+
     private fun parse(content: String, count: Int): List<String> {
         val lines = content.lines().map { it.trim() }.filter { it.isNotEmpty() }
         val byIndex = HashMap<Int, String>()

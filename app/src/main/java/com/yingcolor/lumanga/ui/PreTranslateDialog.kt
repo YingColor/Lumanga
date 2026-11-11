@@ -171,11 +171,13 @@ fun PreTranslateDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
+                ModelField(
                     value = model,
-                    onValueChange = { model = it },
-                    label = { Text(S.translateModel) },
-                    singleLine = true,
+                    // Persist right away so a model picked here is still selected next time,
+                    // even if the panel is closed without starting a run.
+                    onValueChange = { model = it; settings.setTranslateModel(it) },
+                    api = api,
+                    apiKey = apiKey,
                     enabled = !running,
                     modifier = Modifier.fillMaxWidth()
                 )
