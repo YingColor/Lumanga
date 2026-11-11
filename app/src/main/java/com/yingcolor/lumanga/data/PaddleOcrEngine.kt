@@ -164,6 +164,13 @@ private class OnnxSession(path: File, private val shape: LongArray, inputElement
 private class PaddleRuntime(private val dir: File, private val model: OcrModel) {
     /** Longest tile edge fed to the 640 detector; keeps text near its native size. */
     private val TILE_TARGET = 860
+
+    /** Margin added to a detector box before recognition; see the retry note in recognize(). */
+    private val TIGHT_PAD = 3
+    private val WIDE_PAD = 10
+
+    /** Below this confidence the column is read again with the wider margin. */
+    private val WIDE_RETRY_CONF = 0.85f
     private val detFile = File(dir, model.det)
     private val recFile = File(dir, model.rec)
     private val recOutSize = 80 * 18710
@@ -238,20 +245,34 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         val verticals = BooleanArray(boxes.size)
         val tasks = boxes.mapIndexed { index, column ->
             Callable {
-                val pad = 3
-                val left = (column.left - pad).coerceIn(0, bitmap.width - 2)
-                val top = (column.top - pad).coerceIn(0, bitmap.height - 2)
-                val right = (column.right + pad).coerceIn(left + 2, bitmap.width)
-                val bottom = (column.bottom + pad).coerceIn(top + 2, bitmap.height)
-                if (right - left < 6 || bottom - top < 6) return@Callable
-                var crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
-                val vertical = bottom - top >= (right - left) * 1.5f
-                if (vertical) crop = rotate(crop)
                 val worker = recLocal.get() ?: return@Callable
-                texts[index] = recognizeLine(crop, worker)
-                rects[index] = Rect(left, top, right, bottom)
+                val box = cropRect(bitmap, column, TIGHT_PAD)
+                if (box.width() < 6 || box.height() < 6) return@Callable
+                val vertical = box.height() >= box.width() * 1.5f
+
+                fun read(pad: Int): Pair<String, Float>? {
+                    val rect = cropRect(bitmap, column, pad)
+                    if (rect.width() < 6 || rect.height() < 6) return null
+                    var piece = Bitmap.createBitmap(bitmap, rect.left, rect.top,
+                        rect.width(), rect.height())
+                    if (vertical) piece = rotate(piece)
+                    val outcome = recognizeLine(piece, worker)
+                    piece.recycle()
+                    return outcome
+                }
+
+                var best = read(TIGHT_PAD) ?: return@Callable
+                // A tight crop clips the outer strokes of the first and last glyph and the
+                // recogniser substitutes a look-alike (ホ comes back as 木). Re-reading with a
+                // wider margin recovers them, but too much margin drags the neighbouring column
+                // in, so both are tried and the more confident result wins.
+                if (best.second < WIDE_RETRY_CONF) {
+                    val wide = read(WIDE_PAD)
+                    if (wide != null && wide.second > best.second) best = wide
+                }
+                texts[index] = best
+                rects[index] = box
                 verticals[index] = vertical
-                crop.recycle()
             }
         }
         if (tasks.size == 1) {
@@ -387,6 +408,15 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
             )
             if (rect.width() < 6 || rect.height() < 6) null else rect
         }
+    }
+
+    /** Grows the detector box by [pad] and clamps it to the page. */
+    private fun cropRect(bitmap: Bitmap, column: Rect, pad: Int): Rect {
+        val left = (column.left - pad).coerceIn(0, bitmap.width - 2)
+        val top = (column.top - pad).coerceIn(0, bitmap.height - 2)
+        val right = (column.right + pad).coerceIn(left + 2, bitmap.width)
+        val bottom = (column.bottom + pad).coerceIn(top + 2, bitmap.height)
+        return Rect(left, top, right, bottom)
     }
 
     private fun rotate(source: Bitmap): Bitmap {

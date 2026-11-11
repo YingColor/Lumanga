@@ -32,7 +32,7 @@ data class PageTranslation(
  * keeps a killed process from losing more than the page in flight.
  */
 object TranslationStore {
-    private const val VERSION = 6
+    private const val VERSION = 8
     private const val DIR = "translations"
 
     private val cache = ConcurrentHashMap<String, MutableMap<Int, PageTranslation>>()

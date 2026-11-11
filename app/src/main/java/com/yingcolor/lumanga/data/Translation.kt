@@ -42,14 +42,18 @@ data class BubbleGroup(
 )
 
 object TranslationEngine {
+    /** Marks the boundary between two vertical columns of the same bubble. */
+    private const val COLUMN_BREAK = "｜"
+
     private const val SYSTEM_PROMPT =
         "你是漫画翻译助手。输入按【编号】分组，每组是一个对话气泡里 OCR 出来的日文片段。" +
+            "竖排气泡里用「｜」分隔的就是一列，读法是列从右到左、列内从上到下。" +
             "漫画竖排文字常被切碎、顺序颠倒，也可能有识别错字，甚至整组只剩一两个字。" +
             "请先按漫画竖排的正确顺序（从右到左、从上到下）重排并纠正明显错字，" +
             "理解整句含义后，为每个气泡输出一句通顺自然的简体中文。" +
             "若一组只剩一两个字，按上下文和语气补成完整的一句，不要只译那两个字。" +
             "无法确定的字宁可结合上下文意译，不要音译，也不要在译文里保留日文假名。" +
-            "只输出译文，条数必须与气泡数一致，每行严格按「编号. 译文」格式。" +
+            "只输出译文，条数必须与气泡数一致，每行严格按「编号. 译文」格式，译文里不要保留「｜」。" +
             "不要解释、不要复述原文、不要逐字硬译、不要添加原文没有的内容。" +
             "若有上一页译文，人名和称呼必须与之一致。"
 
@@ -150,7 +154,11 @@ object TranslationEngine {
             val union = Rect(cluster[0].box)
             cluster.forEach { union.union(it.box) }
             val vertical = cluster.count { it.vertical } * 2 >= cluster.size
-            BubbleGroup(cluster, union, cluster.joinToString("") { it.text }, vertical)
+            // Columns are joined with a visible break. Without it a five-column sentence arrives
+            // as one undifferentiated run and the model reorders it by guesswork, which produced
+            // word-salad lines that looked like a recognition error.
+            val joiner = if (vertical) COLUMN_BREAK else ""
+            BubbleGroup(cluster, union, cluster.joinToString(joiner) { it.text }, vertical)
         }.sortedWith(compareByDescending<BubbleGroup> { it.bubble.centerX() }.thenBy { it.bubble.top })
     }
 
