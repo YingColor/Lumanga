@@ -162,6 +162,9 @@ object TranslationEngine {
         val payload = body.toByteArray(Charsets.UTF_8)
         var lastError = "unknown"
         repeat(2) { attempt ->
+            // A wrong key or a wrong base URL fails identically on the second try, so retrying it
+            // only doubles the wait before the user finally sees "翻译失败".
+            var retryable = true
             val outcome = runCatching {
                 val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
@@ -180,6 +183,7 @@ object TranslationEngine {
                         connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
                     }.getOrNull()
                     lastError = "http $code"
+                    retryable = code == 429 || code >= 500
                     android.util.Log.w("Translate", "TR http=$code body=${detail?.take(180)}")
                     connection.disconnect()
                     return@runCatching null
@@ -198,6 +202,10 @@ object TranslationEngine {
             outcome.exceptionOrNull()?.let {
                 lastError = it.javaClass.simpleName
                 android.util.Log.w("Translate", "TR fail ${it.javaClass.simpleName}: ${it.message}")
+            }
+            if (!retryable) {
+                android.util.Log.w("Translate", "TR no retry: $lastError")
+                return@withContext null
             }
             if (attempt == 0) delay(600)
         }

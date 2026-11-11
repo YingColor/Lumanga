@@ -14,6 +14,8 @@ import org.tensorflow.lite.Interpreter
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -64,51 +66,108 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
 private class PaddleRuntime(private val dir: File) {
     /** Longest tile edge fed to the 640 detector; keeps text near its native size. */
     private val TILE_TARGET = 860
-    private val det = Session(File(dir, "ppocrv6_small_det_640_fp32.tflite"), 3 * 640 * 640, 640 * 640)
-    private val rec = Session(File(dir, "ppocrv6_small_rec_640_fp32.tflite"), 3 * 48 * 640, 80 * 18710)
+    private val detFile = File(dir, "ppocrv6_small_det_640_fp32.tflite")
+    private val recFile = File(dir, "ppocrv6_small_rec_640_fp32.tflite")
+    private val recOutSize = 80 * 18710
     private val vocabulary: List<String> =
         JSONArray(File(dir, "characters.json").readText(Charsets.UTF_8))
             .let { array -> List(array.length()) { array.getString(it) } }
 
+    /**
+     * Recognising a page is one inference per text column, and those columns are independent, so
+     * they run on two workers instead of one after another. TFLite interpreters are not
+     * thread-safe, so each worker gets its own; the cost is one extra copy of the 21 MB recogniser.
+     */
+    private val recWorkers = Executors.newFixedThreadPool(2) { runnable ->
+        Thread(runnable, "ocr-rec").apply { isDaemon = true }
+    }
+    private val recLocal = ThreadLocal.withInitial { RecWorker(Session(recFile, 3 * 48 * 640, recOutSize)) }
+
+    private val detWorkers = Executors.newFixedThreadPool(2) { runnable ->
+        Thread(runnable, "ocr-det").apply { isDaemon = true }
+    }
+    private val detLocal = ThreadLocal.withInitial { DetWorker(Session(detFile, 3 * 640 * 640, 640 * 640)) }
+
     private class Session(path: File, inputElements: Int, outputElements: Int) {
-        private val interpreter = Interpreter(path, Interpreter.Options().setNumThreads(4))
+        private val interpreter = Interpreter(path, Interpreter.Options().setNumThreads(2))
         private val inputBuffer =
             ByteBuffer.allocateDirect(inputElements * 4).order(ByteOrder.nativeOrder())
         private val outputBuffer =
             ByteBuffer.allocateDirect(outputElements * 4).order(ByteOrder.nativeOrder())
-        private val outputSize = outputElements
+        val outputSize = outputElements
 
-        fun run(values: FloatArray): FloatArray {
+        /** Fills [out] with the raw logits. The caller owns the buffer and reuses it. */
+        fun run(values: FloatArray, out: FloatArray) {
             inputBuffer.rewind()
             inputBuffer.asFloatBuffer().put(values)
             inputBuffer.rewind()
             outputBuffer.rewind()
             interpreter.run(inputBuffer, outputBuffer)
             outputBuffer.rewind()
-            val output = FloatArray(outputSize)
-            outputBuffer.asFloatBuffer().get(output)
-            return output
+            outputBuffer.asFloatBuffer().get(out)
         }
     }
 
+    /** One detector plus its reusable buffers, owned by a single worker thread. */
+    private class DetWorker(val session: Session) {
+        val input = FloatArray(3 * 640 * 640)
+        val output = FloatArray(640 * 640)
+        val pixels = IntArray(640 * 640)
+    }
+
+    /** One recogniser plus its reusable buffers, owned by a single worker thread. */
+    private class RecWorker(private val session: Session) {
+        val input = FloatArray(3 * 48 * 640)
+        private val output = FloatArray(session.outputSize)
+
+        fun run() {
+            session.run(input, output)
+        }
+
+        fun logits(): FloatArray = output
+    }
+
     fun recognize(bitmap: Bitmap): List<TextRegion> {
+        val started = android.os.SystemClock.elapsedRealtime()
         val boxes = detectColumns(bitmap)
+        val detectMs = android.os.SystemClock.elapsedRealtime() - started
+        if (boxes.isEmpty()) return emptyList()
+
+        val texts = arrayOfNulls<Pair<String, Float>>(boxes.size)
+        val rects = arrayOfNulls<Rect>(boxes.size)
+        val verticals = BooleanArray(boxes.size)
+        val tasks = boxes.mapIndexed { index, column ->
+            Callable {
+                val pad = 3
+                val left = (column.left - pad).coerceIn(0, bitmap.width - 2)
+                val top = (column.top - pad).coerceIn(0, bitmap.height - 2)
+                val right = (column.right + pad).coerceIn(left + 2, bitmap.width)
+                val bottom = (column.bottom + pad).coerceIn(top + 2, bitmap.height)
+                if (right - left < 6 || bottom - top < 6) return@Callable
+                var crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+                val vertical = bottom - top >= (right - left) * 1.5f
+                if (vertical) crop = rotate(crop)
+                val worker = recLocal.get() ?: return@Callable
+                texts[index] = recognizeLine(crop, worker)
+                rects[index] = Rect(left, top, right, bottom)
+                verticals[index] = vertical
+                crop.recycle()
+            }
+        }
+        if (tasks.size == 1) {
+            tasks[0].call()
+        } else {
+            recWorkers.invokeAll(tasks).forEach { it.get() }
+        }
+        val recogniseMs = android.os.SystemClock.elapsedRealtime() - started - detectMs
+        android.util.Log.i("Ocr", "OCR det=${detectMs}ms rec=${recogniseMs}ms boxes=${boxes.size}")
+
         val regions = ArrayList<TextRegion>(boxes.size)
-        for (column in boxes) {
-            val pad = 3
-            val left = (column.left - pad).coerceIn(0, bitmap.width - 2)
-            val top = (column.top - pad).coerceIn(0, bitmap.height - 2)
-            val right = (column.right + pad).coerceIn(left + 2, bitmap.width)
-            val bottom = (column.bottom + pad).coerceIn(top + 2, bitmap.height)
-            if (right - left < 6 || bottom - top < 6) continue
-            var crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
-            val vertical = bottom - top >= (right - left) * 1.5f
-            if (vertical) crop = rotate(crop)
-            val (text, confidence) = recognizeLine(crop)
-            crop.recycle()
-            if (text.isBlank()) continue
-            val rect = Rect(left, top, right, bottom)
-            regions.add(TextRegion(text, rect, confidence, vertical))
+        boxes.forEachIndexed { index, column ->
+            val result = texts[index] ?: return@forEachIndexed
+            if (result.first.isBlank()) return@forEachIndexed
+            val box = rects[index] ?: return@forEachIndexed
+            regions.add(TextRegion(result.first, box, result.second, verticals[index]))
         }
         return regions.sortedWith(
             compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top }
@@ -127,7 +186,7 @@ private class PaddleRuntime(private val dir: File) {
         val rows = ((h + TILE_TARGET - 1) / TILE_TARGET).coerceIn(1, 3)
         val tileW = (w + cols - 1) / cols
         val tileH = (h + rows - 1) / rows
-        val collected = ArrayList<Rect>()
+        val bounds = ArrayList<IntArray>(cols * rows)
         for (row in 0 until rows) {
             for (col in 0 until cols) {
                 val overlapX = (tileW * 0.08f).toInt()
@@ -136,9 +195,20 @@ private class PaddleRuntime(private val dir: File) {
                 val y0 = (row * tileH - overlapY).coerceAtLeast(0)
                 val x1 = ((col + 1) * tileW + overlapX).coerceAtMost(w)
                 val y1 = ((row + 1) * tileH + overlapY).coerceAtMost(h)
-                collected.addAll(detectTile(bitmap, x0, y0, x1, y1))
+                bounds.add(intArrayOf(x0, y0, x1, y1))
             }
         }
+        // Tiles are independent, so two detector workers share the page; results keep tile order.
+        val perTile = arrayOfNulls<List<Rect>>(bounds.size)
+        val tasks = bounds.mapIndexed { index, b ->
+            Callable {
+                val worker = detLocal.get() ?: return@Callable
+                perTile[index] = detectTile(bitmap, b[0], b[1], b[2], b[3], worker)
+            }
+        }
+        if (tasks.size == 1) tasks[0].call() else detWorkers.invokeAll(tasks).forEach { it.get() }
+        val collected = ArrayList<Rect>()
+        perTile.forEach { if (it != null) collected.addAll(it) }
         val kept = ArrayList<Rect>()
         for (box in collected.sortedByDescending { it.width() * it.height() }) {
             val duplicate = kept.any { existing ->
@@ -154,7 +224,14 @@ private class PaddleRuntime(private val dir: File) {
         return kept
     }
 
-    private fun detectTile(bitmap: Bitmap, x0: Int, y0: Int, x1: Int, y1: Int): List<Rect> {
+    private fun detectTile(
+        bitmap: Bitmap,
+        x0: Int,
+        y0: Int,
+        x1: Int,
+        y1: Int,
+        worker: DetWorker
+    ): List<Rect> {
         val tileW = x1 - x0
         val tileH = y1 - y0
         if (tileW < 24 || tileH < 24) return emptyList()
@@ -176,8 +253,8 @@ private class PaddleRuntime(private val dir: File) {
 
         val side = 640
         val planeSize = side * side
-        val detectorInput = FloatArray(3 * planeSize)
-        val pixels = IntArray(planeSize)
+        val detectorInput = worker.input
+        val pixels = worker.pixels
         square.getPixels(pixels, 0, side, 0, 0, side, side)
         square.recycle()
         val mean = floatArrayOf(0.406f * 255f, 0.456f * 255f, 0.485f * 255f)
@@ -192,7 +269,8 @@ private class PaddleRuntime(private val dir: File) {
             detectorInput[i] = (b - mean[2]) / std[2]
         }
 
-        val probabilities = det.run(detectorInput)
+        worker.session.run(detectorInput, worker.output)
+        val probabilities = worker.output
         val mask = BooleanArray(planeSize)
         for (i in mask.indices) mask[i] = probabilities[i] > 0.2f
         val columns = mergeIntoColumns(connectedComponents(mask))
@@ -216,7 +294,7 @@ private class PaddleRuntime(private val dir: File) {
         return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
     }
 
-    private fun recognizeLine(crop: Bitmap): Pair<String, Float> {
+    private fun recognizeLine(crop: Bitmap, worker: RecWorker): Pair<String, Float> {
         val targetW = 640
         val naturalW = max(1, ceil(48.0 * crop.width / crop.height.toDouble()).toInt())
         val resizedW = min(naturalW, targetW)
@@ -225,7 +303,10 @@ private class PaddleRuntime(private val dir: File) {
         scaled.getPixels(pixels, 0, resizedW, 0, 0, resizedW, 48)
         scaled.recycle()
 
-        val input = FloatArray(3 * 48 * targetW)
+        // Same buffer every call: the trailing padding has to be cleared explicitly now that the
+        // array is no longer freshly allocated.
+        val input = worker.input
+        input.fill(0f)
         for (y in 0 until 48) {
             val rowOffset = y * resizedW
             val targetRow = y * targetW
@@ -240,7 +321,8 @@ private class PaddleRuntime(private val dir: File) {
             }
         }
 
-        val output = rec.run(input)
+        worker.run()
+        val output = worker.logits()
         val steps = output.size / vocabulary.size
         val text = StringBuilder()
         var previous = -1

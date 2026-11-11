@@ -110,6 +110,7 @@ import com.yingcolor.lumanga.data.TextRegion
 import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.data.ZoomMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -167,6 +168,15 @@ private class PageResult(
 
 private const val STAGE_OCR = "ocr"
 private const val STAGE_API = "api"
+
+/** Hard ceiling for one page's OCR + network round trip, so the badge can never hang forever. */
+private const val PAGE_BUDGET_MS = 70_000L
+
+/** OCR alone should never take this long; a wedged interpreter should fail fast instead. */
+private const val OCR_BUDGET_MS = 25_000L
+
+/** How long a neighbouring page waits for the focused page to start before it goes ahead. */
+private const val YIELD_BUDGET_MS = 3_000L
 
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
@@ -617,7 +627,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun retryTranslation(index: Int) {
         translatedCache.evictAll()
         pageResults.evictAll()
-        synchronized(translationLock) { translating.clear() }
+        // Cancel the in-flight jobs as well, otherwise a slow attempt that is already running
+        // keeps writing into the caches and the retry silently does nothing.
+        synchronized(translationLock) {
+            translating.values.forEach { it.cancel() }
+            translating.clear()
+        }
         translationStates[index] = TranslateState()
         translationRetry++
     }
@@ -626,6 +641,17 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         translationStates[index] = state
     }
 
+    /**
+     * Runs the whole page pipeline and returns the rendered page.
+     *
+     * Two invariants matter here, both learned from "it sits on 正在翻译 forever" reports:
+     *  - The badge must always leave WORKING. Every exit path publishes a terminal state, and
+     *    [PAGE_BUDGET_MS] cancels a pipeline that would otherwise hang on a stalled socket or a
+     *    wedged OCR call.
+     *  - Cancelling the caller (the user scrolls away) must not throw finished work away. The job
+     *    lives in [viewModelScope] and stores its own result, so coming back to the page is
+     *    instant instead of restarting the whole pipeline.
+     */
     suspend fun translate(index: Int, source: Bitmap, api: String, model: String): Bitmap? {
         val key = "$index-${source.width}x${source.height}-${(api + model).hashCode()}"
         translatedCache.get(key)?.let {
@@ -638,8 +664,26 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 runTranslate(index, key, source, api, model)
             }.also { translating[key] = it }
         }
-        val outcome = runCatching { deferred.await() }.getOrElse {
-            TranslateOutcome.Failed(it.javaClass.simpleName)
+        val started = System.currentTimeMillis()
+        val outcome = try {
+            val done = withTimeoutOrNull(PAGE_BUDGET_MS) { deferred.await() }
+            if (done == null) {
+                deferred.cancel()
+                synchronized(translationLock) { translating.remove(key) }
+                android.util.Log.w("Translate", "TR watchdog index=$index ${PAGE_BUDGET_MS}ms")
+                publish(index, TranslateState(TranslateKind.FAILED, "timeout"))
+                return null
+            }
+            done
+        } catch (cancel: CancellationException) {
+            // The page left the screen. Keep the shared job running: it writes its own result.
+            throw cancel
+        } catch (t: Throwable) {
+            TranslateOutcome.Failed(t.javaClass.simpleName)
+        }
+        val elapsed = System.currentTimeMillis() - started
+        if (elapsed > 3000) {
+            android.util.Log.i("Translate", "TR slow index=$index ms=$elapsed")
         }
         synchronized(translationLock) { translating.remove(key) }
         return when (outcome) {
@@ -661,7 +705,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 publish(index, TranslateState(TranslateKind.FAILED, outcome.reason))
                 null
             }
-            TranslateOutcome.Stale -> null
+            // Stale means "not the page the user is looking at". Leaving the badge on WORKING here
+            // was one of the ways a page could sit on 正在翻译 forever.
+            TranslateOutcome.Stale -> {
+                publish(index, TranslateState())
+                null
+            }
         }
     }
 
@@ -672,20 +721,37 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         api: String,
         model: String
     ): TranslateOutcome {
+        if (api.isBlank()) return TranslateOutcome.Failed("no endpoint")
         val rk = resultKey(index, api, model)
         pageResults.get(rk)?.let { cached ->
             android.util.Log.i("Translate", "TR reuse index=$index")
             return TranslateOutcome.Done(renderScaled(source, cached))
         }
-        // the reader may still be holding a neighbouring page from a spread or a turn; those
-        // would otherwise queue behind the page the user is actually looking at
-        if (abs(index - focusIndex) > 1) {
+        // The page on screen must never queue behind its neighbours: OCR is serialised, so a
+        // neighbour that grabs it first would add its full cost to the page the user is reading.
+        // Neighbours wait their turn instead, bounded so a wedged page cannot block them forever.
+        var waited = 0L
+        while (waited < YIELD_BUDGET_MS && index != focusIndex &&
+            statusOf(focusIndex).kind == TranslateKind.WORKING
+        ) {
+            delay(150)
+            waited += 150
+        }
+        if (abs(index - focusIndex) > WARM_AHEAD) {
             android.util.Log.i("Translate", "TR stale index=$index focus=$focusIndex")
             return TranslateOutcome.Stale
         }
         publish(index, TranslateState(TranslateKind.WORKING, STAGE_OCR))
-        val regions = TranslationEngine.recognize(source)
-        android.util.Log.i("Translate", "TR ocr index=$index regions=${regions.size}")
+        val ocrStarted = System.currentTimeMillis()
+        val regions = withTimeoutOrNull(OCR_BUDGET_MS) { TranslationEngine.recognize(source) }
+            ?: run {
+                android.util.Log.w("Translate", "TR ocr timeout index=$index")
+                return TranslateOutcome.Failed("ocr timeout")
+            }
+        android.util.Log.i(
+            "Translate",
+            "TR ocr index=$index regions=${regions.size} ms=${System.currentTimeMillis() - ocrStarted}"
+        )
         if (regions.isEmpty()) return TranslateOutcome.NoText
         if (!TranslationEngine.looksJapanese(regions)) {
             android.util.Log.i("Translate", "TR skip index=$index not japanese")
@@ -717,6 +783,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
         pageResults.put(rk, PageResult(source.width, source.height, groups, lines))
         val rendered = TranslationEngine.render(source, groups, lines)
+        // Store the result here rather than in the caller: if the user scrolled away while the
+        // request was in flight the awaiter is already cancelled, and the finished page would
+        // otherwise be dropped and re-translated from scratch on the next visit.
+        translatedCache.put(key, rendered)
         android.util.Log.i("Translate", "TR done index=$index")
         return TranslateOutcome.Done(rendered)
     }
@@ -2284,13 +2354,32 @@ private fun TranslateBadge(
 ) {
     if (status.kind == TranslateKind.IDLE) return
     val scheme = MaterialTheme.colorScheme
-    val (label, tone) = when (status.kind) {
+    // A ticking counter: the pipeline can legitimately take 30 s on a slow network, and without
+    // this the badge looks frozen, which is exactly what "卡在正在翻译，一点动静都没有" describes.
+    var seconds by remember(status) { mutableStateOf(0) }
+    LaunchedEffect(status) {
+        if (status.kind != TranslateKind.WORKING) return@LaunchedEffect
+        seconds = 0
+        while (true) {
+            delay(1000)
+            seconds++
+        }
+    }
+    val base = when (status.kind) {
         TranslateKind.WORKING ->
-            (if (status.detail == STAGE_OCR) S.translateReading else S.translateWorking) to scheme.surfaceVariant
-        TranslateKind.EMPTY -> S.translateNoText to scheme.surfaceVariant
-        TranslateKind.NOT_JAPANESE -> S.translateNotJapanese to scheme.surfaceVariant
-        TranslateKind.FAILED -> S.translateFailed to scheme.errorContainer
+            if (status.detail == STAGE_OCR) S.translateReading else S.translateWorking
+        TranslateKind.EMPTY -> S.translateNoText
+        TranslateKind.NOT_JAPANESE -> S.translateNotJapanese
+        TranslateKind.FAILED -> S.translateFailed
         else -> return
+    }
+    val label = if (status.kind == TranslateKind.WORKING && seconds >= 3) {
+        "$base ${seconds}s"
+    } else base
+    val tone = when (status.kind) {
+        TranslateKind.WORKING -> scheme.surfaceVariant
+        TranslateKind.FAILED -> scheme.errorContainer
+        else -> scheme.surfaceVariant
     }
     val content = if (status.kind == TranslateKind.FAILED) scheme.onErrorContainer else scheme.onSurfaceVariant
     Text(
