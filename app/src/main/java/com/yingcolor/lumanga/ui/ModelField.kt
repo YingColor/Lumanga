@@ -27,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yingcolor.lumanga.S
+import com.yingcolor.lumanga.data.ApiClient
+import com.yingcolor.lumanga.data.ApiProtocol
 import com.yingcolor.lumanga.data.TranslationEngine
 import kotlinx.coroutines.launch
 
@@ -43,6 +45,7 @@ fun ModelField(
     onValueChange: (String) -> Unit,
     api: String,
     apiKey: String,
+    protocol: Int,
     enabled: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -67,13 +70,17 @@ fun ModelField(
                 loading = true
                 error = null
                 scope.launch {
-                    val list = TranslationEngine.fetchModels(api.trim(), apiKey.trim())
-                    loading = false
-                    when {
-                        list == null -> error = S.fetchModelsFailed
-                        list.isEmpty() -> error = S.fetchModelsEmpty
-                        else -> options = list
+                    when (val result = TranslationEngine.fetchModels(
+                        api.trim(), apiKey.trim(), ApiProtocol.from(protocol)
+                    )) {
+                        // The reason ("端口没开" / "Key 不对" / "HTTP 404") tells the user what to
+                        // fix; a generic message would send them checking all three at once.
+                        is ApiClient.ModelsResult.Fail -> error = S.fetchModelsReason + result.reason
+                        is ApiClient.ModelsResult.Ok ->
+                            if (result.ids.isEmpty()) error = S.fetchModelsEmpty
+                            else options = result.ids
                     }
+                    loading = false
                 }
             }
         ) {

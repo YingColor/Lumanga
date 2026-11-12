@@ -63,6 +63,9 @@ class UiSettings(private val prefs: Prefs) {
     private var stateTranslateApiKey by mutableStateOf(prefs.translateApiKey)
     val translateApiKey: String get() = stateTranslateApiKey
 
+    private var stateTranslateProtocol by mutableIntStateOf(ApiProtocol.from(prefs.translateProtocol).id)
+    val translateProtocol: Int get() = stateTranslateProtocol
+
     private var stateOcrModel by mutableIntStateOf(OcrModel.from(prefs.ocrModel).id)
     val ocrModel: Int get() = stateOcrModel
 
@@ -93,6 +96,12 @@ class UiSettings(private val prefs: Prefs) {
     fun setTranslateApiKey(value: String) {
         stateTranslateApiKey = value
         prefs.translateApiKey = value
+    }
+
+    fun setTranslateProtocol(value: Int) {
+        val safe = ApiProtocol.from(value).id
+        stateTranslateProtocol = safe
+        prefs.translateProtocol = safe
     }
 
     fun setOcrModel(value: Int) {

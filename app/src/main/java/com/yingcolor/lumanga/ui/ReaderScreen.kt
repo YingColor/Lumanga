@@ -104,6 +104,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.ArchiveException
+import com.yingcolor.lumanga.data.ApiProtocol
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BubbleGroup
 import com.yingcolor.lumanga.data.OcrModel
@@ -675,11 +676,13 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         api: String,
         apiKey: String,
         model: String,
+        protocol: ApiProtocol,
         horizontal: Boolean
     ): Bitmap? {
         // The layout is part of the key: flipping the switch must redraw instead of returning
-        // the vertical bitmap that is already cached for this page.
-        val key = "$index-${source.width}x${source.height}-${(api + model).hashCode()}-$horizontal"
+        // the vertical bitmap that is already cached for this page. The protocol joins it for the
+        // same reason — the same address can serve a different answer per wire format.
+        val key = "$index-${source.width}x${source.height}-${protocol.id}-${(api + model).hashCode()}-$horizontal"
         translatedCache.get(key)?.let {
             publish(index, TranslateState())
             return it
@@ -687,7 +690,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         publish(index, TranslateState(TranslateKind.WORKING))
         val deferred = synchronized(translationLock) {
             translating[key] ?: viewModelScope.async(Dispatchers.IO) {
-                runTranslate(index, key, source, api, apiKey, model, horizontal)
+                runTranslate(index, key, source, api, apiKey, model, protocol, horizontal)
             }.also { translating[key] = it }
         }
         val started = System.currentTimeMillis()
@@ -753,9 +756,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         api: String,
         apiKey: String,
         model: String,
+        protocol: ApiProtocol,
         horizontal: Boolean
     ): TranslateOutcome {
-        val rk = resultKey(index, api, model)
+        val rk = resultKey(index, protocol, api, model)
         pageResults.get(rk)?.let { cached ->
             android.util.Log.i("Translate", "TR reuse index=$index")
             return TranslateOutcome.Done(renderScaled(source, cached, horizontal))
@@ -818,7 +822,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
         publish(index, TranslateState(TranslateKind.WORKING, STAGE_API))
         val started = System.currentTimeMillis()
-        val lines = TranslationEngine.translate(groups, api, model, previous, apiKey)
+        val lines = TranslationEngine.translate(groups, api, model, previous, apiKey, protocol)
         android.util.Log.i(
             "Translate",
             "TR api index=$index lines=${lines?.size ?: -1} ms=${System.currentTimeMillis() - started}"
@@ -841,8 +845,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         return TranslateOutcome.Done(rendered)
     }
 
-    private fun resultKey(index: Int, api: String, model: String): String =
-        "$index-${(api + model).hashCode()}"
+    private fun resultKey(index: Int, protocol: ApiProtocol, api: String, model: String): String =
+        "$index|${protocol.id}|${api.hashCode()}|${model.hashCode()}"
 
     /** Re-draws a cached page at a different decode size instead of running OCR again. */
     private fun renderScaled(source: Bitmap, cached: PageResult, horizontal: Boolean): Bitmap {
@@ -2198,6 +2202,7 @@ private fun PageRow(
         api = settings.translateApi,
         apiKey = settings.translateApiKey,
         model = settings.translateModel,
+        protocol = ApiProtocol.from(settings.translateProtocol),
         layout = settings.textLayout,
         modifier = modifier
     )
@@ -2217,6 +2222,7 @@ private fun rememberPageBitmap(
     api: String,
     apiKey: String,
     model: String,
+    protocol: ApiProtocol,
     layout: Int
 ): Bitmap? {
     
@@ -2248,7 +2254,7 @@ private fun rememberPageBitmap(
         initialValue = vm.peekPage(index, quality) ?: vm.peekPlaceholder(index),
         key1 = index,
         key2 = quality,
-        key3 = "$decodeW-$decodeH-$translate-$api-$model-$layout-${vm.translationRetry}"
+        key3 = "$decodeW-$decodeH-$translate-$api-$model-${protocol.id}-$layout-${vm.translationRetry}"
     ) {
         
         
@@ -2262,7 +2268,7 @@ private fun rememberPageBitmap(
         if (full != null) value = full
         if (translate && full != null) {
             val rendered = vm.translate(
-                index, full, api, apiKey, model, layout == TextLayout.HORIZONTAL
+                index, full, api, apiKey, model, protocol, layout == TextLayout.HORIZONTAL
             )
             if (rendered != null) value = rendered
         }
@@ -2293,6 +2299,7 @@ private fun PageSpread(
     api: String,
     apiKey: String,
     model: String,
+    protocol: ApiProtocol,
     layout: Int,
     modifier: Modifier = Modifier
 ) {
@@ -2313,7 +2320,7 @@ private fun PageSpread(
         for (i in indices) {
             loaded += rememberPageBitmap(
                 vm, i, targetW, targetH, quality, zoomMode, zoomPercent,
-                translate, api, apiKey, model, layout
+                translate, api, apiKey, model, protocol, layout
             )
         }
 

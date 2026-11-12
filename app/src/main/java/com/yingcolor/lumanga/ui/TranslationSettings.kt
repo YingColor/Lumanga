@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.yingcolor.lumanga.S
+import com.yingcolor.lumanga.data.ApiProtocol
 import com.yingcolor.lumanga.data.TextLayout
 import com.yingcolor.lumanga.data.TextRegion
 import com.yingcolor.lumanga.data.TranslationEngine
@@ -89,6 +90,15 @@ fun TranslationSettings(settings: UiSettings) {
 
     if (settings.translateEnabled) {
         Spacer(Modifier.height(14.dp))
+        ApiProtocolPicker(
+            current = settings.translateProtocol,
+            onSelect = {
+                settings.setTranslateProtocol(it)
+                // A result from the previous wire format says nothing about this one.
+                testResult = null
+            }
+        )
+        Spacer(Modifier.height(12.dp))
         OutlinedTextField(
             value = api,
             onValueChange = {
@@ -125,6 +135,7 @@ fun TranslationSettings(settings: UiSettings) {
             },
             api = api,
             apiKey = apiKey,
+            protocol = settings.translateProtocol,
             enabled = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -141,7 +152,10 @@ fun TranslationSettings(settings: UiSettings) {
                 scope.launch {
                     val probe = listOf(TextRegion("今日はいい天気ですね。", Rect(0, 0, 100, 40)))
                     val groups = TranslationEngine.groupBubbles(probe, 200, 80)
-                    val result = TranslationEngine.translate(groups, api, model, emptyList(), apiKey)
+                    val result = TranslationEngine.translate(
+                        groups, api, model, emptyList(), apiKey,
+                        protocol = ApiProtocol.from(settings.translateProtocol)
+                    )
                     testResult = if (result != null && result.firstOrNull()?.isNotBlank() == true)
                         S.translateTestOk
                     else

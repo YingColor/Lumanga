@@ -62,7 +62,8 @@ object BatchPreTranslate {
         books: List<Book>,
         api: String,
         apiKey: String,
-        model: String
+        model: String,
+        protocol: ApiProtocol = ApiProtocol.DEFAULT
     ) {
         if (books.isEmpty()) return
         val app = context.applicationContext
@@ -74,15 +75,21 @@ object BatchPreTranslate {
             totalBooks = books.size,
             folder = folder
         )
-        job = scope.launch { process(app, api, apiKey, model) }
+        job = scope.launch { process(app, api, apiKey, model, protocol) }
     }
 
     /** Picks up the queue left by a stopped or killed run, using the current settings. */
-    fun resume(context: Context, api: String, apiKey: String, model: String) {
+    fun resume(
+        context: Context,
+        api: String,
+        apiKey: String,
+        model: String,
+        protocol: ApiProtocol = ApiProtocol.DEFAULT
+    ) {
         if (stateFlow.value.running) return
         val queue = read(context.applicationContext)
         if (queue.books.isEmpty()) return
-        start(context, queue.folder, queue.books, api, apiKey, model)
+        start(context, queue.folder, queue.books, api, apiKey, model, protocol)
     }
 
     fun cancel() {
@@ -101,7 +108,13 @@ object BatchPreTranslate {
         job = null
     }
 
-    private suspend fun process(app: Context, api: String, apiKey: String, model: String) {
+    private suspend fun process(
+        app: Context,
+        api: String,
+        apiKey: String,
+        model: String,
+        protocol: ApiProtocol
+    ) {
         val remaining = read(app).books.toMutableList()
         val total = remaining.size
         var done = 0
@@ -137,6 +150,7 @@ object BatchPreTranslate {
                     api = api,
                     apiKey = apiKey,
                     model = model,
+                    protocol = protocol,
                     skipStored = true
                 ) { donePages, _ ->
                     stateFlow.update { it.copy(pageDone = donePages) }

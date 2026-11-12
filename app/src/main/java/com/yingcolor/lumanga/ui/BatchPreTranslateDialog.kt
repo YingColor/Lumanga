@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.yingcolor.lumanga.S
+import com.yingcolor.lumanga.data.ApiProtocol
 import com.yingcolor.lumanga.data.BatchPreTranslate
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.OcrModel
@@ -114,7 +115,8 @@ fun BatchPreTranslateDialog(
                     message = null
                     BatchPreTranslate.start(
                         appContext, scopeLabel, queuedTargets,
-                        api.trim(), apiKey.trim(), model.trim()
+                        api.trim(), apiKey.trim(), model.trim(),
+                        ApiProtocol.from(settings.translateProtocol)
                     )
                 }) { Text(S.batchConfirmStart) }
             },
@@ -207,6 +209,12 @@ fun BatchPreTranslateDialog(
                     }
 
                     Spacer(Modifier.height(12.dp))
+                    ApiProtocolPicker(
+                        current = settings.translateProtocol,
+                        onSelect = settings::setTranslateProtocol,
+                        enabled = !state.running
+                    )
+                    Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = api,
                         onValueChange = { api = it },
@@ -230,6 +238,7 @@ fun BatchPreTranslateDialog(
                         onValueChange = { model = it; settings.setTranslateModel(it) },
                         api = api,
                         apiKey = apiKey,
+                        protocol = settings.translateProtocol,
                         enabled = !state.running,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -348,7 +357,8 @@ fun BatchPreTranslateDialog(
                                         settings.setTranslateApiKey(apiKey.trim())
                                         message = null
                                         BatchPreTranslate.resume(
-                                            appContext, api.trim(), apiKey.trim(), model.trim()
+                                            appContext, api.trim(), apiKey.trim(), model.trim(),
+                                            ApiProtocol.from(settings.translateProtocol)
                                         )
                                     }
                                 }

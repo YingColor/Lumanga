@@ -45,6 +45,7 @@ object PreTranslate {
         api: String,
         apiKey: String,
         model: String,
+        protocol: ApiProtocol = ApiProtocol.DEFAULT,
         skipStored: Boolean = true,
         onProgress: suspend (done: Int, index: Int) -> Unit
     ): Result = withContext(Dispatchers.IO) {
@@ -102,8 +103,9 @@ object PreTranslate {
                                 PageTranslation(page.width, page.height, emptyList(), emptyList())
                             )
                         } else {
-                            val lines = TranslationEngine.translate(groups, api, model, previous, apiKey)
-                                ?: return@withContext Result.Failed(index, "network")
+                            val lines = TranslationEngine.translate(
+                                groups, api, model, previous, apiKey, protocol
+                            ) ?: return@withContext Result.Failed(index, "network")
                             if (lines.all { it.isBlank() }) {
                                 return@withContext Result.Failed(index, "empty reply")
                             }

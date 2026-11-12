@@ -9,10 +9,6 @@ import android.graphics.Typeface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -20,8 +16,9 @@ import kotlin.math.min
 
 object TranslationConfig {
     /**
-     * No service is bundled. The app talks to whatever OpenAI-compatible endpoint the user
-     * configures, so nothing is sent anywhere until they set it up themselves.
+     * No service is bundled. The app talks to whichever endpoint the user configures — an
+     * OpenAI-compatible one, Anthropic, Gemini, or a local Ollama — so nothing is sent anywhere
+     * until they set it up themselves.
      */
     const val DEFAULT_API = ""
     const val DEFAULT_MODEL = ""
@@ -379,7 +376,8 @@ object TranslationEngine {
         api: String,
         model: String,
         context: List<String> = emptyList(),
-        apiKey: String = ""
+        apiKey: String = "",
+        protocol: ApiProtocol = ApiProtocol.DEFAULT
     ): List<String>? = withContext(Dispatchers.IO) {
         if (groups.isEmpty()) return@withContext emptyList()
         val numbered = buildString {
@@ -392,115 +390,40 @@ object TranslationEngine {
                 append(i + 1).append(". ").append(group.source).append('\n')
             }
         }
-        val body = JSONObject()
-            .put("model", model)
-            .put("temperature", 0.2)
-            .put("max_tokens", 1200)
-            .put(
-                "messages",
-                JSONArray()
-                    .put(JSONObject().put("role", "system").put("content", SYSTEM_PROMPT))
-                    .put(JSONObject().put("role", "user").put("content", numbered))
-            )
-            .toString()
-        val endpoint = api.trim().trimEnd('/') + "/chat/completions"
-        val payload = body.toByteArray(Charsets.UTF_8)
         var lastError = "unknown"
         repeat(2) { attempt ->
-            // A wrong key or a wrong base URL fails identically on the second try, so retrying it
-            // only doubles the wait before the user finally sees "翻译失败".
-            var retryable = true
-            val outcome = runCatching {
-                val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    connectTimeout = 6000
-                    readTimeout = 12000
-                    doOutput = true
-                    setFixedLengthStreamingMode(payload.size)
-                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    setRequestProperty("Accept", "application/json")
-                    setRequestProperty("User-Agent", "Lumanga/1.0")
-                    if (apiKey.isNotBlank()) {
-                        setRequestProperty("Authorization", "Bearer $apiKey")
+            // A wrong key or a closed port fails identically the second time, so only timeouts
+            // and the service's own 429/5xx are retried.
+            when (val result = ApiClient.chat(protocol, api, model, apiKey, SYSTEM_PROMPT, numbered)) {
+                is ApiClient.ChatResult.Ok -> return@withContext parse(result.text, groups)
+                is ApiClient.ChatResult.Fail -> {
+                    lastError = result.reason
+                    android.util.Log.w("Translate", "TR fail ${result.reason}")
+                    if (!result.retryable) {
+                        android.util.Log.w("Translate", "TR no retry: $lastError")
+                        return@withContext null
                     }
+                    if (attempt == 0) delay(600)
                 }
-                connection.outputStream.use { it.write(payload) }
-                val code = connection.responseCode
-                if (code !in 200..299) {
-                    val detail = runCatching {
-                        connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-                    }.getOrNull()
-                    lastError = "http $code"
-                    retryable = code == 429 || code >= 500
-                    android.util.Log.w("Translate", "TR http=$code body=${detail?.take(180)}")
-                    connection.disconnect()
-                    return@runCatching null
-                }
-                val response = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                connection.disconnect()
-                val content = JSONObject(response)
-                    .getJSONArray("choices")
-                    .getJSONObject(0)
-                    .getJSONObject("message")
-                    .optString("content")
-                parse(content, groups)
             }
-            val value = outcome.getOrNull()
-            if (value != null) return@withContext value
-            outcome.exceptionOrNull()?.let {
-                lastError = it.javaClass.simpleName
-                android.util.Log.w("Translate", "TR fail ${it.javaClass.simpleName}: ${it.message}")
-            }
-            if (!retryable) {
-                android.util.Log.w("Translate", "TR no retry: $lastError")
-                return@withContext null
-            }
-            if (attempt == 0) delay(600)
         }
         android.util.Log.w("Translate", "TR gave up: $lastError")
         null
     }
 
     /**
-     * Lists the models the endpoint offers (`GET {api}/models`, the OpenAI-compatible route).
-     * Returns null when the request itself failed, and an empty list when the service answered
-     * but exposed nothing — the two cases need different messages in the UI.
+     * Lists the models the endpoint offers, using the route the selected protocol actually serves.
+     * The failure reason is passed back to the UI: "Key 不对" and "端口没开" are different problems
+     * and the user can only fix one of them.
      */
-    suspend fun fetchModels(api: String, apiKey: String): List<String>? =
-        withContext(Dispatchers.IO) {
-            if (api.isBlank()) return@withContext null
-            val endpoint = api.trim().trimEnd('/') + "/models"
-            runCatching {
-                val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 6000
-                    readTimeout = 12000
-                    setRequestProperty("Accept", "application/json")
-                    setRequestProperty("User-Agent", "Lumanga/1.0")
-                    if (apiKey.isNotBlank()) {
-                        setRequestProperty("Authorization", "Bearer $apiKey")
-                    }
-                }
-                try {
-                    val code = connection.responseCode
-                    if (code !in 200..299) {
-                        android.util.Log.w("Translate", "models http=$code")
-                        return@runCatching null
-                    }
-                    val response = connection.inputStream.bufferedReader(Charsets.UTF_8)
-                        .use { it.readText() }
-                    val data = JSONObject(response).optJSONArray("data") ?: JSONArray()
-                    val ids = LinkedHashSet<String>()
-                    for (i in 0 until data.length()) {
-                        val id = data.optJSONObject(i)?.optString("id").orEmpty()
-                        if (id.isNotBlank()) ids.add(id)
-                    }
-                    ids.toList()
-                } finally {
-                    connection.disconnect()
-                }
-            }.getOrNull()
-        }
+    suspend fun fetchModels(
+        api: String,
+        apiKey: String,
+        protocol: ApiProtocol = ApiProtocol.DEFAULT
+    ): ApiClient.ModelsResult = withContext(Dispatchers.IO) {
+        if (api.isBlank()) return@withContext ApiClient.ModelsResult.Fail("没填服务地址")
+        ApiClient.listModels(protocol, api, apiKey)
+    }
 
     private fun parse(content: String, groups: List<BubbleGroup>): List<String> {
         val count = groups.size

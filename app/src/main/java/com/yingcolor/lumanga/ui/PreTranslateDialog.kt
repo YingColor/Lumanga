@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.yingcolor.lumanga.S
+import com.yingcolor.lumanga.data.ApiProtocol
 import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.BatchPreTranslate
 import com.yingcolor.lumanga.data.Book
@@ -188,6 +189,12 @@ fun PreTranslateDialog(
                 }
 
                 Spacer(Modifier.height(12.dp))
+                ApiProtocolPicker(
+                    current = settings.translateProtocol,
+                    onSelect = settings::setTranslateProtocol,
+                    enabled = !running
+                )
+                Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = api,
                     onValueChange = { api = it },
@@ -213,6 +220,7 @@ fun PreTranslateDialog(
                     onValueChange = { model = it; settings.setTranslateModel(it) },
                     api = api,
                     apiKey = apiKey,
+                    protocol = settings.translateProtocol,
                     enabled = !running,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -360,6 +368,7 @@ fun PreTranslateDialog(
                                         api = api.trim(),
                                         apiKey = apiKey.trim(),
                                         model = model.trim(),
+                                        protocol = ApiProtocol.from(settings.translateProtocol),
                                         skipStored = resumeOnly
                                     ) { done, _ ->
                                         withContext(Dispatchers.Main) { doneCount = done }
