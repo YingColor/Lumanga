@@ -18,7 +18,7 @@ import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.UiSettings
 
-/** Two bundled OCR models; the choice is shared by live translation and pre-translate. */
+/** Three bundled OCR models; the choice is shared by live translation and pre-translate. */
 @Composable
 fun OcrModelPicker(settings: UiSettings) {
     val scheme = MaterialTheme.colorScheme
@@ -45,8 +45,13 @@ fun OcrModelPicker(settings: UiSettings) {
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(model.label, style = MaterialTheme.typography.bodyLarge)
+                    val tip = when (model) {
+                        OcrModel.MEDIUM -> S.ocrModelMediumTip
+                        OcrModel.MANGA -> S.ocrModelMangaTip
+                        else -> S.ocrModelSmallTip
+                    }
                     Text(
-                        if (model == OcrModel.MEDIUM) S.ocrModelMediumTip else S.ocrModelSmallTip,
+                        tip,
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.onSurfaceVariant
                     )

@@ -25,6 +25,18 @@ enum class OcrModel(
         "ppocrv6_medium_det_640_fp16.onnx",
         "ppocrv6_medium_rec_640_fp16.onnx",
         true
+    ),
+    /**
+     * Whole-bubble recognition. It still uses SMALL's detector and text boxes for grouping,
+     * then [MangaOcr] re-reads each bubble as one sentence; its own files are copied by that
+     * object rather than by PaddleOcrEngine.
+     */
+    MANGA(
+        2,
+        "MangaOCR_mobile",
+        "ppocrv6_small_det_640_fp32.tflite",
+        "ppocrv6_small_rec_640_fp32.tflite",
+        false
     );
 
     val files: List<String>

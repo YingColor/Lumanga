@@ -181,12 +181,16 @@ object TranslationEngine {
             // five-column sentence arrives as one run and is reordered by guesswork, which looked
             // like a recognition error. A lone 「…」 is glued to the column before it instead of
             // being separated, so it reads as the end of that line.
-            val source = buildString {
+            val columns = buildString {
                 cluster.forEachIndexed { index, region ->
                     if (index > 0 && vertical && !isEllipsisOnly(region)) append(COLUMN_BREAK)
                     append(region.text)
                 }
             }
+            // A whole-bubble model reads the picture and emits one complete sentence, so the
+            // column join (and every workaround for its word order) is unnecessary. The join is
+            // kept as the fallback: if the new engine is not selected or fails, nothing changes.
+            val source = MangaOcr.readIfSelected(bitmap, union) ?: columns
             BubbleGroup(cluster, union, source, vertical)
         }.sortedWith(compareByDescending<BubbleGroup> { it.bubble.centerX() }.thenBy { it.bubble.top })
             .also { list ->
