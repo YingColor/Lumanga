@@ -175,16 +175,22 @@ fun TranslationSettings(settings: UiSettings) {
                 scope.launch {
                     // The probe has to be written in the language the page is printed in, or
                     // isUsable() rejects it and the connection test reports a false failure.
+                    // "Auto" gets the Japanese sample: it is the pair this app is built for, and
+                    // resolveSource() then settles the probe exactly like it would settle a page.
                     val probeText = when (SourceLanguage.from(settings.sourceLanguage)) {
                         SourceLanguage.ENGLISH -> "Hello, how are you today?"
                         SourceLanguage.CHINESE -> "今天天气真好啊。"
-                        SourceLanguage.JAPANESE -> "今日はいい天気ですね。"
+                        SourceLanguage.JAPANESE, SourceLanguage.AUTO -> "今日はいい天気ですね。"
                     }
                     val probe = listOf(TextRegion(probeText, Rect(0, 0, 100, 40)))
-                    val groups = TranslationEngine.groupBubbles(probe, 200, 80)
+                    val probeLang = TranslationEngine.resolveSource(probe)
+                    val groups = TranslationEngine.groupBubbles(
+                        probe, 200, 80, bitmap = null, lang = probeLang
+                    )
                     val result = TranslationEngine.translate(
                         groups, api, model, emptyList(), apiKey,
-                        protocol = ApiProtocol.from(settings.translateProtocol)
+                        protocol = ApiProtocol.from(settings.translateProtocol),
+                        sourceLang = probeLang
                     )
                     testResult = if (result != null && result.firstOrNull()?.isNotBlank() == true)
                         S.translateTestOk

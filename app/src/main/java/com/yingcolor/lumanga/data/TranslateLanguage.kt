@@ -5,12 +5,22 @@ package com.yingcolor.lumanga.data
  * filtering and reading-order rule untouched; the other two only relax them.
  */
 enum class SourceLanguage(val id: Int, val label: String, val promptName: String) {
+    /**
+     * Guess per page from the recognised lettering; see [TranslationEngine.detectSource].
+     * Not a state the rest of the pipeline ever sees — [TranslationEngine.resolveSource]
+     * replaces it with a real language before any filtering, ordering or prompt is built.
+     * Listed first so the choice is easy to find; [DEFAULT] is still Japanese.
+     */
+    AUTO(3, "自动识别", "原文"),
     JAPANESE(0, "日文", "日文"),
     CHINESE(1, "中文", "中文"),
     ENGLISH(2, "英文", "英文");
 
     /** Latin lettering runs left to right, one line at a time, not in vertical columns. */
     val horizontal: Boolean get() = this == ENGLISH
+
+    /** True when the language has to be decided from the page instead of being assumed. */
+    val detected: Boolean get() = this == AUTO
 
     companion object {
         val DEFAULT = JAPANESE

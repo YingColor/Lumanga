@@ -853,12 +853,20 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             "TR ocr index=$index regions=${regions.size} ms=${System.currentTimeMillis() - ocrStarted}"
         )
         if (regions.isEmpty()) return TranslateOutcome.NoText
-        if (!TranslationEngine.looksJapanese(regions)) {
+        // With the source language on "auto" this is where the page is judged, once, so the
+        // filter, the reading order and the prompt below all use the same answer.
+        val pageSource = TranslationEngine.resolveSource(regions)
+        if (!TranslationEngine.looksJapanese(regions, pageSource)) {
             android.util.Log.i("Translate", "TR skip index=$index not japanese")
             return TranslateOutcome.NotJapanese
         }
-        val groups = TranslationEngine.groupBubbles(regions, source.width, source.height, source)
-        android.util.Log.i("Translate", "TR bubbles index=$index groups=${groups.size}")
+        val groups = TranslationEngine.groupBubbles(
+            regions, source.width, source.height, source, pageSource
+        )
+        android.util.Log.i(
+            "Translate",
+            "TR bubbles index=$index groups=${groups.size} lang=${pageSource.name}"
+        )
         if (groups.isEmpty()) return TranslateOutcome.NoText
         val previous = synchronized(contextLock) {
             translationContext.entries
@@ -874,7 +882,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             val collected = arrayOfNulls<String>(groups.size)
             var answered = 0
             TranslationEngine.translateEach(
-                groups, api, model, previous, apiKey, protocol
+                groups, api, model, previous, apiKey, protocol, sourceLang = pageSource
             ) { i, text ->
                 collected[i] = text
                 answered++
@@ -888,7 +896,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         } else {
-            TranslationEngine.translate(groups, api, model, previous, apiKey, protocol)
+            TranslationEngine.translate(
+                groups, api, model, previous, apiKey, protocol, sourceLang = pageSource
+            )
         }
         android.util.Log.i(
             "Translate",

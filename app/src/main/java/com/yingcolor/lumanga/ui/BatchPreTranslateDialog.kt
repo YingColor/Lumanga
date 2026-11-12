@@ -299,7 +299,11 @@ fun BatchPreTranslateDialog(
                         Spacer(Modifier.width(10.dp))
                         Text(
                             S.preTranslateLanguageValue(
-                                com.yingcolor.lumanga.data.SourceLanguage.from(settings.sourceLanguage).label,
+                                com.yingcolor.lumanga.data.SourceLanguage.from(settings.sourceLanguage)
+                                    .let {
+                                        if (it.detected) S.translateSourceLanguageAutoShort
+                                        else it.label
+                                    },
                                 com.yingcolor.lumanga.data.TargetLanguage.from(settings.targetLanguage).label
                             ),
                             style = MaterialTheme.typography.labelSmall

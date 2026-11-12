@@ -91,14 +91,14 @@ object TranslationEngine {
             "译文要短，长度尽量接近原文；原文有省略号才保留，没有就不要自己加。" +
             "若给了前文，人名和称呼必须与之一致。"
 
-    /** Callers keep using the old names; the getter picks the wording for the current pair. */
-    private val SYSTEM_PROMPT: String
-        get() = if (source == SourceLanguage.JAPANESE && target == TargetLanguage.CHINESE)
-            SYSTEM_PROMPT_JA_ZH else buildSystemPrompt()
+    /** The original Japanese -> Chinese wording, used verbatim whenever that is the pair. */
+    private fun systemPrompt(lang: SourceLanguage): String =
+        if (lang == SourceLanguage.JAPANESE && target == TargetLanguage.CHINESE)
+            SYSTEM_PROMPT_JA_ZH else buildSystemPrompt(lang)
 
-    private val GROUP_PROMPT: String
-        get() = if (source == SourceLanguage.JAPANESE && target == TargetLanguage.CHINESE)
-            GROUP_PROMPT_JA_ZH else buildGroupPrompt()
+    private fun groupPrompt(lang: SourceLanguage): String =
+        if (lang == SourceLanguage.JAPANESE && target == TargetLanguage.CHINESE)
+            GROUP_PROMPT_JA_ZH else buildGroupPrompt(lang)
 
     /** Published by [UiSettings] when the user picks a language, and read by the whole chain. */
     @Volatile
@@ -116,14 +116,15 @@ object TranslationEngine {
         get() = if (source == SourceLanguage.DEFAULT && target == TargetLanguage.DEFAULT) ""
         else "s${source.id}t${target.id}"
 
-    private fun buildSystemPrompt(): String = buildString {
-        val order = if (source.horizontal)
+    private fun buildSystemPrompt(lang: SourceLanguage): String = buildString {
+        val horizontalSource = lang.horizontal
+        val order = if (horizontalSource)
             "横排气泡里用空格分开的就是一行，读法是从左到右、从上到下。"
         else
             "竖排气泡里用空格分开的就是一列，读法是列从右到左、列内从上到下。"
-        val reorder = if (source.horizontal) "从左到右、从上到下" else "从右到左、从上到下"
+        val reorder = if (horizontalSource) "从左到右、从上到下" else "从右到左、从上到下"
         append("你是漫画翻译助手。输入按【编号】分组，每组是一个对话气泡里 OCR 出来的")
-            .append(source.promptName).append("片段。")
+            .append(lang.promptName).append("片段。")
         append(order)
         append("漫画文字常被切碎、顺序颠倒，也可能有识别错字，甚至整组只剩一两个字。")
         append("请先按").append(reorder).append("的正确顺序重排并纠正明显错字，")
@@ -140,13 +141,14 @@ object TranslationEngine {
         append("若有上一页译文，人名和称呼必须与之一致。")
     }
 
-    private fun buildGroupPrompt(): String = buildString {
-        val order = if (source.horizontal)
+    private fun buildGroupPrompt(lang: SourceLanguage): String = buildString {
+        val horizontalSource = lang.horizontal
+        val order = if (horizontalSource)
             "横排里用空格分开的就是一行，读法是从左到右、从上到下。"
         else
             "竖排里用空格分开的就是一列，读法是列从右到左、列内从上到下。"
-        val reorder = if (source.horizontal) "从左到右、从上到下" else "从右到左、从上到下"
-        append("你是漫画翻译助手。用户每次只给你一个对话气泡里的").append(source.promptName)
+        val reorder = if (horizontalSource) "从左到右、从上到下" else "从右到左、从上到下"
+        append("你是漫画翻译助手。用户每次只给你一个对话气泡里的").append(lang.promptName)
             .append("，可能被切碎、顺序颠倒，也可能有识别错字，甚至只剩一两个字。")
         append(order)
         append("请先按").append(reorder).append("重排、纠正明显错字，再译成一句通顺自然的")
@@ -177,16 +179,66 @@ object TranslationEngine {
 
     suspend fun recognize(bitmap: Bitmap): List<TextRegion> = ocr.recognize(bitmap)
 
+    /**
+     * Turns the "auto" setting into a concrete language for one page.
+     *
+     * Detection only ever looks at the recognised text, never at the picture: the OCR model
+     * already reports which glyphs it saw, and that is the same evidence a reader would use.
+     * A page with too little lettering to judge keeps Japanese, which is the default pair and
+     * therefore the behaviour that existed before this option.
+     */
+    fun detectSource(regions: List<TextRegion>): SourceLanguage {
+        var kana = 0
+        var han = 0
+        var latin = 0
+        for (region in regions) {
+            for (ch in region.text) {
+                when {
+                    ch.code in 0x3040..0x309F || ch.code in 0x30A0..0x30FF -> kana++
+                    ch.code in 0x3400..0x9FFF -> han++
+                    (ch in 'A'..'Z') || (ch in 'a'..'z') || ch.code in 0x00C0..0x024F -> latin++
+                }
+            }
+        }
+        val total = kana + han + latin
+        // Anything this short is a sound effect or a page number, and saying "English" because
+        // four stray letters outnumbered two stray kanji would rewrite a Japanese page.
+        if (total < 6) return SourceLanguage.JAPANESE
+        val language = when {
+            // Kana settles it: Chinese and English pages never contain it, and the reverse
+            // mistake is the expensive one — a Chinese page judged Japanese is then thrown away
+            // by looksJapanese(), which wants a share of kana. Two glyphs is enough evidence.
+            kana >= 2 -> SourceLanguage.JAPANESE
+            // Otherwise compare the counts rather than a ratio: a Chinese page still carries a
+            // few Latin letters (logos, sound effects) and must not be read as English because
+            // they happen to be on a short page.
+            han > latin -> SourceLanguage.CHINESE
+            latin > han -> SourceLanguage.ENGLISH
+            else -> SourceLanguage.JAPANESE
+        }
+        android.util.Log.i(
+            "Translate",
+            "TR detect kana=$kana han=$han latin=$latin -> ${language.name}"
+        )
+        return language
+    }
+
+    /** The language a page is actually handled as; [SourceLanguage.AUTO] never leaves this. */
+    fun resolveSource(regions: List<TextRegion>): SourceLanguage =
+        if (source.detected) detectSource(regions) else source
+
     /** A character that counts as real lettering in the language printed on the page. */
-    private fun isSourceLetter(ch: Char): Boolean = when (source) {
-        SourceLanguage.JAPANESE -> isJapaneseLetter(ch)
+    private fun isSourceLetter(ch: Char, lang: SourceLanguage): Boolean = when (lang) {
+        // AUTO only reaches here when a caller had no page to judge from; Japanese rules are
+        // the widest of the three (they accept kanji, kana and Latin noise), so they lose least.
+        SourceLanguage.JAPANESE, SourceLanguage.AUTO -> isJapaneseLetter(ch)
         SourceLanguage.CHINESE -> ch.code in 0x3400..0x9FFF
         SourceLanguage.ENGLISH ->
             (ch in 'A'..'Z') || (ch in 'a'..'z') || ch.code in 0x00C0..0x024F
     }
 
     /** Drops detection noise, sound effects and single stray glyphs before translating. */
-    fun isUsable(region: TextRegion): Boolean {
+    fun isUsable(region: TextRegion, lang: SourceLanguage = source): Boolean {
         // 0.55 used to throw away real but faint lettering: a perfectly readable 「よし」 came
         // back at 0.51 and vanished from its bubble, cutting the sentence short.
         if (region.confidence < 0.45f) return false
@@ -194,7 +246,7 @@ object TranslationEngine {
         if (region.vertical && region.box.height() < region.box.width() * 1.2f) return false
         var letters = 0
         for (ch in region.text) {
-            if (isSourceLetter(ch)) letters++
+            if (isSourceLetter(ch, lang)) letters++
         }
         // A lone kana is common in manga (「は？」「え？」) and dropping it cuts the sentence in
         // half. Latin-only and digit-only boxes come out of artwork lettering and sound effects,
@@ -211,9 +263,10 @@ object TranslationEngine {
      * out of the translator. When the user has named the printed language themselves that
      * heuristic no longer applies, and the only question is whether there is lettering at all.
      */
-    fun looksJapanese(regions: List<TextRegion>): Boolean {
-        if (source != SourceLanguage.JAPANESE) {
-            return regions.sumOf { r -> r.text.count { isSourceLetter(it) } } >= 2
+    fun looksJapanese(regions: List<TextRegion>, lang: SourceLanguage = source): Boolean {
+        val language = if (lang.detected) detectSource(regions) else lang
+        if (language != SourceLanguage.JAPANESE) {
+            return regions.sumOf { r -> r.text.count { isSourceLetter(it, language) } } >= 2
         }
         var letters = 0
         var kana = 0
@@ -230,14 +283,14 @@ object TranslationEngine {
     }
 
     /** Japanese columns run right to left; Latin lines run left to right, top to bottom. */
-    private fun regionOrder(): Comparator<TextRegion> =
-        if (source.horizontal)
+    private fun regionOrder(lang: SourceLanguage): Comparator<TextRegion> =
+        if (lang.horizontal)
             compareBy<TextRegion> { it.box.top }.thenBy { it.box.centerX() }
         else
             compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top }
 
-    private fun groupOrder(): Comparator<BubbleGroup> =
-        if (source.horizontal)
+    private fun groupOrder(lang: SourceLanguage): Comparator<BubbleGroup> =
+        if (lang.horizontal)
             compareBy<BubbleGroup> { it.bubble.top }.thenBy { it.bubble.centerX() }
         else
             compareByDescending<BubbleGroup> { it.bubble.centerX() }.thenBy { it.bubble.top }
@@ -246,11 +299,15 @@ object TranslationEngine {
         regions: List<TextRegion>,
         width: Int,
         height: Int,
-        bitmap: Bitmap? = null
+        bitmap: Bitmap? = null,
+        lang: SourceLanguage = source
     ): List<BubbleGroup> {
-        val usable = regions.filter { isUsable(it) }
+        // An "auto" setting is settled once, here, so every rule below agrees with the prompt
+        // and with the cache key that the caller derived from the same page.
+        val language = if (lang.detected) detectSource(regions) else lang
+        val usable = regions.filter { isUsable(it, language) }
         if (usable.isEmpty()) return emptyList()
-        val ordered = usable.sortedWith(regionOrder())
+        val ordered = usable.sortedWith(regionOrder(language))
         val clusters = ArrayList<MutableList<TextRegion>>()
         for (region in ordered) {
             var target: MutableList<TextRegion>? = null
@@ -293,15 +350,15 @@ object TranslationEngine {
         // translated into a stray word floating over the artwork. Two or more letters are kept,
         // because a short but real line like 「よし」 must not disappear.
         val kept = withMarks.filter { cluster ->
-            cluster.sumOf { region -> region.text.count { isSourceLetter(it) } } >= 2 ||
+            cluster.sumOf { region -> region.text.count { isSourceLetter(it, language) } } >= 2 ||
                 // A column of nothing but 「…」 still has to be kept: it covers lettering on the
                 // page, and skipping it leaves the original dots showing between translated lines.
                 cluster.all { isEllipsisOnly(it) }
         }
-        val horizontalSource = source.horizontal
-        val japaneseSource = source == SourceLanguage.JAPANESE
+        val horizontalSource = language.horizontal
+        val japaneseSource = language == SourceLanguage.JAPANESE
         return kept.map { cluster ->
-            cluster.sortWith(regionOrder())
+            cluster.sortWith(regionOrder(language))
             val union = Rect(cluster[0].box)
             cluster.forEach { union.union(it.box) }
             val vertical = if (horizontalSource) false
@@ -319,11 +376,11 @@ object TranslationEngine {
             }
             // MangaOCR_mobile was trained on Japanese manga. For any other printed language the
             // column join is the honest fallback instead of guessing at an alien script.
-            val source = if (japaneseSource)
+            val text = if (japaneseSource)
                 MangaOcr.readIfSelected(bitmap, union) ?: columns
             else columns
-            BubbleGroup(cluster, union, source, vertical)
-        }.sortedWith(groupOrder())
+            BubbleGroup(cluster, union, text, vertical)
+        }.sortedWith(groupOrder(language))
             .also { list ->
                 // Grouping decides whether one sentence reaches the model as one piece or as two
                 // that overwrite each other on the page, so it is worth seeing in a bug report.
@@ -511,7 +568,8 @@ object TranslationEngine {
         model: String,
         context: List<String> = emptyList(),
         apiKey: String = "",
-        protocol: ApiProtocol = ApiProtocol.DEFAULT
+        protocol: ApiProtocol = ApiProtocol.DEFAULT,
+        sourceLang: SourceLanguage = source
     ): List<String>? = withContext(Dispatchers.IO) {
         if (groups.isEmpty()) return@withContext emptyList()
         val numbered = buildString {
@@ -528,7 +586,7 @@ object TranslationEngine {
         repeat(2) { attempt ->
             // A wrong key or a closed port fails identically the second time, so only timeouts
             // and the service's own 429/5xx are retried.
-            when (val result = ApiClient.chat(protocol, api, model, apiKey, SYSTEM_PROMPT, numbered)) {
+            when (val result = ApiClient.chat(protocol, api, model, apiKey, systemPrompt(sourceLang), numbered)) {
                 is ApiClient.ChatResult.Ok -> return@withContext parse(result.text, groups)
                 is ApiClient.ChatResult.Fail -> {
                     lastError = result.reason
@@ -570,6 +628,7 @@ object TranslationEngine {
         apiKey: String = "",
         protocol: ApiProtocol = ApiProtocol.DEFAULT,
         concurrency: Int = GROUP_CONCURRENCY,
+        sourceLang: SourceLanguage = source,
         onGroup: suspend (index: Int, text: String) -> Unit = { _, _ -> }
     ): List<String>? = withContext(Dispatchers.IO) {
         if (groups.isEmpty()) return@withContext emptyList()
@@ -586,8 +645,9 @@ object TranslationEngine {
             groups.forEachIndexed { index, group ->
                 launch {
                     gate.withPermit {
-                        val text = askGroup(protocol, api, model, apiKey, hint, group.source, index)
-                            ?: return@withPermit
+                        val text = askGroup(
+                            protocol, api, model, apiKey, hint, group.source, index, sourceLang
+                        ) ?: return@withPermit
                         paint.withLock {
                             lines[index] = text
                             answered++
@@ -614,7 +674,8 @@ object TranslationEngine {
         apiKey: String,
         hint: String,
         source: String,
-        index: Int
+        index: Int,
+        sourceLang: SourceLanguage
     ): String? {
         val user = buildString {
             if (hint.isNotEmpty()) {
@@ -624,7 +685,8 @@ object TranslationEngine {
         }
         var lastError = "unknown"
         for (attempt in 0 until 2) {
-            when (val result = ApiClient.chat(protocol, api, model, apiKey, GROUP_PROMPT, user)) {
+            when (val result =
+                ApiClient.chat(protocol, api, model, apiKey, groupPrompt(sourceLang), user)) {
                 is ApiClient.ChatResult.Ok -> {
                     val value = tidyGroup(result.text, source)
                     if (value.isNotEmpty()) return value

@@ -104,7 +104,12 @@ object PreTranslate {
                 val page = fit(decoded, MAX_SIDE)
                 try {
                     val regions = TranslationEngine.recognize(page)
-                    if (regions.isEmpty() || !TranslationEngine.looksJapanese(regions)) {
+                    // "Auto" is settled per page here too, so the filters, the reading order and
+                    // the prompt all agree with what the reader would do on the same page.
+                    val pageSource = TranslationEngine.resolveSource(regions)
+                    if (regions.isEmpty() ||
+                        !TranslationEngine.looksJapanese(regions, pageSource)
+                    ) {
                         // Remember the verdict so the reader does not re-run OCR on this page.
                         TranslationStore.save(
                             context, book.id, index,
@@ -112,7 +117,9 @@ object PreTranslate {
                         )
                         android.util.Log.i("PreTranslate", "page=$index skipped")
                     } else {
-                        val groups = TranslationEngine.groupBubbles(regions, page.width, page.height, page)
+                        val groups = TranslationEngine.groupBubbles(
+                            regions, page.width, page.height, page, pageSource
+                        )
                         if (groups.isEmpty()) {
                             TranslationStore.save(
                                 context, book.id, index,
@@ -121,11 +128,13 @@ object PreTranslate {
                         } else {
                             val lines = if (groupMode) {
                                 TranslationEngine.translateEach(
-                                    groups, api, model, previous, apiKey, protocol
+                                    groups, api, model, previous, apiKey, protocol,
+                                    sourceLang = pageSource
                                 )
                             } else {
                                 TranslationEngine.translate(
-                                    groups, api, model, previous, apiKey, protocol
+                                    groups, api, model, previous, apiKey, protocol,
+                                    sourceLang = pageSource
                                 )
                             }
                             // A per-group run can answer some bubbles and miss others. Saving that
