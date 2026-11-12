@@ -56,19 +56,31 @@ object TranslationStore {
     private fun dir(context: Context): File =
         File(context.filesDir, DIR).apply { if (!exists()) mkdirs() }
 
-    private fun fileFor(context: Context, bookId: String): File {
+    /**
+     * The original Japanese -> Chinese pair keeps the unmodified key, so every volume already
+     * translated still points at the same file and badge. Other language pairs get their own
+     * files: switching languages re-translates without erasing the Chinese work.
+     */
+    private fun scoped(bookId: String): String {
+        val key = TranslationEngine.languageKey
+        return if (key.isEmpty()) bookId else "$bookId@$key"
+    }
+
+    private fun rawFile(context: Context, scopedId: String): File {
         val digest = MessageDigest.getInstance("SHA-256")
-            .digest(bookId.toByteArray(Charsets.UTF_8))
+            .digest(scopedId.toByteArray(Charsets.UTF_8))
         val name = digest.take(8).joinToString("") { "%02x".format(it) }
         return File(dir(context), "$name.json")
     }
 
+    private fun fileFor(context: Context, bookId: String): File = rawFile(context, scoped(bookId))
+
     private fun lock(bookId: String): Any = locks.getOrPut(bookId) { Any() }
 
-    private fun pages(context: Context, bookId: String): MutableMap<Int, PageTranslation> =
-        cache.getOrPut(bookId) {
-            read(context, bookId).toMutableMap()
-        }
+    private fun pages(context: Context, bookId: String): MutableMap<Int, PageTranslation> {
+        val id = scoped(bookId)
+        return cache.getOrPut(id) { read(context, id).toMutableMap() }
+    }
 
     fun page(context: Context, bookId: String, index: Int): PageTranslation? =
         pages(context, bookId)[index]
@@ -89,7 +101,7 @@ object TranslationStore {
     fun clear(context: Context, bookId: String) {
         synchronized(lock(bookId)) {
             pages(context, bookId).clear()
-            cache.remove(bookId)
+            cache.remove(scoped(bookId))
             runCatching { fileFor(context, bookId).delete() }
         }
         unmarkComplete(context, bookId)
@@ -97,13 +109,13 @@ object TranslationStore {
 
     /** Drops only the in-memory copy; the file is read again on next access. */
     fun invalidate(bookId: String) {
-        cache.remove(bookId)
+        cache.remove(scoped(bookId))
     }
 
-    /** True once a whole volume has been translated from its first page to its last. */
+    /** True once a whole volume has been translated in the current language pair. */
     fun isComplete(context: Context, bookId: String): Boolean = synchronized(statusLock) {
         loadStatus(context)
-        completed.containsKey(bookId)
+        completed.containsKey(scoped(bookId))
     }
 
     /**
@@ -112,10 +124,11 @@ object TranslationStore {
      */
     fun markComplete(context: Context, bookId: String, pageCount: Int) {
         if (pageCount <= 0 || count(context, bookId) < pageCount) return
+        val id = scoped(bookId)
         synchronized(statusLock) {
             loadStatus(context)
-            if (completed[bookId] == pageCount) return
-            completed[bookId] = pageCount
+            if (completed[id] == pageCount) return
+            completed[id] = pageCount
             writeStatus(context)
         }
         completedRevFlow.value++
@@ -124,7 +137,7 @@ object TranslationStore {
     private fun unmarkComplete(context: Context, bookId: String) {
         synchronized(statusLock) {
             loadStatus(context)
-            if (completed.remove(bookId) == null) return
+            if (completed.remove(scoped(bookId)) == null) return
             writeStatus(context)
         }
         completedRevFlow.value++
@@ -160,8 +173,9 @@ object TranslationStore {
         }
     }
 
-    private fun read(context: Context, bookId: String): Map<Int, PageTranslation> {
-        val file = fileFor(context, bookId)
+    private fun read(context: Context, scopedId: String): Map<Int, PageTranslation> {
+        // pages() already applied scoped(); hashing it again would look in the wrong file.
+        val file = rawFile(context, scopedId)
         if (!file.isFile) return emptyMap()
         return runCatching {
             val root = JSONObject(file.readText(Charsets.UTF_8))

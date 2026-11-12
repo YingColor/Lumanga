@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.ApiProtocol
+import com.yingcolor.lumanga.data.SourceLanguage
 import com.yingcolor.lumanga.data.TextLayout
 import com.yingcolor.lumanga.data.TextRegion
 import com.yingcolor.lumanga.data.TranslateMode
@@ -51,6 +52,8 @@ fun TranslationSettings(settings: UiSettings) {
 
     Spacer(Modifier.height(16.dp))
     OcrModelPicker(settings)
+    Spacer(Modifier.height(16.dp))
+    LanguagePickers(settings)
     Spacer(Modifier.height(16.dp))
 
     // A reading preference, not a recognition one: stored pages keep their layout and text, so
@@ -170,7 +173,14 @@ fun TranslationSettings(settings: UiSettings) {
                 testing = true
                 testResult = null
                 scope.launch {
-                    val probe = listOf(TextRegion("今日はいい天気ですね。", Rect(0, 0, 100, 40)))
+                    // The probe has to be written in the language the page is printed in, or
+                    // isUsable() rejects it and the connection test reports a false failure.
+                    val probeText = when (SourceLanguage.from(settings.sourceLanguage)) {
+                        SourceLanguage.ENGLISH -> "Hello, how are you today?"
+                        SourceLanguage.CHINESE -> "今天天气真好啊。"
+                        SourceLanguage.JAPANESE -> "今日はいい天気ですね。"
+                    }
+                    val probe = listOf(TextRegion(probeText, Rect(0, 0, 100, 40)))
                     val groups = TranslationEngine.groupBubbles(probe, 200, 80)
                     val result = TranslationEngine.translate(
                         groups, api, model, emptyList(), apiKey,

@@ -175,6 +175,16 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_TRANSLATE_MODE, TranslateMode.PAGE)
         set(value) = sp.edit().putInt(KEY_TRANSLATE_MODE, TranslateMode.coerce(value)).apply()
 
+    /** Language printed on the page; see [SourceLanguage]. */
+    var sourceLanguage: Int
+        get() = sp.getInt(KEY_SOURCE_LANGUAGE, SourceLanguage.DEFAULT.id)
+        set(value) = sp.edit().putInt(KEY_SOURCE_LANGUAGE, SourceLanguage.coerce(value)).apply()
+
+    /** Language the translation service should write; see [TargetLanguage]. */
+    var targetLanguage: Int
+        get() = sp.getInt(KEY_TARGET_LANGUAGE, TargetLanguage.DEFAULT.id)
+        set(value) = sp.edit().putInt(KEY_TARGET_LANGUAGE, TargetLanguage.coerce(value)).apply()
+
     /** Sent as `Authorization: Bearer …` when the service needs one; empty means no header. */
     var translateApiKey: String
         get() = sp.getString(KEY_TRANSLATE_KEY, "") ?: ""
@@ -344,6 +354,8 @@ class Prefs(context: Context) {
         const val KEY_TRANSLATE_KEY = "translate_api_key"
         const val KEY_OCR_MODEL = "ocr_model"
         const val KEY_TEXT_LAYOUT = "text_layout"
+        const val KEY_SOURCE_LANGUAGE = "source_language"
+        const val KEY_TARGET_LANGUAGE = "target_language"
 
         const val MIN_ZOOM_PERCENT = 40
         const val MAX_ZOOM_PERCENT = 400

@@ -274,6 +274,23 @@ fun PreTranslateDialog(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = S.preTranslateLanguage,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = S.preTranslateLanguageValue(
+                            com.yingcolor.lumanga.data.SourceLanguage.from(settings.sourceLanguage).label,
+                            com.yingcolor.lumanga.data.TargetLanguage.from(settings.targetLanguage).label
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
 
                 Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

@@ -701,7 +701,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         // join it for the same reason — the same address gives a different answer per wire
         // format, and the two modes produce different text.
         val key = "$index-${source.width}x${source.height}-${protocol.id}-$groupMode-" +
-            "${(api + model).hashCode()}-$horizontal"
+            "${(api + model).hashCode()}-$horizontal-${TranslationEngine.languageKey}"
         translatedCache.get(key)?.let {
             publish(index, TranslateState())
             return it
@@ -931,7 +931,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         groupMode: Boolean,
         api: String,
         model: String
-    ): String = "$index|${protocol.id}|$groupMode|${api.hashCode()}|${model.hashCode()}"
+    ): String = "$index|${protocol.id}|$groupMode|${api.hashCode()}|${model.hashCode()}" +
+        "|${TranslationEngine.languageKey}"
 
     /** Re-draws a cached page at a different decode size instead of running OCR again. */
     private fun renderScaled(source: Bitmap, cached: PageResult, horizontal: Boolean): Bitmap {
@@ -2290,6 +2291,7 @@ private fun PageRow(
         protocol = ApiProtocol.from(settings.translateProtocol),
         groupMode = settings.translateMode == TranslateMode.GROUP,
         layout = settings.textLayout,
+        languageKey = settings.languageKey,
         modifier = modifier
     )
 }
@@ -2310,7 +2312,8 @@ private fun rememberPageBitmap(
     model: String,
     protocol: ApiProtocol,
     groupMode: Boolean,
-    layout: Int
+    layout: Int,
+    languageKey: String
 ): Bitmap? {
     
     
@@ -2341,7 +2344,8 @@ private fun rememberPageBitmap(
         initialValue = vm.peekPage(index, quality) ?: vm.peekPlaceholder(index),
         key1 = index,
         key2 = quality,
-        key3 = "$decodeW-$decodeH-$translate-$api-$model-${protocol.id}-$groupMode-$layout-${vm.translationRetry}"
+        key3 = "$decodeW-$decodeH-$translate-$api-$model-${protocol.id}-$groupMode-$layout-" +
+            "$languageKey-${vm.translationRetry}"
     ) {
         
         
@@ -2394,6 +2398,7 @@ private fun PageSpread(
     protocol: ApiProtocol,
     groupMode: Boolean,
     layout: Int,
+    languageKey: String,
     modifier: Modifier = Modifier
 ) {
     var panX by remember(indices, zoomMode, zoomPercent) { mutableStateOf(0f) }
@@ -2413,7 +2418,7 @@ private fun PageSpread(
         for (i in indices) {
             loaded += rememberPageBitmap(
                 vm, i, targetW, targetH, quality, zoomMode, zoomPercent,
-                translate, api, apiKey, model, protocol, groupMode, layout
+                translate, api, apiKey, model, protocol, groupMode, layout, languageKey
             )
         }
 

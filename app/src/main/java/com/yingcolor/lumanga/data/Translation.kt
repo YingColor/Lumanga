@@ -59,7 +59,12 @@ object TranslationEngine {
     private val DOUBLE_PUNCT = Regex("([，、；：])\\1+")
     private val ELLIPSIS_CHARS = setOf('…', '⋯', '・')
 
-    private const val SYSTEM_PROMPT =
+    /**
+     * The wording used before the language switch existed. It stays byte-identical so a
+     * Japanese -> Chinese page behaves exactly as it always has; every other pair is built
+     * from the templates below.
+     */
+    private const val SYSTEM_PROMPT_JA_ZH =
         "你是漫画翻译助手。输入按【编号】分组，每组是一个对话气泡里 OCR 出来的日文片段。" +
             "竖排气泡里用空格分开的就是一列，读法是列从右到左、列内从上到下。" +
             "漫画竖排文字常被切碎、顺序颠倒，也可能有识别错字，甚至整组只剩一两个字。" +
@@ -75,11 +80,7 @@ object TranslationEngine {
             "不要解释、不要复述原文、不要逐字硬译、不要添加原文没有的内容。" +
             "若有上一页译文，人名和称呼必须与之一致。"
 
-    /**
-     * Used when each group is sent on its own. A one-line answer needs far less instruction than a
-     * numbered list, and the shorter prompt is also what a local model spends its time on.
-     */
-    private const val GROUP_PROMPT =
+    private const val GROUP_PROMPT_JA_ZH =
         "你是漫画翻译助手。用户每次只给你一个对话气泡里的日文，竖排可能被切碎、顺序颠倒，" +
             "也可能有识别错字，甚至只剩一两个字。" +
             "竖排里用空格分开的就是一列，读法是列从右到左、列内从上到下。" +
@@ -90,8 +91,80 @@ object TranslationEngine {
             "译文要短，长度尽量接近原文；原文有省略号才保留，没有就不要自己加。" +
             "若给了前文，人名和称呼必须与之一致。"
 
+    /** Callers keep using the old names; the getter picks the wording for the current pair. */
+    private val SYSTEM_PROMPT: String
+        get() = if (source == SourceLanguage.JAPANESE && target == TargetLanguage.CHINESE)
+            SYSTEM_PROMPT_JA_ZH else buildSystemPrompt()
+
+    private val GROUP_PROMPT: String
+        get() = if (source == SourceLanguage.JAPANESE && target == TargetLanguage.CHINESE)
+            GROUP_PROMPT_JA_ZH else buildGroupPrompt()
+
+    /** Published by [UiSettings] when the user picks a language, and read by the whole chain. */
+    @Volatile
+    var source: SourceLanguage = SourceLanguage.DEFAULT
+
+    @Volatile
+    var target: TargetLanguage = TargetLanguage.DEFAULT
+
+    /**
+     * Empty for the original Japanese -> Chinese pair. A non-empty suffix gives other pairs
+     * their own translation files and cache keys, so switching languages never deletes or
+     * silently reuses a volume's existing Chinese translations.
+     */
+    val languageKey: String
+        get() = if (source == SourceLanguage.DEFAULT && target == TargetLanguage.DEFAULT) ""
+        else "s${source.id}t${target.id}"
+
+    private fun buildSystemPrompt(): String = buildString {
+        val order = if (source.horizontal)
+            "横排气泡里用空格分开的就是一行，读法是从左到右、从上到下。"
+        else
+            "竖排气泡里用空格分开的就是一列，读法是列从右到左、列内从上到下。"
+        val reorder = if (source.horizontal) "从左到右、从上到下" else "从右到左、从上到下"
+        append("你是漫画翻译助手。输入按【编号】分组，每组是一个对话气泡里 OCR 出来的")
+            .append(source.promptName).append("片段。")
+        append(order)
+        append("漫画文字常被切碎、顺序颠倒，也可能有识别错字，甚至整组只剩一两个字。")
+        append("请先按").append(reorder).append("的正确顺序重排并纠正明显错字，")
+        append("理解整句含义后，为每个气泡输出一句通顺自然的").append(target.promptName).append("。")
+        append("若一组只剩一两个字，按上下文和语气补成完整的一句，不要只译那两个字。")
+        append("若某一组本身只有一个省略号，原样输出「……」，不要补全、不要猜内容。")
+        append("无法确定的字宁可结合上下文意译，不要音译。")
+        if (target.latin) append("英文单词之间只保留一个空格，不要把单词连写，也不要把单词从中间断开。")
+        if (target == TargetLanguage.CHINESE) append("不要在译文里保留日文假名。")
+        append("只输出译文，条数必须与气泡数一致，每行严格按「编号. 译文」格式。")
+        append("译文要短，长度尽量接近原文：气泡放不下就要缩小字号，所以不要扩写、不要加原文没有的语气词和修饰。")
+        append("原文里的省略号（……）要在译文对应位置保留；但不能用省略号表示停顿、分列或猜不出来的地方，原文没有省略号时也不要自己加。")
+        append("不要解释、不要复述原文、不要逐字硬译、不要添加原文没有的内容。")
+        append("若有上一页译文，人名和称呼必须与之一致。")
+    }
+
+    private fun buildGroupPrompt(): String = buildString {
+        val order = if (source.horizontal)
+            "横排里用空格分开的就是一行，读法是从左到右、从上到下。"
+        else
+            "竖排里用空格分开的就是一列，读法是列从右到左、列内从上到下。"
+        val reorder = if (source.horizontal) "从左到右、从上到下" else "从右到左、从上到下"
+        append("你是漫画翻译助手。用户每次只给你一个对话气泡里的").append(source.promptName)
+            .append("，可能被切碎、顺序颠倒，也可能有识别错字，甚至只剩一两个字。")
+        append(order)
+        append("请先按").append(reorder).append("重排、纠正明显错字，再译成一句通顺自然的")
+            .append(target.promptName).append("。")
+        append("只剩一两个字时按语气补成完整的一句，不要只译那两个字。")
+        append("若原文只有一个省略号，原样输出「……」，不要补全、不要猜。")
+        append("只输出译文本身：不要编号、不要解释、不要复述原文。")
+        if (target.latin) append("英文单词之间只保留一个空格，不要连写，也不要把单词从中间断开。")
+        if (target == TargetLanguage.CHINESE) append("不要在译文里保留日文假名。")
+        append("译文要短，长度尽量接近原文；原文有省略号才保留，没有就不要自己加。")
+        append("若给了前文，人名和称呼必须与之一致。")
+    }
+
     private val LEADING_INDEX = Regex("^\\s*\\d+\\s*[.、)]\\s*")
-    private val REPLY_LABEL = Regex("^(译文|翻译|中文|简体中文|翻译结果)\\s*[:：]\\s*")
+    private val REPLY_LABEL = Regex(
+        "^(译文|翻译|中文|简体中文|翻译结果|Translation|English|Output)\\s*[:：]\\s*",
+        RegexOption.IGNORE_CASE
+    )
 
     /** How many earlier lines are handed to a per-group request as context. */
     private const val GROUP_CONTEXT_LINES = 3
@@ -104,6 +177,14 @@ object TranslationEngine {
 
     suspend fun recognize(bitmap: Bitmap): List<TextRegion> = ocr.recognize(bitmap)
 
+    /** A character that counts as real lettering in the language printed on the page. */
+    private fun isSourceLetter(ch: Char): Boolean = when (source) {
+        SourceLanguage.JAPANESE -> isJapaneseLetter(ch)
+        SourceLanguage.CHINESE -> ch.code in 0x3400..0x9FFF
+        SourceLanguage.ENGLISH ->
+            (ch in 'A'..'Z') || (ch in 'a'..'z') || ch.code in 0x00C0..0x024F
+    }
+
     /** Drops detection noise, sound effects and single stray glyphs before translating. */
     fun isUsable(region: TextRegion): Boolean {
         // 0.55 used to throw away real but faint lettering: a perfectly readable 「よし」 came
@@ -113,7 +194,7 @@ object TranslationEngine {
         if (region.vertical && region.box.height() < region.box.width() * 1.2f) return false
         var letters = 0
         for (ch in region.text) {
-            if (isJapaneseLetter(ch)) letters++
+            if (isSourceLetter(ch)) letters++
         }
         // A lone kana is common in manga (「は？」「え？」) and dropping it cuts the sentence in
         // half. Latin-only and digit-only boxes come out of artwork lettering and sound effects,
@@ -125,8 +206,15 @@ object TranslationEngine {
         return true
     }
 
-    /** Pages that are already Chinese (or English) must not be re-translated into gibberish. */
+    /**
+     * For the default Japanese source this also keeps pages that are already Chinese or English
+     * out of the translator. When the user has named the printed language themselves that
+     * heuristic no longer applies, and the only question is whether there is lettering at all.
+     */
     fun looksJapanese(regions: List<TextRegion>): Boolean {
+        if (source != SourceLanguage.JAPANESE) {
+            return regions.sumOf { r -> r.text.count { isSourceLetter(it) } } >= 2
+        }
         var letters = 0
         var kana = 0
         for (region in regions) {
@@ -141,6 +229,19 @@ object TranslationEngine {
         return kana.toFloat() / letters >= 0.04f
     }
 
+    /** Japanese columns run right to left; Latin lines run left to right, top to bottom. */
+    private fun regionOrder(): Comparator<TextRegion> =
+        if (source.horizontal)
+            compareBy<TextRegion> { it.box.top }.thenBy { it.box.centerX() }
+        else
+            compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top }
+
+    private fun groupOrder(): Comparator<BubbleGroup> =
+        if (source.horizontal)
+            compareBy<BubbleGroup> { it.bubble.top }.thenBy { it.bubble.centerX() }
+        else
+            compareByDescending<BubbleGroup> { it.bubble.centerX() }.thenBy { it.bubble.top }
+
     fun groupBubbles(
         regions: List<TextRegion>,
         width: Int,
@@ -149,9 +250,7 @@ object TranslationEngine {
     ): List<BubbleGroup> {
         val usable = regions.filter { isUsable(it) }
         if (usable.isEmpty()) return emptyList()
-        val ordered = usable.sortedWith(
-            compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top }
-        )
+        val ordered = usable.sortedWith(regionOrder())
         val clusters = ArrayList<MutableList<TextRegion>>()
         for (region in ordered) {
             var target: MutableList<TextRegion>? = null
@@ -194,32 +293,37 @@ object TranslationEngine {
         // translated into a stray word floating over the artwork. Two or more letters are kept,
         // because a short but real line like 「よし」 must not disappear.
         val kept = withMarks.filter { cluster ->
-            cluster.sumOf { region -> region.text.count { isJapaneseLetter(it) } } >= 2 ||
+            cluster.sumOf { region -> region.text.count { isSourceLetter(it) } } >= 2 ||
                 // A column of nothing but 「…」 still has to be kept: it covers lettering on the
                 // page, and skipping it leaves the original dots showing between translated lines.
                 cluster.all { isEllipsisOnly(it) }
         }
+        val horizontalSource = source.horizontal
+        val japaneseSource = source == SourceLanguage.JAPANESE
         return kept.map { cluster ->
-            cluster.sortWith(compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top })
+            cluster.sortWith(regionOrder())
             val union = Rect(cluster[0].box)
             cluster.forEach { union.union(it.box) }
-            val vertical = cluster.count { it.vertical } * 2 >= cluster.size
-            // Columns are separated by a space so the model can see where one ends. Without it a
-            // five-column sentence arrives as one run and is reordered by guesswork, which looked
-            // like a recognition error. A lone 「…」 is glued to the column before it instead of
-            // being separated, so it reads as the end of that line.
+            val vertical = if (horizontalSource) false
+                else cluster.count { it.vertical } * 2 >= cluster.size
+            // Columns (or, for Latin lettering, lines) are separated by a space so the model can
+            // see where one ends. Without it a five-column sentence arrives as one run and is
+            // reordered by guesswork, which looked like a recognition error.
             val columns = buildString {
                 cluster.forEachIndexed { index, region ->
-                    if (index > 0 && vertical && !isEllipsisOnly(region)) append(COLUMN_BREAK)
+                    if (index > 0 && (vertical || horizontalSource) && !isEllipsisOnly(region)) {
+                        append(COLUMN_BREAK)
+                    }
                     append(region.text)
                 }
             }
-            // A whole-bubble model reads the picture and emits one complete sentence, so the
-            // column join (and every workaround for its word order) is unnecessary. The join is
-            // kept as the fallback: if the new engine is not selected or fails, nothing changes.
-            val source = MangaOcr.readIfSelected(bitmap, union) ?: columns
+            // MangaOCR_mobile was trained on Japanese manga. For any other printed language the
+            // column join is the honest fallback instead of guessing at an alien script.
+            val source = if (japaneseSource)
+                MangaOcr.readIfSelected(bitmap, union) ?: columns
+            else columns
             BubbleGroup(cluster, union, source, vertical)
-        }.sortedWith(compareByDescending<BubbleGroup> { it.bubble.centerX() }.thenBy { it.bubble.top })
+        }.sortedWith(groupOrder())
             .also { list ->
                 // Grouping decides whether one sentence reaches the model as one piece or as two
                 // that overwrite each other on the page, so it is worth seeing in a bug report.
@@ -555,7 +659,14 @@ object TranslationEngine {
             }
         }
         val cleaned = tidy(body, source)
-        if (cleaned.isNotEmpty() && cleaned == source.replace(WHITESPACE, "")) return ""
+        // An echoed source is worse than no answer. For a Latin target the answer legitimately
+        // has spaces, so both sides are compared with whitespace removed.
+        val echoed = if (target.keepSpaces)
+            source.replace(COLUMN_MARKS, "").replace(WHITESPACE, "")
+        else source.replace(WHITESPACE, "")
+        if (cleaned.isNotEmpty() &&
+            cleaned.replace(WHITESPACE, "") == echoed.replace(WHITESPACE, "")
+        ) return ""
         return cleaned
     }
 
@@ -604,9 +715,14 @@ object TranslationEngine {
      * Ellipses that the Japanese original actually contains are kept.
      */
     private fun tidy(text: String, source: String): String {
-        // Whitespace is only ever the column boundary leaking through, never part of a Chinese
-        // sentence, so it is dropped along with the old marker.
-        var out = text.replace(WHITESPACE, "").replace(COLUMN_MARKS, "").trim()
+        // A CJK line has no word spaces, so any whitespace is a leaked column boundary and is
+        // dropped along with the old marker. Latin and Korean output needs those spaces: fold
+        // runs into one instead of gluing every word together.
+        var out = if (target.keepSpaces) {
+            text.replace(COLUMN_MARKS, "").replace(WHITESPACE, " ").trim()
+        } else {
+            text.replace(WHITESPACE, "").replace(COLUMN_MARKS, "").trim()
+        }
         // The model scatters pauses of its own at guessed breaks. The original is the only
         // authority on how many there should be, so the count is capped by it — that keeps a
         // real 「…」 and stops the page filling up with dots.
@@ -643,6 +759,9 @@ object TranslationEngine {
         translated: List<String>,
         horizontal: Boolean = false
     ): Bitmap {
+        // Latin words cannot be stacked in a vertical column, so English output always uses the
+        // existing horizontal branch. The geometry (erase, patch, sampling) is untouched.
+        val forceHorizontal = horizontal || target.latin
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(out)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -680,7 +799,7 @@ object TranslationEngine {
             // Sample from the patch itself: a halftone bubble needs its own grey as the fill,
             // otherwise erased lettering turns into bright white glyph-shaped holes.
             val background = sampleBubbleColor(out, area)
-            val verticalText = if (horizontal) false else group.vertical
+            val verticalText = if (forceHorizontal) false else group.vertical
             patches.add(Patch(value, area, background, verticalText, unit * 1.45f))
             android.util.Log.d(
                 "Translate",
@@ -1043,9 +1162,13 @@ object TranslationEngine {
         }
         paint.textSize = size
         val lineH = size * 1.18f
-        val lines = wrap(text, paint, availW)
+        // At the smallest font a hard character split is the only way to draw anything; at
+        // every larger size a word wider than the bubble means "shrink the font", not "cut
+        // the word in half". CJK output never reaches wrapWords, so this only touches Latin.
+        val hard = size <= 7f
+        val lines = wrap(text, paint, availW, hard)
         if (lines.size * lineH > availH + 0.5f) return null
-        if (lines.size == 1 && paint.measureText(lines[0]) > availW + 0.5f) return null
+        if (!hard && lines.any { paint.measureText(it) > availW + 0.5f }) return null
         return Fit(emptyList(), lines, size)
     }
 
@@ -1076,7 +1199,13 @@ object TranslationEngine {
         return columns
     }
 
-    private fun wrap(text: String, paint: Paint, maxWidth: Float): List<String> {
+    private fun wrap(
+        text: String,
+        paint: Paint,
+        maxWidth: Float,
+        hard: Boolean = false
+    ): List<String> {
+        if (target.latin) return wrapWords(text, paint, maxWidth, hard)
         val lines = ArrayList<String>(4)
         val current = StringBuilder()
         for (ch in text) {
@@ -1090,5 +1219,50 @@ object TranslationEngine {
         }
         if (current.isNotEmpty()) lines.add(current.toString())
         return lines
+    }
+
+    /**
+     * Word-aware wrapping for Latin output. Character wrapping cut "weather" into "wea / ther";
+     * a single token that is still wider than the bubble at this font size is broken anyway so
+     * the layout loop always has something it can fit.
+     */
+    private fun wrapWords(
+        text: String,
+        paint: Paint,
+        maxWidth: Float,
+        hard: Boolean
+    ): List<String> {
+        val lines = ArrayList<String>(4)
+        var current = ""
+        for (word in text.split(WHITESPACE).filter { it.isNotEmpty() }) {
+            val candidate = if (current.isEmpty()) word else "$current $word"
+            if (current.isNotEmpty() && paint.measureText(candidate) > maxWidth) {
+                lines.add(current)
+                current = word
+            } else {
+                current = candidate
+            }
+        }
+        if (current.isNotEmpty()) lines.add(current)
+        // layout() retries with a smaller font when a whole word does not fit. Only at the
+        // 7 px floor do we split a token by character, so a normal page never reads "kno / w".
+        if (!hard) return lines
+        val out = ArrayList<String>(lines.size)
+        for (line in lines) {
+            if (paint.measureText(line) <= maxWidth) {
+                out.add(line)
+                continue
+            }
+            var piece = ""
+            for (ch in line) {
+                if (piece.isNotEmpty() && paint.measureText(piece + ch) > maxWidth) {
+                    out.add(piece)
+                    piece = ""
+                }
+                piece += ch
+            }
+            if (piece.isNotEmpty()) out.add(piece)
+        }
+        return out
     }
 }

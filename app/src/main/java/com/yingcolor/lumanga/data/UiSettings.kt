@@ -69,6 +69,24 @@ class UiSettings(private val prefs: Prefs) {
     private var stateTranslateMode by mutableIntStateOf(TranslateMode.coerce(prefs.translateMode))
     val translateMode: Int get() = stateTranslateMode
 
+    private var stateSourceLanguage by mutableIntStateOf(SourceLanguage.coerce(prefs.sourceLanguage))
+    val sourceLanguage: Int get() = stateSourceLanguage
+
+    private var stateTargetLanguage by mutableIntStateOf(TargetLanguage.coerce(prefs.targetLanguage))
+    val targetLanguage: Int get() = stateTargetLanguage
+
+    /** Part of every reader cache key, so switching languages can never serve a stale page. */
+    val languageKey: String
+        get() = if (stateSourceLanguage == SourceLanguage.DEFAULT.id &&
+            stateTargetLanguage == TargetLanguage.DEFAULT.id
+        ) "" else "s${stateSourceLanguage}t${stateTargetLanguage}"
+
+    init {
+        // The engine and the store read these globals rather than threading a language argument
+        // through every call. Publishing them here also makes a cold start pick up saved prefs.
+        syncLanguages()
+    }
+
     private var stateOcrModel by mutableIntStateOf(OcrModel.from(prefs.ocrModel).id)
     val ocrModel: Int get() = stateOcrModel
 
@@ -111,6 +129,25 @@ class UiSettings(private val prefs: Prefs) {
         val safe = TranslateMode.coerce(value)
         stateTranslateMode = safe
         prefs.translateMode = safe
+    }
+
+    fun setSourceLanguage(value: Int) {
+        val safe = SourceLanguage.coerce(value)
+        stateSourceLanguage = safe
+        prefs.sourceLanguage = safe
+        syncLanguages()
+    }
+
+    fun setTargetLanguage(value: Int) {
+        val safe = TargetLanguage.coerce(value)
+        stateTargetLanguage = safe
+        prefs.targetLanguage = safe
+        syncLanguages()
+    }
+
+    private fun syncLanguages() {
+        TranslationEngine.source = SourceLanguage.from(stateSourceLanguage)
+        TranslationEngine.target = TargetLanguage.from(stateTargetLanguage)
     }
 
     fun setOcrModel(value: Int) {
