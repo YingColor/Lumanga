@@ -43,8 +43,8 @@ enum class OcrModel(
         get() = listOf(det, rec, "characters.json")
 
     companion object {
-        /** Fresh installs and any unknown stored id land on the whole-bubble reader. */
-        val DEFAULT: OcrModel = MANGA
+        /** Fresh installs and any unknown stored id land on the fast column reader. */
+        val DEFAULT: OcrModel = SMALL
 
         fun from(id: Int): OcrModel = entries.firstOrNull { it.id == id } ?: DEFAULT
     }

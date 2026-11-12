@@ -111,6 +111,7 @@ import com.yingcolor.lumanga.data.PageAnimation
 import com.yingcolor.lumanga.data.PageDecoder
 import com.yingcolor.lumanga.data.PageSource
 import com.yingcolor.lumanga.data.Prefs
+import com.yingcolor.lumanga.data.TextLayout
 import com.yingcolor.lumanga.data.TextRegion
 import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.TranslationStore
@@ -673,9 +674,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         source: Bitmap,
         api: String,
         apiKey: String,
-        model: String
+        model: String,
+        horizontal: Boolean
     ): Bitmap? {
-        val key = "$index-${source.width}x${source.height}-${(api + model).hashCode()}"
+        // The layout is part of the key: flipping the switch must redraw instead of returning
+        // the vertical bitmap that is already cached for this page.
+        val key = "$index-${source.width}x${source.height}-${(api + model).hashCode()}-$horizontal"
         translatedCache.get(key)?.let {
             publish(index, TranslateState())
             return it
@@ -683,7 +687,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         publish(index, TranslateState(TranslateKind.WORKING))
         val deferred = synchronized(translationLock) {
             translating[key] ?: viewModelScope.async(Dispatchers.IO) {
-                runTranslate(index, key, source, api, apiKey, model)
+                runTranslate(index, key, source, api, apiKey, model, horizontal)
             }.also { translating[key] = it }
         }
         val started = System.currentTimeMillis()
@@ -748,12 +752,13 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         source: Bitmap,
         api: String,
         apiKey: String,
-        model: String
+        model: String,
+        horizontal: Boolean
     ): TranslateOutcome {
         val rk = resultKey(index, api, model)
         pageResults.get(rk)?.let { cached ->
             android.util.Log.i("Translate", "TR reuse index=$index")
-            return TranslateOutcome.Done(renderScaled(source, cached))
+            return TranslateOutcome.Done(renderScaled(source, cached, horizontal))
         }
         // A page translated ahead of time (long-press → 预翻译) needs neither OCR nor network.
         val stored = TranslationStore.page(getApplication(), bookId, index)
@@ -766,7 +771,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             android.util.Log.i("Translate", "TR stored index=$index")
             val cached = PageResult(stored.width, stored.height, stored.groups, stored.lines)
             pageResults.put(rk, cached)
-            return TranslateOutcome.Done(renderScaled(source, cached))
+            return TranslateOutcome.Done(renderScaled(source, cached, horizontal))
         }
         if (api.isBlank()) return TranslateOutcome.Failed("no endpoint")
         // The page on screen must never queue behind its neighbours: OCR is serialised, so a
@@ -827,7 +832,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         pageResults.put(rk, PageResult(source.width, source.height, groups, lines))
-        val rendered = TranslationEngine.render(source, groups, lines)
+        val rendered = TranslationEngine.render(source, groups, lines, horizontal)
         // Store the result here rather than in the caller: if the user scrolled away while the
         // request was in flight the awaiter is already cancelled, and the finished page would
         // otherwise be dropped and re-translated from scratch on the next visit.
@@ -840,9 +845,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         "$index-${(api + model).hashCode()}"
 
     /** Re-draws a cached page at a different decode size instead of running OCR again. */
-    private fun renderScaled(source: Bitmap, cached: PageResult): Bitmap {
+    private fun renderScaled(source: Bitmap, cached: PageResult, horizontal: Boolean): Bitmap {
         if (cached.width == source.width && cached.height == source.height) {
-            return TranslationEngine.render(source, cached.groups, cached.lines)
+            return TranslationEngine.render(source, cached.groups, cached.lines, horizontal)
         }
         val sx = source.width.toFloat() / cached.width
         val sy = source.height.toFloat() / cached.height
@@ -854,7 +859,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 bubble = scaleRect(group.bubble, sx, sy)
             )
         }
-        return TranslationEngine.render(source, scaled, cached.lines)
+        return TranslationEngine.render(source, scaled, cached.lines, horizontal)
     }
 
     private fun scaleRect(rect: Rect, sx: Float, sy: Float): Rect = Rect(
@@ -2193,6 +2198,7 @@ private fun PageRow(
         api = settings.translateApi,
         apiKey = settings.translateApiKey,
         model = settings.translateModel,
+        layout = settings.textLayout,
         modifier = modifier
     )
 }
@@ -2210,7 +2216,8 @@ private fun rememberPageBitmap(
     translate: Boolean,
     api: String,
     apiKey: String,
-    model: String
+    model: String,
+    layout: Int
 ): Bitmap? {
     
     
@@ -2241,7 +2248,7 @@ private fun rememberPageBitmap(
         initialValue = vm.peekPage(index, quality) ?: vm.peekPlaceholder(index),
         key1 = index,
         key2 = quality,
-        key3 = "$decodeW-$decodeH-$translate-$api-$model-${vm.translationRetry}"
+        key3 = "$decodeW-$decodeH-$translate-$api-$model-$layout-${vm.translationRetry}"
     ) {
         
         
@@ -2254,7 +2261,9 @@ private fun rememberPageBitmap(
         val full = vm.page(index, decodeW, decodeH, quality)
         if (full != null) value = full
         if (translate && full != null) {
-            val rendered = vm.translate(index, full, api, apiKey, model)
+            val rendered = vm.translate(
+                index, full, api, apiKey, model, layout == TextLayout.HORIZONTAL
+            )
             if (rendered != null) value = rendered
         }
     }
@@ -2284,6 +2293,7 @@ private fun PageSpread(
     api: String,
     apiKey: String,
     model: String,
+    layout: Int,
     modifier: Modifier = Modifier
 ) {
     var panX by remember(indices, zoomMode, zoomPercent) { mutableStateOf(0f) }
@@ -2303,7 +2313,7 @@ private fun PageSpread(
         for (i in indices) {
             loaded += rememberPageBitmap(
                 vm, i, targetW, targetH, quality, zoomMode, zoomPercent,
-                translate, api, apiKey, model
+                translate, api, apiKey, model, layout
             )
         }
 

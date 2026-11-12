@@ -559,7 +559,19 @@ object TranslationEngine {
         val maxGlyph: Float
     )
 
-    fun render(source: Bitmap, groups: List<BubbleGroup>, translated: List<String>): Bitmap {
+    /**
+     * Draws [translated] over the erased bubble areas.
+     *
+     * [horizontal] forces ordinary left-to-right lines even when the source bubble was vertical.
+     * Only the drawing direction changes: patch growth, erasing and sampling all follow the
+     * source geometry, so a page translated earlier renders correctly in either mode.
+     */
+    fun render(
+        source: Bitmap,
+        groups: List<BubbleGroup>,
+        translated: List<String>,
+        horizontal: Boolean = false
+    ): Bitmap {
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(out)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -597,10 +609,11 @@ object TranslationEngine {
             // Sample from the patch itself: a halftone bubble needs its own grey as the fill,
             // otherwise erased lettering turns into bright white glyph-shaped holes.
             val background = sampleBubbleColor(out, area)
-            patches.add(Patch(value, area, background, group.vertical, unit * 1.45f))
+            val verticalText = if (horizontal) false else group.vertical
+            patches.add(Patch(value, area, background, verticalText, unit * 1.45f))
             android.util.Log.d(
                 "Translate",
-                "TR patch i=$i clean=$clean " +
+                "TR patch i=$i clean=$clean vertical=$verticalText " +
                     "seed=${group.bubble.width()}x${group.bubble.height()} " +
                     "area=${area.width()}x${area.height()} unit=$unit"
             )

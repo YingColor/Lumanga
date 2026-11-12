@@ -66,6 +66,15 @@ class UiSettings(private val prefs: Prefs) {
     private var stateOcrModel by mutableIntStateOf(OcrModel.from(prefs.ocrModel).id)
     val ocrModel: Int get() = stateOcrModel
 
+    private var stateTextLayout by mutableIntStateOf(TextLayout.coerce(prefs.textLayout))
+    val textLayout: Int get() = stateTextLayout
+
+    fun setTextLayout(value: Int) {
+        val safe = TextLayout.coerce(value)
+        stateTextLayout = safe
+        prefs.textLayout = safe
+    }
+
     fun setTranslateEnabled(value: Boolean) {
         stateTranslateEnabled = value
         prefs.translateEnabled = value

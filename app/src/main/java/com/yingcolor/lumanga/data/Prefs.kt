@@ -170,10 +170,18 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_TRANSLATE_KEY, "") ?: ""
         set(value) = sp.edit().putString(KEY_TRANSLATE_KEY, value.trim()).apply()
 
-    /** 0 = PP-OCRv6 Small, 1 = PP-OCRv6 Medium, 2 = MangaOCR_mobile (default). */
+    /** 0 = PP-OCRv6 Small (default), 1 = PP-OCRv6 Medium, 2 = MangaOCR_mobile. */
     var ocrModel: Int
         get() = sp.getInt(KEY_OCR_MODEL, OcrModel.DEFAULT.id)
         set(value) = sp.edit().putInt(KEY_OCR_MODEL, OcrModel.from(value).id).apply()
+
+    /**
+     * How translated text is laid out on the page. 0 keeps the source orientation (vertical
+     * columns for a Japanese bubble), 1 forces horizontal lines read left to right.
+     */
+    var textLayout: Int
+        get() = sp.getInt(KEY_TEXT_LAYOUT, TextLayout.VERTICAL)
+        set(value) = sp.edit().putInt(KEY_TEXT_LAYOUT, TextLayout.coerce(value)).apply()
 
     var readMode: Int
         get() = sp.getInt(KEY_READ_MODE, 0).coerceIn(0, 2)
@@ -323,6 +331,7 @@ class Prefs(context: Context) {
         const val KEY_TRANSLATE_MODEL = "translate_model"
         const val KEY_TRANSLATE_KEY = "translate_api_key"
         const val KEY_OCR_MODEL = "ocr_model"
+        const val KEY_TEXT_LAYOUT = "text_layout"
 
         const val MIN_ZOOM_PERCENT = 40
         const val MAX_ZOOM_PERCENT = 400

@@ -42,6 +42,7 @@ import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.BatchPreTranslate
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.OcrModel
+import com.yingcolor.lumanga.data.TextLayout
 import com.yingcolor.lumanga.data.TranslationStore
 import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.util.folderLabel
@@ -242,6 +243,23 @@ fun BatchPreTranslateDialog(
                         Spacer(Modifier.width(10.dp))
                         Text(
                             S.preTranslateOcrValue(OcrModel.from(settings.ocrModel).label),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            S.preTranslateLayout,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            S.preTranslateOcrValue(
+                                if (settings.textLayout == TextLayout.HORIZONTAL) {
+                                    S.translateLayoutHorizontalShort
+                                } else S.translateLayoutVerticalShort
+                            ),
                             style = MaterialTheme.typography.labelSmall
                         )
                     }

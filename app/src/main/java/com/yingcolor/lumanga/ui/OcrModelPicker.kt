@@ -32,7 +32,7 @@ fun OcrModelPicker(settings: UiSettings) {
         )
         Spacer(Modifier.height(6.dp))
         // Default first, so the recommended model is the first row a user sees.
-        listOf(OcrModel.MANGA, OcrModel.SMALL, OcrModel.MEDIUM).forEach { model ->
+        listOf(OcrModel.SMALL, OcrModel.MEDIUM, OcrModel.MANGA).forEach { model ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier

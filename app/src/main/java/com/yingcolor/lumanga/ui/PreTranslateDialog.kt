@@ -60,6 +60,7 @@ import com.yingcolor.lumanga.data.BatchPreTranslate
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BookPreview
 import com.yingcolor.lumanga.data.PreTranslate
+import com.yingcolor.lumanga.data.TextLayout
 import com.yingcolor.lumanga.data.TranslationStore
 import com.yingcolor.lumanga.data.UiSettings
 import kotlinx.coroutines.Dispatchers
@@ -226,6 +227,24 @@ fun PreTranslateDialog(
                     Spacer(Modifier.width(10.dp))
                     Text(
                         text = S.preTranslateOcrValue(OcrModel.from(settings.ocrModel).label),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = S.preTranslateLayout,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = S.preTranslateOcrValue(
+                            if (settings.textLayout == TextLayout.HORIZONTAL) {
+                                S.translateLayoutHorizontalShort
+                            } else S.translateLayoutVerticalShort
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )

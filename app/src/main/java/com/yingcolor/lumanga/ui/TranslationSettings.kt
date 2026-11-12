@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.yingcolor.lumanga.S
+import com.yingcolor.lumanga.data.TextLayout
 import com.yingcolor.lumanga.data.TextRegion
 import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.UiSettings
@@ -48,6 +49,27 @@ fun TranslationSettings(settings: UiSettings) {
 
     Spacer(Modifier.height(16.dp))
     OcrModelPicker(settings)
+    Spacer(Modifier.height(16.dp))
+
+    // A reading preference, not a recognition one: stored pages keep their layout and text, so
+    // flipping this redraws them immediately without another OCR pass or network call.
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = S.translateLayoutHorizontal, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = S.translateLayoutHorizontalTip,
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = settings.textLayout == TextLayout.HORIZONTAL,
+            onCheckedChange = {
+                settings.setTextLayout(if (it) TextLayout.HORIZONTAL else TextLayout.VERTICAL)
+            }
+        )
+    }
+
     Spacer(Modifier.height(16.dp))
 
     Row(verticalAlignment = Alignment.CenterVertically) {
