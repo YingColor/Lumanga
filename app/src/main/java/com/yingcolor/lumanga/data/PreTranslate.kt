@@ -23,11 +23,21 @@ object PreTranslate {
     private const val MAX_SIDE = 1400
 
     sealed interface Result {
-        data object Done : Result
+        /** [translated] pages written this run, [skipped] pages reused from an earlier run. */
+        data class Done(val translated: Int, val skipped: Int) : Result
         data class Failed(val page: Int, val reason: String) : Result
         data object Cancelled : Result
     }
 
+    /** Page count without keeping an archive open; used for progress and the "done" badge. */
+    fun pageCount(context: Context, book: Book): Int = runCatching {
+        PageSource.open(context, book).use { it.pageCount }
+    }.getOrDefault(0)
+
+    /**
+     * [skipStored] is what makes a batch resumable: every page already in [TranslationStore] is
+     * left alone, so a cancelled run, a dead battery or a network drop never redoes finished work.
+     */
     suspend fun run(
         context: Context,
         book: Book,
@@ -35,25 +45,44 @@ object PreTranslate {
         api: String,
         apiKey: String,
         model: String,
+        skipStored: Boolean = true,
         onProgress: suspend (done: Int, index: Int) -> Unit
     ): Result = withContext(Dispatchers.IO) {
-        if (pages.isEmpty()) return@withContext Result.Done
+        if (pages.isEmpty()) return@withContext Result.Done(0, 0)
         if (api.isBlank()) return@withContext Result.Failed(pages.first(), "no endpoint")
-        var source: PageSource? = null
+        val stored = if (skipStored) TranslationStore.translatedIndexes(context, book.id) else emptySet()
+        // Carry the previous lines into the first page of a resumed run so the model keeps the
+        // tone of the conversation instead of treating it as a fresh volume.
         var previous: List<String> = emptyList()
+        val firstPending = pages.firstOrNull { it !in stored }
+        if (firstPending != null) {
+            val prior = pages.filter { it < firstPending && it in stored }.maxOrNull()
+            if (prior != null) previous = TranslationStore.page(context, book.id, prior)?.lines.orEmpty()
+        }
+        var source: PageSource? = null
+        var current = pages.first()
         try {
-            source = PageSource.open(context, book)
-            val total = pages.size
             var done = 0
+            var translated = 0
+            var skipped = 0
             for (index in pages) {
                 coroutineContext.ensureActive()
+                current = index
                 onProgress(done, index)
-                if (index < 0 || index >= source.pageCount) {
+                if (index in stored) {
+                    skipped++
                     done++
+                    onProgress(done, index)
+                    continue
+                }
+                val reader = source ?: PageSource.open(context, book).also { source = it }
+                if (index < 0 || index >= reader.pageCount) {
+                    done++
+                    onProgress(done, index)
                     continue
                 }
                 android.util.Log.i("PreTranslate", "page=$index start")
-                val bytes = source.readPage(index)
+                val bytes = reader.readPage(index)
                 val decoded = PageDecoder.decode(bytes, MAX_SIDE, MAX_SIDE)
                 val page = fit(decoded, MAX_SIDE)
                 try {
@@ -65,43 +94,50 @@ object PreTranslate {
                             PageTranslation(page.width, page.height, emptyList(), emptyList())
                         )
                         android.util.Log.i("PreTranslate", "page=$index skipped")
-                        done++
-                        continue
+                    } else {
+                        val groups = TranslationEngine.groupBubbles(regions, page.width, page.height, page)
+                        if (groups.isEmpty()) {
+                            TranslationStore.save(
+                                context, book.id, index,
+                                PageTranslation(page.width, page.height, emptyList(), emptyList())
+                            )
+                        } else {
+                            val lines = TranslationEngine.translate(groups, api, model, previous, apiKey)
+                                ?: return@withContext Result.Failed(index, "network")
+                            if (lines.all { it.isBlank() }) {
+                                return@withContext Result.Failed(index, "empty reply")
+                            }
+                            TranslationStore.save(
+                                context, book.id, index,
+                                PageTranslation(page.width, page.height, groups, lines)
+                            )
+                            previous = lines
+                            android.util.Log.i("PreTranslate", "page=$index ok groups=${groups.size}")
+                        }
                     }
-                    val groups = TranslationEngine.groupBubbles(regions, page.width, page.height, page)
-                    if (groups.isEmpty()) {
-                        TranslationStore.save(
-                            context, book.id, index,
-                            PageTranslation(page.width, page.height, emptyList(), emptyList())
-                        )
-                        done++
-                        continue
-                    }
-                    val lines = TranslationEngine.translate(groups, api, model, previous, apiKey)
-                        ?: return@withContext Result.Failed(index, "network")
-                    if (lines.all { it.isBlank() }) {
-                        return@withContext Result.Failed(index, "empty reply")
-                    }
-                    TranslationStore.save(
-                        context, book.id, index,
-                        PageTranslation(page.width, page.height, groups, lines)
-                    )
-                    previous = lines
-                    android.util.Log.i(
-                        "PreTranslate", "page=$index ok groups=${groups.size}"
-                    )
                 } finally {
                     if (page !== decoded) page.recycle()
                     decoded.recycle()
                 }
                 done++
+                translated++
                 onProgress(done, index)
             }
-            Result.Done
+            // Every page present means the volume is finished, even if this run only had to fill
+            // a handful of gaps. This is what lights up the shelf badge.
+            val total = source?.pageCount ?: pageCount(context, book)
+            if (total > 0 && TranslationStore.count(context, book.id) >= total) {
+                TranslationStore.markComplete(context, book.id, total)
+            }
+            android.util.Log.i(
+                "PreTranslate",
+                "book done translated=$translated skipped=$skipped pages=$total"
+            )
+            Result.Done(translated, skipped)
         } catch (cancel: CancellationException) {
             Result.Cancelled
         } catch (t: Throwable) {
-            Result.Failed(pages.firstOrNull() ?: 0, t.javaClass.simpleName)
+            Result.Failed(current, t.javaClass.simpleName)
         } finally {
             runCatching { source?.close() }
         }

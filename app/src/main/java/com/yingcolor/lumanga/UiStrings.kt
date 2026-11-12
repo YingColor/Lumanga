@@ -206,10 +206,11 @@ object S {
     const val preTranslateApiKeyTip = "接口需要鉴权时填，不需要就留空。只保存在本机。"
     const val preTranslateOcr = "文字识别模型"
     const val ocrModelTitle = "文字识别模型"
-    const val ocrModelTip = "三款都内置在手机里，不用下载。切换后从下一页开始生效，预翻译整本也用选中的这一款。"
-    const val ocrModelSmallTip = "轻快省电，识别速度优先，适合边看边译"
-    const val ocrModelMediumTip = "识别更准、小字更稳，但模型更大、明显更慢更耗电，建议预翻译时用"
-    const val ocrModelMangaTip = "漫画专用：整句一次读出，语序和省略号最准，但比前两款慢，建议预翻译时用"
+    const val ocrModelTip = "三款都内置在手机里，不用下载。默认用漫画专用的整气泡识别；切换后从下一页开始生效，预翻译整本和批量预翻译都跟着用这一款。"
+    const val ocrModelDefault = "默认"
+    const val ocrModelSmallTip = "逐列识别，最省电，适合只想快速看个大概"
+    const val ocrModelMediumTip = "逐列识别、小字更稳，但明显更慢更耗电，只建议整本预翻译时用"
+    const val ocrModelMangaTip = "漫画专用：整个气泡一次读出一句，语序和省略号最准，也比 medium 快得多"
     const val ocrModelSwitching = "正在加载模型…"
     fun preTranslateOcrValue(name: String): String = "$name · 在「翻译配置」里可切换"
     const val preTranslatePages = "要翻译的页 · 点缩略图勾选"
@@ -217,10 +218,14 @@ object S {
     const val preTranslateSelectNone = "全不选"
     const val preTranslateStart = "开始预翻译"
     const val preTranslateStop = "停止"
-    const val preTranslateKeepOpen = "翻译时请让这个窗口保持打开"
+    const val preTranslateKeepOpen = "翻译时请让这个窗口保持打开；关掉会停止，但译好的页会留着"
     const val preTranslateNeedEndpoint = "先填翻译服务地址"
     const val preTranslateNeedPages = "至少选一页"
     const val preTranslateCancelled = "已停止，译好的页已经保存"
+    const val preTranslateResumeToggle = "跳过已译好的页（断点续传）"
+    const val preTranslateResumeHint = "中断后再开始，只补没译完的页；关掉这个开关会全部重译。"
+    const val preTranslateBusy = "批量预翻译正在进行，请先到批量窗口里停止或查看"
+    const val translatedBadge = "已翻译"
     const val translateTest = "测试连接"
     const val translateTesting = "测试中…"
     const val translateTestOk = "连接成功，翻译可用"
@@ -239,9 +244,59 @@ object S {
 
     fun preTranslateDone(count: Int): String = "完成，这本共译好 $count 页"
 
+    fun preTranslateDoneResume(newPages: Int, skipped: Int): String =
+        "完成，新译 $newPages 页、沿用 $skipped 页"
+
     fun preTranslateFailed(page: Int): String = "第 ${page + 1} 页失败，已译好的页已经保存"
 
     fun preTranslateStored(count: Int): String = "这本已经存了 $count 页译文 · 长按封面可删除"
+
+    // ---- Folder batch pre-translate ----
+    const val batchPreTranslate = "批量预翻译"
+    const val batchTitle = "按文件夹批量预翻译"
+    const val batchIntro = "把整个文件夹里的书一次译完，封面会打上「已翻译」角标。窗口可以关掉，任务会继续；中途停了或断网，下次点「继续上次」从没译完的那一页接着来。"
+    const val batchScope = "选择文件夹"
+    const val batchScopeAll = "全部书籍"
+    const val batchSkipDone = "跳过已经标了「已翻译」的书"
+    const val batchResume = "继续上次"
+    const val batchStart = "开始批量预翻译"
+    const val batchStop = "停止批量"
+    const val batchClose = "关闭窗口"
+    const val batchKeepOpen = "关掉窗口不会中断，书架顶部会一直显示进度"
+    const val batchNeedEndpoint = "先填翻译服务地址"
+    const val batchNoBooks = "这个文件夹里没有可翻译的书"
+    const val batchAllDone = "这些书都已经标了「已翻译」；想全部重译，把上面的开关关掉"
+    const val batchStopped = "已停止，译好的页都保存了，点「继续上次」接着译"
+    const val batchDiscard = "放弃未完成"
+    const val batchDiscardTitle = "放弃这次批量预翻译？"
+    const val batchDiscardBody = "只会清掉「还剩几本」的待办清单，已经译好的页全部保留，随时可以重新批量。"
+    const val batchDiscardConfirm = "放弃清单"
+    const val batchConfirmTitle = "开始批量预翻译？"
+    const val batchConfirmStart = "开始"
+    fun batchConfirmBody(count: Int): String =
+        "这次要译 $count 本，每页要十几秒，全部译完可能要很久。可以关掉窗口去做别的事，也可以随时停止，译好的页都会留着，下次接着译。"
+    const val batchBannerRunning = "批量预翻译进行中"
+    const val batchBannerPending = "上次的批量预翻译还没做完"
+    const val batchBannerOpen = "点这里查看"
+
+    fun batchBookCount(count: Int, done: Int): String =
+        "共 $count 本 · 其中 $done 本已标「已翻译」"
+
+    fun batchPending(count: Int): String = "上次未完成，还剩 $count 本"
+
+    fun batchRunning(book: Int, total: Int, name: String, page: Int, pages: Int): String =
+        "第 $book / $total 本：$name · $page / $pages 页"
+
+    fun batchDone(count: Int, failed: Int): String =
+        if (failed > 0) "完成 $count 本，$failed 本没译完（已留在队列里）" else "完成，共译好 $count 本"
+
+    fun batchFailed(name: String, page: Int): String =
+        "《$name》第 ${page + 1} 页失败，已译好的页都留着，点「继续上次」重试"
+
+    fun batchBannerDetail(book: Int, total: Int, page: Int, pages: Int): String =
+        "第 $book/$total 本 · $page/$pages 页"
+
+    fun batchBannerPendingDetail(count: Int): String = "还剩 $count 本"
 
     fun pageProgressCompact(page: Int, total: Int): String {
         if (total <= 0) return "已读"

@@ -2,6 +2,8 @@ package com.yingcolor.lumanga.data
 
 import android.content.Context
 import android.graphics.Rect
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -34,9 +36,22 @@ data class PageTranslation(
 object TranslationStore {
     private const val VERSION = 14
     private const val DIR = "translations"
+    private const val STATUS_FILE = "completed.json"
 
     private val cache = ConcurrentHashMap<String, MutableMap<Int, PageTranslation>>()
     private val locks = ConcurrentHashMap<String, Any>()
+
+    /**
+     * Which volumes have been translated end to end. Kept in a tiny file next to the per-book
+     * data so the shelf can show a badge without parsing a whole volume's layout. It carries the
+     * same [VERSION] as the layouts: when a grouping rule changes and the layouts are discarded,
+     * the badges go with them.
+     */
+    private val statusLock = Any()
+    private val completed = HashMap<String, Int>()
+    private var statusLoaded = false
+    private val completedRevFlow = MutableStateFlow(0)
+    val completedRev: StateFlow<Int> get() = completedRevFlow
 
     private fun dir(context: Context): File =
         File(context.filesDir, DIR).apply { if (!exists()) mkdirs() }
@@ -77,11 +92,72 @@ object TranslationStore {
             cache.remove(bookId)
             runCatching { fileFor(context, bookId).delete() }
         }
+        unmarkComplete(context, bookId)
     }
 
     /** Drops only the in-memory copy; the file is read again on next access. */
     fun invalidate(bookId: String) {
         cache.remove(bookId)
+    }
+
+    /** True once a whole volume has been translated from its first page to its last. */
+    fun isComplete(context: Context, bookId: String): Boolean = synchronized(statusLock) {
+        loadStatus(context)
+        completed.containsKey(bookId)
+    }
+
+    /**
+     * Records a finished volume. The caller must have saved every page; the count check keeps a
+     * partially translated volume from wearing a "done" badge after an interrupted run.
+     */
+    fun markComplete(context: Context, bookId: String, pageCount: Int) {
+        if (pageCount <= 0 || count(context, bookId) < pageCount) return
+        synchronized(statusLock) {
+            loadStatus(context)
+            if (completed[bookId] == pageCount) return
+            completed[bookId] = pageCount
+            writeStatus(context)
+        }
+        completedRevFlow.value++
+    }
+
+    private fun unmarkComplete(context: Context, bookId: String) {
+        synchronized(statusLock) {
+            loadStatus(context)
+            if (completed.remove(bookId) == null) return
+            writeStatus(context)
+        }
+        completedRevFlow.value++
+    }
+
+    private fun loadStatus(context: Context) {
+        if (statusLoaded) return
+        statusLoaded = true
+        val file = File(dir(context), STATUS_FILE)
+        if (!file.isFile) return
+        val root = runCatching { JSONObject(file.readText(Charsets.UTF_8)) }.getOrNull() ?: return
+        if (root.optInt("v", 0) != VERSION) {
+            runCatching { file.delete() }
+            return
+        }
+        val books = root.optJSONObject("books") ?: return
+        for (key in books.keys()) {
+            val pages = books.optInt(key, 0)
+            if (pages > 0) completed[key] = pages
+        }
+    }
+
+    private fun writeStatus(context: Context) {
+        val books = JSONObject()
+        completed.forEach { (id, pages) -> books.put(id, pages) }
+        val root = JSONObject().put("v", VERSION).put("books", books)
+        val target = File(dir(context), STATUS_FILE)
+        val temp = File(target.parentFile, target.name + ".tmp")
+        runCatching {
+            temp.writeText(root.toString(), Charsets.UTF_8)
+            if (target.exists()) target.delete()
+            temp.renameTo(target)
+        }
     }
 
     private fun read(context: Context, bookId: String): Map<Int, PageTranslation> {

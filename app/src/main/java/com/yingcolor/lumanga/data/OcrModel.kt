@@ -1,9 +1,9 @@
 package com.yingcolor.lumanga.data
 
 /**
- * The two bundled text recognisers. Both share the same detector input (1x3x640x640),
- * recogniser input (1x3x48x640) and the 18710-entry vocabulary in characters.json, so
- * everything except the inference backend is reused verbatim.
+ * The bundled text recognisers. SMALL and MEDIUM share the same detector input
+ * (1x3x640x640), recogniser input (1x3x48x640) and the vocabulary in characters.json;
+ * MANGA reuses SMALL's detector but reads a whole bubble with its own encoder/decoder.
  */
 enum class OcrModel(
     val id: Int,
@@ -43,6 +43,9 @@ enum class OcrModel(
         get() = listOf(det, rec, "characters.json")
 
     companion object {
-        fun from(id: Int): OcrModel = entries.firstOrNull { it.id == id } ?: SMALL
+        /** Fresh installs and any unknown stored id land on the whole-bubble reader. */
+        val DEFAULT: OcrModel = MANGA
+
+        fun from(id: Int): OcrModel = entries.firstOrNull { it.id == id } ?: DEFAULT
     }
 }

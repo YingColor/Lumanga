@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -60,6 +61,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SmallFloatingActionButton
@@ -69,6 +71,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -102,6 +105,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yingcolor.lumanga.BuildConfig
 import com.yingcolor.lumanga.S
+import com.yingcolor.lumanga.data.BatchPreTranslate
+import com.yingcolor.lumanga.data.BatchState
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BookKind
 import com.yingcolor.lumanga.data.ComicRepository
@@ -328,6 +333,7 @@ fun ShelfScreen(
     var readFilterMenu by remember { mutableStateOf(false) }
     var preTarget by remember { mutableStateOf<Book?>(null) }
     var preDeleteTarget by remember { mutableStateOf<Book?>(null) }
+    var batchOpen by remember { mutableStateOf(false) }
     var deleteTaps by remember { mutableIntStateOf(0) }
     var lastDeleteTapAt by remember { mutableStateOf(0L) }
     val shelfScope = rememberCoroutineScope()
@@ -370,6 +376,7 @@ fun ShelfScreen(
     }
     val scheme = MaterialTheme.colorScheme
     val columns = settings.gridColumns
+    val batchState by BatchPreTranslate.state.collectAsState()
 
     
     
@@ -601,6 +608,10 @@ fun ShelfScreen(
             
             
 
+            if (batchState.running || batchState.pending.isNotEmpty()) {
+                BatchBanner(state = batchState, onClick = { batchOpen = true })
+            }
+
             when {
                 error != null -> EmptyState(
                     title = S.folderError,
@@ -771,6 +782,14 @@ fun ShelfScreen(
                     }
                 )
                 DrawerRow(
+                    icon = Icons.Filled.PlayArrow,
+                    label = S.batchPreTranslate,
+                    onClick = {
+                        drawerOpen = false
+                        batchOpen = true
+                    }
+                )
+                DrawerRow(
                     icon = Icons.Filled.Info,
                     label = S.about,
                     onClick = {
@@ -795,6 +814,15 @@ fun ShelfScreen(
             book = target,
             settings = settings,
             onDismiss = { preTarget = null }
+        )
+    }
+
+    if (batchOpen) {
+        BatchPreTranslateDialog(
+            books = sorted,
+            settings = settings,
+            initialGroup = groupFilter,
+            onDismiss = { batchOpen = false }
         )
     }
 
@@ -862,6 +890,57 @@ fun ShelfScreen(
     }
 }
 
+
+/**
+ * Persistent way back into a folder batch. It stays visible while the batch runs and remains
+ * after the app was killed so the unfinished queue can be resumed with one tap.
+ */
+@Composable
+private fun BatchBanner(state: BatchState, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        color = scheme.primaryContainer,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clickable(onClick = onClick)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (state.running) S.batchBannerRunning else S.batchBannerPending,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = scheme.onPrimaryContainer,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = S.batchBannerOpen,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.primary
+                )
+            }
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = if (state.running) {
+                    S.batchBannerDetail(
+                        state.doneBooks + 1, state.totalBooks,
+                        state.pageDone, state.pageTotal
+                    )
+                } else S.batchBannerPendingDetail(state.pending.size),
+                style = MaterialTheme.typography.labelSmall,
+                color = scheme.onPrimaryContainer
+            )
+            if (state.running && state.pageTotal > 0) {
+                Spacer(Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { state.pageDone.toFloat() / state.pageTotal },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun DrawerRow(
@@ -994,6 +1073,11 @@ private fun BookCard(
 ) {
     var coverMenu by remember { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
+    val appContext = LocalContext.current.applicationContext
+    val completedRev by TranslationStore.completedRev.collectAsState()
+    val translated = remember(book.id, completedRev) {
+        TranslationStore.isComplete(appContext, book.id)
+    }
     val compact = columns >= 4
     val pad = when {
         columns >= 5 -> 5.dp
@@ -1100,6 +1184,25 @@ private fun BookCard(
                             contentDescription = S.favoriteLabel,
                             tint = FavoritePink,
                             modifier = Modifier.size(if (compact) 14.dp else 18.dp)
+                        )
+                    }
+                }
+
+                if (translated) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(if (compact) 5.dp else 8.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(scheme.primary.copy(alpha = 0.92f))
+                            .padding(horizontal = if (compact) 5.dp else 7.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = S.translatedBadge,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = if (compact) 9.sp else 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = scheme.onPrimary
                         )
                     }
                 }

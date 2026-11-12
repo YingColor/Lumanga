@@ -170,9 +170,9 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_TRANSLATE_KEY, "") ?: ""
         set(value) = sp.edit().putString(KEY_TRANSLATE_KEY, value.trim()).apply()
 
-    /** 0 = PP-OCRv6 Small (LiteRT), 1 = PP-OCRv6 Medium (ONNX Runtime). */
+    /** 0 = PP-OCRv6 Small, 1 = PP-OCRv6 Medium, 2 = MangaOCR_mobile (default). */
     var ocrModel: Int
-        get() = sp.getInt(KEY_OCR_MODEL, OcrModel.SMALL.id)
+        get() = sp.getInt(KEY_OCR_MODEL, OcrModel.DEFAULT.id)
         set(value) = sp.edit().putInt(KEY_OCR_MODEL, OcrModel.from(value).id).apply()
 
     var readMode: Int

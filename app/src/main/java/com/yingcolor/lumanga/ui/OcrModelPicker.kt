@@ -31,7 +31,8 @@ fun OcrModelPicker(settings: UiSettings) {
             color = scheme.onSurfaceVariant
         )
         Spacer(Modifier.height(6.dp))
-        OcrModel.entries.forEach { model ->
+        // Default first, so the recommended model is the first row a user sees.
+        listOf(OcrModel.MANGA, OcrModel.SMALL, OcrModel.MEDIUM).forEach { model ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -44,7 +45,10 @@ fun OcrModelPicker(settings: UiSettings) {
                     onClick = { settings.setOcrModel(model.id) }
                 )
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(model.label, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = model.label + if (model == OcrModel.DEFAULT) " · ${S.ocrModelDefault}" else "",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
                     val tip = when (model) {
                         OcrModel.MEDIUM -> S.ocrModelMediumTip
                         OcrModel.MANGA -> S.ocrModelMangaTip

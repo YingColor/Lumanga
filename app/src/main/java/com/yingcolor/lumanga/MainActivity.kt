@@ -68,6 +68,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.yingcolor.lumanga.data.BatchPreTranslate
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.MangaOcr
 import com.yingcolor.lumanga.data.PaddleOcr
@@ -99,6 +100,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         TranslationEngine.ocr = PaddleOcr.engine(this)
         MangaOcr.init(this)
+        BatchPreTranslate.attach(this)
         enableEdgeToEdge()
         setContent { ComicApp() }
     }

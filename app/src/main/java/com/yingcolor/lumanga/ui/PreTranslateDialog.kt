@@ -31,6 +31,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -55,6 +56,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.OcrModel
+import com.yingcolor.lumanga.data.BatchPreTranslate
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BookPreview
 import com.yingcolor.lumanga.data.PreTranslate
@@ -87,6 +89,7 @@ fun PreTranslateDialog(
     var preview by remember { mutableStateOf<BookPreview?>(null) }
     var selected by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var storedCount by remember { mutableIntStateOf(0) }
+    var resumeOnly by remember { mutableStateOf(true) }
     var running by remember { mutableStateOf(false) }
     var doneCount by remember { mutableIntStateOf(0) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -98,7 +101,13 @@ fun PreTranslateDialog(
         storedCount = TranslationStore.count(context, book.id)
         val opened = withContext(Dispatchers.IO) { runCatching { BookPreview(context, book) }.getOrNull() }
         preview = opened
-        selected = (0 until (opened?.pageCount ?: 0)).toSet()
+        val count = opened?.pageCount ?: 0
+        selected = (0 until count).toSet()
+        // Volumes finished by an older build have no "done" flag yet; the picker knows the
+        // page count here, so light up the shelf badge without making the user re-run them.
+        if (count > 0 && storedCount >= count) {
+            withContext(Dispatchers.IO) { TranslationStore.markComplete(context, book.id, count) }
+        }
     }
 
     DisposableEffect(book.id) {
@@ -154,6 +163,26 @@ fun PreTranslateDialog(
                         text = S.preTranslateStored(storedCount),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = S.preTranslateResumeToggle,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Text(
+                            text = S.preTranslateResumeHint,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Switch(
+                        checked = resumeOnly,
+                        onCheckedChange = { resumeOnly = it },
+                        enabled = !running
                     )
                 }
 
@@ -285,6 +314,10 @@ fun PreTranslateDialog(
                         Button(
                             enabled = selected.isNotEmpty(),
                             onClick = {
+                                if (BatchPreTranslate.state.value.running) {
+                                    message = S.preTranslateBusy
+                                    return@Button
+                                }
                                 if (api.isBlank()) {
                                     message = S.preTranslateNeedEndpoint
                                     return@Button
@@ -307,14 +340,18 @@ fun PreTranslateDialog(
                                         pages = pages,
                                         api = api.trim(),
                                         apiKey = apiKey.trim(),
-                                        model = model.trim()
+                                        model = model.trim(),
+                                        skipStored = resumeOnly
                                     ) { done, _ ->
                                         withContext(Dispatchers.Main) { doneCount = done }
                                     }
                                     running = false
                                     storedCount = TranslationStore.count(context, book.id)
                                     message = when (result) {
-                                        PreTranslate.Result.Done -> S.preTranslateDone(storedCount)
+                                        is PreTranslate.Result.Done ->
+                                            if (result.skipped > 0) {
+                                                S.preTranslateDoneResume(result.translated, result.skipped)
+                                            } else S.preTranslateDone(storedCount)
                                         is PreTranslate.Result.Failed ->
                                             S.preTranslateFailed(result.page)
                                         PreTranslate.Result.Cancelled -> S.preTranslateCancelled
