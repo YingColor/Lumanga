@@ -260,6 +260,9 @@ object S {
 
     fun preTranslateFailed(page: Int): String = "第 ${page + 1} 页失败，已译好的页已经保存"
 
+    fun preTranslateDoneWithFailures(count: Int, failed: Int): String =
+        "完成，这本已存 $count 页；有 $failed 页没成功，再点一次「开始」只会补这几页"
+
     fun preTranslateStored(count: Int): String = "这本已经存了 $count 页译文 · 长按封面可删除"
 
     // ---- Folder batch pre-translate ----
@@ -300,6 +303,9 @@ object S {
 
     fun batchDone(count: Int, failed: Int): String =
         if (failed > 0) "完成 $count 本，$failed 本没译完（已留在队列里）" else "完成，共译好 $count 本"
+
+    fun batchDoneWithFailures(count: Int, pages: Int): String =
+        "完成 $count 本；有 $pages 页没成功，再点「继续上次」会只补这些页"
 
     fun batchFailed(name: String, page: Int): String =
         "《$name》第 ${page + 1} 页失败，已译好的页都留着，点「继续上次」重试"

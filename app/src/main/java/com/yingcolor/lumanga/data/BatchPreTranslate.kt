@@ -119,6 +119,7 @@ object BatchPreTranslate {
         val total = remaining.size
         var done = 0
         var failed = 0
+        var pageFailures = 0
         try {
             while (remaining.isNotEmpty()) {
                 val book = remaining.first()
@@ -157,6 +158,9 @@ object BatchPreTranslate {
                 }
                 when (result) {
                     is PreTranslate.Result.Done -> {
+                        // Pages that failed are skipped inside the volume; the book still leaves
+                        // the queue so the batch keeps moving, and the count is reported at the end.
+                        pageFailures += result.failed.size
                         remaining.removeAt(0)
                         write(app, stateFlow.value.folder, remaining)
                         done++
@@ -182,7 +186,8 @@ object BatchPreTranslate {
                     pageDone = 0,
                     pageTotal = 0,
                     bookName = "",
-                    message = S.batchDone(done, failed)
+                    message = if (pageFailures > 0) S.batchDoneWithFailures(done, pageFailures)
+                    else S.batchDone(done, failed)
                 )
             }
         } catch (_: CancellationException) {

@@ -403,7 +403,7 @@ object TranslationEngine {
                         android.util.Log.w("Translate", "TR no retry: $lastError")
                         return@withContext null
                     }
-                    if (attempt == 0) delay(600)
+                    if (attempt == 0) delay(1000)
                 }
             }
         }

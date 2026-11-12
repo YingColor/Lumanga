@@ -7,6 +7,7 @@ import java.io.IOException
 import java.net.ConnectException
 import java.net.HttpURLConnection
 import java.net.MalformedURLException
+import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
@@ -196,6 +197,11 @@ object ApiClient {
                 instanceFollowRedirects = true
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("User-Agent", "Lumanga/1.0")
+                // Never hand a kept-alive socket back for reuse. A self-hosted server can close
+                // the connection the instant it finishes answering, and the next page would then
+                // reuse a dead socket and fail immediately — which is exactly how a batch run
+                // loses a page every few minutes while single page reads stay fine.
+                setRequestProperty("Connection", "close")
                 when (protocol) {
                     ApiProtocol.OPENAI ->
                         if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
@@ -236,10 +242,24 @@ object ApiClient {
             return Raw.Ok(text)
         } catch (t: Throwable) {
             Log.w(TAG, "fail ${t.javaClass.simpleName}: ${t.message} $endpoint")
-            return Raw.Fail(explain(t), retryable = t is SocketTimeoutException)
+            return Raw.Fail(explain(t), retryable = isRetryable(t))
         } finally {
             connection?.disconnect()
         }
+    }
+
+    /**
+     * A batch run sends pages back to back, and a self-hosted server often drops an idle
+     * keep-alive socket right after answering — the next request reuses that dead socket and dies
+     * with "unexpected end of stream" or "connection reset" within seconds. One more try on a
+     * fresh connection fixes it. A refused port or an unknown host will fail identically, so
+     * those are not retried; that would only double the wait before the error appears.
+     */
+    private fun isRetryable(t: Throwable): Boolean = when (t) {
+        is SocketTimeoutException -> true
+        is ConnectException, is UnknownHostException -> false
+        is SocketException -> true
+        else -> false
     }
 
     private fun httpReason(code: Int): String = when (code) {
@@ -258,6 +278,7 @@ object ApiClient {
         is UnknownHostException -> "找不到主机，检查地址写对没有"
         is ConnectException -> "连不上：端口没开，或者服务没启动"
         is SocketTimeoutException -> "超时：服务没有在限定时间内回复"
+        is SocketException -> "连接被服务端断开了（本地服务常见，可重试）"
         is SSLException -> "HTTPS 握手失败，证书可能有问题"
         is IOException -> "网络错误（${t.javaClass.simpleName}）"
         else -> "请求失败（${t.javaClass.simpleName}）"

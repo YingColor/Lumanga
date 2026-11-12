@@ -376,10 +376,17 @@ fun PreTranslateDialog(
                                     running = false
                                     storedCount = TranslationStore.count(context, book.id)
                                     message = when (result) {
-                                        is PreTranslate.Result.Done ->
-                                            if (result.skipped > 0) {
+                                        is PreTranslate.Result.Done -> when {
+                                            // A page that failed is skipped, so the count can be
+                                            // short of the volume — say so instead of "完成".
+                                            result.failed.isNotEmpty() ->
+                                                S.preTranslateDoneWithFailures(
+                                                    storedCount, result.failed.size
+                                                )
+                                            result.skipped > 0 ->
                                                 S.preTranslateDoneResume(result.translated, result.skipped)
-                                            } else S.preTranslateDone(storedCount)
+                                            else -> S.preTranslateDone(storedCount)
+                                        }
                                         is PreTranslate.Result.Failed ->
                                             S.preTranslateFailed(result.page)
                                         PreTranslate.Result.Cancelled -> S.preTranslateCancelled

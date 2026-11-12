@@ -22,9 +22,20 @@ object PreTranslate {
      */
     private const val MAX_SIDE = 1400
 
+    /** Three missed pages in a row means the endpoint is down, not that one page was unlucky. */
+    private const val MAX_CONSECUTIVE_FAILURES = 3
+
     sealed interface Result {
-        /** [translated] pages written this run, [skipped] pages reused from an earlier run. */
-        data class Done(val translated: Int, val skipped: Int) : Result
+        /**
+         * [translated] pages written this run, [skipped] pages reused from an earlier run,
+         * [failed] pages the service did not answer for. A failed page is skipped rather than
+         * aborting the volume, so one hiccup does not throw away an hour of work.
+         */
+        data class Done(
+            val translated: Int,
+            val skipped: Int,
+            val failed: List<Int> = emptyList()
+        ) : Result
         data class Failed(val page: Int, val reason: String) : Result
         data object Cancelled : Result
     }
@@ -66,6 +77,10 @@ object PreTranslate {
             var done = 0
             var translated = 0
             var skipped = 0
+            // Pages the service refused, and how many in a row. A single miss is normal on a
+            // self-hosted endpoint; three in a row means it is down and the run should stop.
+            val failedPages = ArrayList<Int>()
+            var streak = 0
             for (index in pages) {
                 coroutineContext.ensureActive()
                 current = index
@@ -105,10 +120,24 @@ object PreTranslate {
                         } else {
                             val lines = TranslationEngine.translate(
                                 groups, api, model, previous, apiKey, protocol
-                            ) ?: return@withContext Result.Failed(index, "network")
-                            if (lines.all { it.isBlank() }) {
-                                return@withContext Result.Failed(index, "empty reply")
+                            )
+                            if (lines == null || lines.all { it.isBlank() }) {
+                                // Keep the volume going: a dropped connection on one page should
+                                // not cost the pages after it. Three misses in a row is a dead
+                                // service, and there stopping is the honest answer.
+                                failedPages.add(index)
+                                streak++
+                                android.util.Log.w(
+                                    "PreTranslate", "page=$index failed streak=$streak"
+                                )
+                                if (streak >= MAX_CONSECUTIVE_FAILURES) {
+                                    return@withContext Result.Failed(index, "network")
+                                }
+                                done++
+                                onProgress(done, index)
+                                continue
                             }
+                            streak = 0
                             TranslationStore.save(
                                 context, book.id, index,
                                 PageTranslation(page.width, page.height, groups, lines)
@@ -133,9 +162,9 @@ object PreTranslate {
             }
             android.util.Log.i(
                 "PreTranslate",
-                "book done translated=$translated skipped=$skipped pages=$total"
+                "book done translated=$translated skipped=$skipped failed=${failedPages.size} pages=$total"
             )
-            Result.Done(translated, skipped)
+            Result.Done(translated, skipped, failedPages)
         } catch (cancel: CancellationException) {
             Result.Cancelled
         } catch (t: Throwable) {
