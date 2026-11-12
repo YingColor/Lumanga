@@ -170,6 +170,11 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_TRANSLATE_PROTOCOL, ApiProtocol.DEFAULT.id)
         set(value) = sp.edit().putInt(KEY_TRANSLATE_PROTOCOL, ApiProtocol.coerce(value)).apply()
 
+    /** Whole-page request or one per bubble group; see [TranslateMode]. */
+    var translateMode: Int
+        get() = sp.getInt(KEY_TRANSLATE_MODE, TranslateMode.PAGE)
+        set(value) = sp.edit().putInt(KEY_TRANSLATE_MODE, TranslateMode.coerce(value)).apply()
+
     /** Sent as `Authorization: Bearer …` when the service needs one; empty means no header. */
     var translateApiKey: String
         get() = sp.getString(KEY_TRANSLATE_KEY, "") ?: ""
@@ -334,6 +339,7 @@ class Prefs(context: Context) {
         const val KEY_TRANSLATE = "translate_enabled"
         const val KEY_TRANSLATE_API = "translate_api"
         const val KEY_TRANSLATE_PROTOCOL = "translate_protocol"
+        const val KEY_TRANSLATE_MODE = "translate_mode"
         const val KEY_TRANSLATE_MODEL = "translate_model"
         const val KEY_TRANSLATE_KEY = "translate_api_key"
         const val KEY_OCR_MODEL = "ocr_model"

@@ -114,6 +114,7 @@ import com.yingcolor.lumanga.data.PageSource
 import com.yingcolor.lumanga.data.Prefs
 import com.yingcolor.lumanga.data.TextLayout
 import com.yingcolor.lumanga.data.TextRegion
+import com.yingcolor.lumanga.data.TranslateMode
 import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.TranslationStore
 import com.yingcolor.lumanga.data.UiSettings
@@ -156,11 +157,14 @@ enum class TranslateKind { IDLE, WORKING, EMPTY, NOT_JAPANESE, FAILED }
 
 data class TranslateState(
     val kind: TranslateKind = TranslateKind.IDLE,
-    val detail: String = ""
+    val detail: String = "",
+    /** Per-group mode: "3/12", so the badge shows how far into the page it is. */
+    val progress: String = ""
 )
 
 private sealed class TranslateOutcome {
-    class Done(val bitmap: Bitmap) : TranslateOutcome()
+    /** [partial] means some bubbles never got an answer: show what landed, but do not cache it. */
+    class Done(val bitmap: Bitmap, val partial: Boolean = false) : TranslateOutcome()
     object NoText : TranslateOutcome()
     object NotJapanese : TranslateOutcome()
     object Stale : TranslateOutcome()
@@ -180,6 +184,14 @@ private const val STAGE_API = "api"
 
 /** Hard ceiling for one page's OCR + network round trip, so the badge can never hang forever. */
 private const val PAGE_BUDGET_MS = 70_000L
+
+/**
+ * Per-group mode makes one round trip per bubble, so a page of 18 groups costs 18 requests. A
+ * self-hosted server works through them one at a time no matter how many are in flight, and the
+ * budget has to cover that queue. Bubbles appear as they land, so the wait is visible progress
+ * rather than a blank page.
+ */
+private const val GROUP_PAGE_BUDGET_MS = 150_000L
 
 /** OCR alone should never take this long; a wedged interpreter should fail fast instead. */
 private const val OCR_BUDGET_MS = 25_000L
@@ -628,6 +640,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val pageResults = object : LruCache<String, PageResult>(16) {}
     private val translating = HashMap<String, Deferred<TranslateOutcome>>()
     private val translationLock = Any()
+
+    /** Keys whose page already had bubbles painted while a per-group run was still going. */
+    private val partialPages = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val translationContext = LinkedHashMap<Int, List<String>>(6)
     private val contextLock = Any()
 
@@ -677,31 +692,59 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         apiKey: String,
         model: String,
         protocol: ApiProtocol,
-        horizontal: Boolean
+        groupMode: Boolean,
+        horizontal: Boolean,
+        onPartial: (suspend (Bitmap) -> Unit)? = null
     ): Bitmap? {
         // The layout is part of the key: flipping the switch must redraw instead of returning
-        // the vertical bitmap that is already cached for this page. The protocol joins it for the
-        // same reason — the same address can serve a different answer per wire format.
-        val key = "$index-${source.width}x${source.height}-${protocol.id}-${(api + model).hashCode()}-$horizontal"
+        // the vertical bitmap that is already cached for this page. The protocol and the mode
+        // join it for the same reason — the same address gives a different answer per wire
+        // format, and the two modes produce different text.
+        val key = "$index-${source.width}x${source.height}-${protocol.id}-$groupMode-" +
+            "${(api + model).hashCode()}-$horizontal"
         translatedCache.get(key)?.let {
             publish(index, TranslateState())
             return it
         }
         publish(index, TranslateState(TranslateKind.WORKING))
+        // A page the user already sees part of is not a failure when the watchdog fires: the
+        // bubbles painted so far stay on screen, and only the badge is cleared.
+        val streaming: (suspend (Bitmap) -> Unit)? =
+            if (groupMode && onPartial != null) {
+                { bmp ->
+                    partialPages.add(key)
+                    onPartial.invoke(bmp)
+                }
+            } else {
+                onPartial
+            }
         val deferred = synchronized(translationLock) {
             translating[key] ?: viewModelScope.async(Dispatchers.IO) {
-                runTranslate(index, key, source, api, apiKey, model, protocol, horizontal)
+                runTranslate(
+                    index, key, source, api, apiKey, model, protocol, groupMode, horizontal, streaming
+                )
             }.also { translating[key] = it }
         }
         val started = System.currentTimeMillis()
-        val pageBudget = if (mediumOcr) MEDIUM_PAGE_BUDGET_MS else PAGE_BUDGET_MS
+        val pageBudget = when {
+            groupMode -> GROUP_PAGE_BUDGET_MS
+            mediumOcr -> MEDIUM_PAGE_BUDGET_MS
+            else -> PAGE_BUDGET_MS
+        }
         val outcome = try {
             val done = withTimeoutOrNull(pageBudget) { deferred.await() }
             if (done == null) {
                 deferred.cancel()
                 synchronized(translationLock) { translating.remove(key) }
                 android.util.Log.w("Translate", "TR watchdog index=$index ${pageBudget}ms")
-                publish(index, TranslateState(TranslateKind.FAILED, "timeout"))
+                // Per-group mode may already have painted several bubbles; those are real results,
+                // so clear the badge instead of claiming the page failed.
+                val painted = partialPages.remove(key)
+                publish(
+                    index,
+                    if (painted) TranslateState()
+                    else TranslateState(TranslateKind.FAILED, "timeout")
+                )
                 return null
             }
             done
@@ -721,9 +764,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             android.util.Log.i("Translate", "TR slow index=$index ms=$elapsed")
         }
         synchronized(translationLock) { translating.remove(key) }
+        partialPages.remove(key)
         return when (outcome) {
             is TranslateOutcome.Done -> {
-                translatedCache.put(key, outcome.bitmap)
+                if (!outcome.partial) translatedCache.put(key, outcome.bitmap)
                 publish(index, TranslateState())
                 outcome.bitmap
             }
@@ -757,9 +801,11 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         apiKey: String,
         model: String,
         protocol: ApiProtocol,
-        horizontal: Boolean
+        groupMode: Boolean,
+        horizontal: Boolean,
+        onPartial: (suspend (Bitmap) -> Unit)?
     ): TranslateOutcome {
-        val rk = resultKey(index, protocol, api, model)
+        val rk = resultKey(index, protocol, groupMode, api, model)
         pageResults.get(rk)?.let { cached ->
             android.util.Log.i("Translate", "TR reuse index=$index")
             return TranslateOutcome.Done(renderScaled(source, cached, horizontal))
@@ -822,31 +868,70 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
         publish(index, TranslateState(TranslateKind.WORKING, STAGE_API))
         val started = System.currentTimeMillis()
-        val lines = TranslationEngine.translate(groups, api, model, previous, apiKey, protocol)
+        val lines: List<String>? = if (groupMode) {
+            // Paint each bubble as soon as its own answer arrives; the ones still in flight keep
+            // their Japanese, so the page fills in rather than staying blank for the whole wait.
+            val collected = arrayOfNulls<String>(groups.size)
+            var answered = 0
+            TranslationEngine.translateEach(
+                groups, api, model, previous, apiKey, protocol
+            ) { i, text ->
+                collected[i] = text
+                answered++
+                // The badge is the only progress this mode can show: the count is per bubble.
+                publish(
+                    index,
+                    TranslateState(TranslateKind.WORKING, STAGE_API, "$answered/${groups.size}")
+                )
+                onPartial?.invoke(
+                    TranslationEngine.render(source, groups, collected.map { it ?: "" }, horizontal)
+                )
+            }
+        } else {
+            TranslationEngine.translate(groups, api, model, previous, apiKey, protocol)
+        }
         android.util.Log.i(
             "Translate",
-            "TR api index=$index lines=${lines?.size ?: -1} ms=${System.currentTimeMillis() - started}"
+            "TR api index=$index lines=${lines?.size ?: -1} ms=${System.currentTimeMillis() - started}" +
+                " group=$groupMode"
         )
         if (lines == null) return TranslateOutcome.Failed("network")
         if (lines.all { it.isBlank() }) return TranslateOutcome.Failed("empty reply")
-        synchronized(contextLock) {
-            translationContext[index] = lines
-            while (translationContext.size > 6) {
-                translationContext.remove(translationContext.keys.first())
+        val partial = groupMode && lines.any { it.isBlank() }
+        if (partial) {
+            // Bubbles that did land are worth showing, but caching this page would leave the
+            // missing ones in Japanese forever. Skipping both caches makes a return visit retry
+            // them instead of serving a half-translated bitmap.
+            android.util.Log.i(
+                "Translate",
+                "TR partial index=$index answered=${lines.count { it.isNotBlank() }}/${lines.size}" +
+                    " (not cached)"
+            )
+        } else {
+            synchronized(contextLock) {
+                translationContext[index] = lines
+                while (translationContext.size > 6) {
+                    translationContext.remove(translationContext.keys.first())
+                }
             }
+            pageResults.put(rk, PageResult(source.width, source.height, groups, lines))
         }
-        pageResults.put(rk, PageResult(source.width, source.height, groups, lines))
         val rendered = TranslationEngine.render(source, groups, lines, horizontal)
         // Store the result here rather than in the caller: if the user scrolled away while the
         // request was in flight the awaiter is already cancelled, and the finished page would
         // otherwise be dropped and re-translated from scratch on the next visit.
-        translatedCache.put(key, rendered)
+        if (!partial) translatedCache.put(key, rendered)
         android.util.Log.i("Translate", "TR done index=$index")
-        return TranslateOutcome.Done(rendered)
+        return TranslateOutcome.Done(rendered, partial)
     }
 
-    private fun resultKey(index: Int, protocol: ApiProtocol, api: String, model: String): String =
-        "$index|${protocol.id}|${api.hashCode()}|${model.hashCode()}"
+    private fun resultKey(
+        index: Int,
+        protocol: ApiProtocol,
+        groupMode: Boolean,
+        api: String,
+        model: String
+    ): String = "$index|${protocol.id}|$groupMode|${api.hashCode()}|${model.hashCode()}"
 
     /** Re-draws a cached page at a different decode size instead of running OCR again. */
     private fun renderScaled(source: Bitmap, cached: PageResult, horizontal: Boolean): Bitmap {
@@ -2203,6 +2288,7 @@ private fun PageRow(
         apiKey = settings.translateApiKey,
         model = settings.translateModel,
         protocol = ApiProtocol.from(settings.translateProtocol),
+        groupMode = settings.translateMode == TranslateMode.GROUP,
         layout = settings.textLayout,
         modifier = modifier
     )
@@ -2223,6 +2309,7 @@ private fun rememberPageBitmap(
     apiKey: String,
     model: String,
     protocol: ApiProtocol,
+    groupMode: Boolean,
     layout: Int
 ): Bitmap? {
     
@@ -2254,7 +2341,7 @@ private fun rememberPageBitmap(
         initialValue = vm.peekPage(index, quality) ?: vm.peekPlaceholder(index),
         key1 = index,
         key2 = quality,
-        key3 = "$decodeW-$decodeH-$translate-$api-$model-${protocol.id}-$layout-${vm.translationRetry}"
+        key3 = "$decodeW-$decodeH-$translate-$api-$model-${protocol.id}-$groupMode-$layout-${vm.translationRetry}"
     ) {
         
         
@@ -2268,8 +2355,13 @@ private fun rememberPageBitmap(
         if (full != null) value = full
         if (translate && full != null) {
             val rendered = vm.translate(
-                index, full, api, apiKey, model, protocol, layout == TextLayout.HORIZONTAL
-            )
+                index, full, api, apiKey, model, protocol, groupMode,
+                layout == TextLayout.HORIZONTAL
+            ) { partial ->
+                // Per-group mode: show the bubbles that already have an answer instead of
+                // leaving the page untranslated until the last one lands.
+                withContext(Dispatchers.Main) { value = partial }
+            }
             if (rendered != null) value = rendered
         }
     }
@@ -2300,6 +2392,7 @@ private fun PageSpread(
     apiKey: String,
     model: String,
     protocol: ApiProtocol,
+    groupMode: Boolean,
     layout: Int,
     modifier: Modifier = Modifier
 ) {
@@ -2320,7 +2413,7 @@ private fun PageSpread(
         for (i in indices) {
             loaded += rememberPageBitmap(
                 vm, i, targetW, targetH, quality, zoomMode, zoomPercent,
-                translate, api, apiKey, model, protocol, layout
+                translate, api, apiKey, model, protocol, groupMode, layout
             )
         }
 
@@ -2505,9 +2598,11 @@ private fun TranslateBadge(
         TranslateKind.FAILED -> S.translateFailed
         else -> return
     }
-    val label = if (status.kind == TranslateKind.WORKING && seconds >= 3) {
-        "$base ${seconds}s"
-    } else base
+    val label = buildString {
+        append(base)
+        if (status.progress.isNotEmpty()) append(' ').append(status.progress)
+        if (status.kind == TranslateKind.WORKING && seconds >= 3) append(' ').append("${seconds}s")
+    }
     val tone = when (status.kind) {
         TranslateKind.WORKING -> scheme.surfaceVariant
         TranslateKind.FAILED -> scheme.errorContainer

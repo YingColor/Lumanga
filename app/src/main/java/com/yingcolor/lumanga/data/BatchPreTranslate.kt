@@ -63,7 +63,8 @@ object BatchPreTranslate {
         api: String,
         apiKey: String,
         model: String,
-        protocol: ApiProtocol = ApiProtocol.DEFAULT
+        protocol: ApiProtocol = ApiProtocol.DEFAULT,
+        groupMode: Boolean = false
     ) {
         if (books.isEmpty()) return
         val app = context.applicationContext
@@ -75,7 +76,7 @@ object BatchPreTranslate {
             totalBooks = books.size,
             folder = folder
         )
-        job = scope.launch { process(app, api, apiKey, model, protocol) }
+        job = scope.launch { process(app, api, apiKey, model, protocol, groupMode) }
     }
 
     /** Picks up the queue left by a stopped or killed run, using the current settings. */
@@ -84,12 +85,13 @@ object BatchPreTranslate {
         api: String,
         apiKey: String,
         model: String,
-        protocol: ApiProtocol = ApiProtocol.DEFAULT
+        protocol: ApiProtocol = ApiProtocol.DEFAULT,
+        groupMode: Boolean = false
     ) {
         if (stateFlow.value.running) return
         val queue = read(context.applicationContext)
         if (queue.books.isEmpty()) return
-        start(context, queue.folder, queue.books, api, apiKey, model, protocol)
+        start(context, queue.folder, queue.books, api, apiKey, model, protocol, groupMode)
     }
 
     fun cancel() {
@@ -113,7 +115,8 @@ object BatchPreTranslate {
         api: String,
         apiKey: String,
         model: String,
-        protocol: ApiProtocol
+        protocol: ApiProtocol,
+        groupMode: Boolean
     ) {
         val remaining = read(app).books.toMutableList()
         val total = remaining.size
@@ -152,6 +155,7 @@ object BatchPreTranslate {
                     apiKey = apiKey,
                     model = model,
                     protocol = protocol,
+                    groupMode = groupMode,
                     skipStored = true
                 ) { donePages, _ ->
                     stateFlow.update { it.copy(pageDone = donePages) }

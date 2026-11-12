@@ -7,7 +7,13 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -68,6 +74,30 @@ object TranslationEngine {
             "原文没有省略号时也不要自己加。" +
             "不要解释、不要复述原文、不要逐字硬译、不要添加原文没有的内容。" +
             "若有上一页译文，人名和称呼必须与之一致。"
+
+    /**
+     * Used when each group is sent on its own. A one-line answer needs far less instruction than a
+     * numbered list, and the shorter prompt is also what a local model spends its time on.
+     */
+    private const val GROUP_PROMPT =
+        "你是漫画翻译助手。用户每次只给你一个对话气泡里的日文，竖排可能被切碎、顺序颠倒，" +
+            "也可能有识别错字，甚至只剩一两个字。" +
+            "竖排里用空格分开的就是一列，读法是列从右到左、列内从上到下。" +
+            "请先按正确顺序重排、纠正明显错字，再译成一句通顺自然的简体中文。" +
+            "只剩一两个字时按语气补成完整的一句，不要只译那两个字。" +
+            "若原文只有一个省略号，原样输出「……」，不要补全、不要猜。" +
+            "只输出译文本身：不要编号、不要解释、不要复述原文，也不要在译文里保留日文假名。" +
+            "译文要短，长度尽量接近原文；原文有省略号才保留，没有就不要自己加。" +
+            "若给了前文，人名和称呼必须与之一致。"
+
+    private val LEADING_INDEX = Regex("^\\s*\\d+\\s*[.、)]\\s*")
+    private val REPLY_LABEL = Regex("^(译文|翻译|中文|简体中文|翻译结果)\\s*[:：]\\s*")
+
+    /** How many earlier lines are handed to a per-group request as context. */
+    private const val GROUP_CONTEXT_LINES = 3
+
+    /** Groups kept in flight at once by [translateEach]; see there for why it is not one. */
+    private const val GROUP_CONCURRENCY = 3
 
     @Volatile
     var ocr: OcrEngine = NoOpOcrEngine
@@ -409,6 +439,124 @@ object TranslationEngine {
         }
         android.util.Log.w("Translate", "TR gave up: $lastError")
         null
+    }
+
+    /**
+     * Translates one group per request.
+     *
+     * A whole-page request has two costs: one dropped connection loses the page, and nothing can
+     * be drawn until the model has answered for every bubble. Sending each group on its own lets
+     * the reader paint bubbles one at a time as they arrive, and a group that fails leaves only
+     * that bubble in Japanese.
+     *
+     * [GROUP_CONCURRENCY] requests are kept in flight. A hosted endpoint genuinely overlaps them;
+     * a self-hosted one usually serves one at a time, so the surplus simply queues — either way
+     * the first bubble arrives no later than it would in a strict sequence, and a page of 18
+     * groups no longer takes 18 × the latency of one.
+     *
+     * [onGroup] is invoked under a lock, so callers may touch Compose state or a shared bitmap
+     * from it without guarding anything themselves. It runs on an IO thread.
+     * Returns null when every group failed.
+     */
+    suspend fun translateEach(
+        groups: List<BubbleGroup>,
+        api: String,
+        model: String,
+        context: List<String> = emptyList(),
+        apiKey: String = "",
+        protocol: ApiProtocol = ApiProtocol.DEFAULT,
+        concurrency: Int = GROUP_CONCURRENCY,
+        onGroup: suspend (index: Int, text: String) -> Unit = { _, _ -> }
+    ): List<String>? = withContext(Dispatchers.IO) {
+        if (groups.isEmpty()) return@withContext emptyList()
+        val hint = context.filter { it.isNotBlank() }
+            .takeLast(GROUP_CONTEXT_LINES)
+            .joinToString("\n")
+        val lines = MutableList(groups.size) { "" }
+        var answered = 0
+        val gate = Semaphore(concurrency.coerceAtLeast(1))
+        // Painting is serialised even though the requests are not: the caller updates Compose
+        // state and a page bitmap, and neither tolerates writes from several threads at once.
+        val paint = Mutex()
+        coroutineScope {
+            groups.forEachIndexed { index, group ->
+                launch {
+                    gate.withPermit {
+                        val text = askGroup(protocol, api, model, apiKey, hint, group.source, index)
+                            ?: return@withPermit
+                        paint.withLock {
+                            lines[index] = text
+                            answered++
+                            onGroup(index, text)
+                        }
+                    }
+                }
+            }
+        }
+        android.util.Log.i("Translate", "TR each groups=${groups.size} answered=$answered")
+        if (answered == 0) null else lines
+    }
+
+    /**
+     * One request for one group, retried once when the socket drops.
+     *
+     * Returns null when the model gave nothing usable, so the caller keeps that bubble's original
+     * text instead of erasing it and painting nothing.
+     */
+    private suspend fun askGroup(
+        protocol: ApiProtocol,
+        api: String,
+        model: String,
+        apiKey: String,
+        hint: String,
+        source: String,
+        index: Int
+    ): String? {
+        val user = buildString {
+            if (hint.isNotEmpty()) {
+                append("【前文，仅供人名、称呼和语气参考】\n").append(hint).append("\n\n")
+            }
+            append("【要翻译的原文】\n").append(source)
+        }
+        var lastError = "unknown"
+        for (attempt in 0 until 2) {
+            when (val result = ApiClient.chat(protocol, api, model, apiKey, GROUP_PROMPT, user)) {
+                is ApiClient.ChatResult.Ok -> {
+                    val value = tidyGroup(result.text, source)
+                    if (value.isNotEmpty()) return value
+                    break
+                }
+                is ApiClient.ChatResult.Fail -> {
+                    lastError = result.reason
+                    android.util.Log.w("Translate", "TR group $index fail ${result.reason}")
+                    if (!result.retryable) break
+                    delay(800)
+                }
+            }
+        }
+        android.util.Log.w("Translate", "TR group $index empty ($lastError)")
+        return null
+    }
+
+    /**
+     * Cleans a single-group answer. Models sometimes wrap it ("译文：…") or split a long answer
+     * over two lines, and some simply echo the Japanese back — drawing that over the bubble is
+     * worse than leaving it alone, so an echo becomes an empty result.
+     */
+    private fun tidyGroup(raw: String, source: String): String {
+        val parts = raw.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return ""
+        // Keep every line that carries text: taking only the last one dropped the first half of
+        // answers the model decided to wrap, and the bubble then read like a fragment.
+        val body = buildString {
+            parts.forEach { line ->
+                if (line.startsWith("原文")) return@forEach
+                append(LEADING_INDEX.replace(REPLY_LABEL.replace(line, ""), ""))
+            }
+        }
+        val cleaned = tidy(body, source)
+        if (cleaned.isNotEmpty() && cleaned == source.replace(WHITESPACE, "")) return ""
+        return cleaned
     }
 
     /**

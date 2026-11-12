@@ -25,6 +25,7 @@ import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.ApiProtocol
 import com.yingcolor.lumanga.data.TextLayout
 import com.yingcolor.lumanga.data.TextRegion
+import com.yingcolor.lumanga.data.TranslateMode
 import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.UiSettings
 import kotlinx.coroutines.launch
@@ -98,6 +99,25 @@ fun TranslationSettings(settings: UiSettings) {
                 testResult = null
             }
         )
+        Spacer(Modifier.height(12.dp))
+        // A request strategy rather than a service setting, so it sits right under the protocol.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = S.translateModeGroup, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    text = S.translateModeGroupTip,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = settings.translateMode == TranslateMode.GROUP,
+                onCheckedChange = {
+                    settings.setTranslateMode(if (it) TranslateMode.GROUP else TranslateMode.PAGE)
+                    testResult = null
+                }
+            )
+        }
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
             value = api,

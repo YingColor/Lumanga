@@ -62,6 +62,7 @@ import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BookPreview
 import com.yingcolor.lumanga.data.PreTranslate
 import com.yingcolor.lumanga.data.TextLayout
+import com.yingcolor.lumanga.data.TranslateMode
 import com.yingcolor.lumanga.data.TranslationStore
 import com.yingcolor.lumanga.data.UiSettings
 import kotlinx.coroutines.Dispatchers
@@ -242,6 +243,22 @@ fun PreTranslateDialog(
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
+                        text = S.preTranslateMode,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = if (settings.translateMode == TranslateMode.GROUP) {
+                            S.translateModeGroupShort
+                        } else S.translateModePageShort,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
                         text = S.preTranslateLayout,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -369,6 +386,7 @@ fun PreTranslateDialog(
                                         apiKey = apiKey.trim(),
                                         model = model.trim(),
                                         protocol = ApiProtocol.from(settings.translateProtocol),
+                                        groupMode = settings.translateMode == TranslateMode.GROUP,
                                         skipStored = resumeOnly
                                     ) { done, _ ->
                                         withContext(Dispatchers.Main) { doneCount = done }

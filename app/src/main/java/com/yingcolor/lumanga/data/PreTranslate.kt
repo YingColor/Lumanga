@@ -57,6 +57,7 @@ object PreTranslate {
         apiKey: String,
         model: String,
         protocol: ApiProtocol = ApiProtocol.DEFAULT,
+        groupMode: Boolean = false,
         skipStored: Boolean = true,
         onProgress: suspend (done: Int, index: Int) -> Unit
     ): Result = withContext(Dispatchers.IO) {
@@ -118,9 +119,20 @@ object PreTranslate {
                                 PageTranslation(page.width, page.height, emptyList(), emptyList())
                             )
                         } else {
-                            val lines = TranslationEngine.translate(
-                                groups, api, model, previous, apiKey, protocol
-                            )
+                            val lines = if (groupMode) {
+                                TranslationEngine.translateEach(
+                                    groups, api, model, previous, apiKey, protocol
+                                )
+                            } else {
+                                TranslationEngine.translate(
+                                    groups, api, model, previous, apiKey, protocol
+                                )
+                            }
+                            // A per-group run can answer some bubbles and miss others. Saving that
+                            // page would mark it translated forever (skipStored) and could light
+                            // the "done" badge with Japanese still on it, so report it as a page
+                            // to retry instead of storing a half-finished result.
+                            val partial = groupMode && lines?.any { it.isBlank() } == true
                             if (lines == null || lines.all { it.isBlank() }) {
                                 // Keep the volume going: a dropped connection on one page should
                                 // not cost the pages after it. Three misses in a row is a dead
@@ -138,6 +150,18 @@ object PreTranslate {
                                 continue
                             }
                             streak = 0
+                            if (partial) {
+                                failedPages.add(index)
+                                android.util.Log.w(
+                                    "PreTranslate",
+                                    "page=$index partial answered=" +
+                                        "${lines.count { it.isNotBlank() }}/${lines.size}"
+                                )
+                                previous = lines.filter { it.isNotBlank() }
+                                done++
+                                onProgress(done, index)
+                                continue
+                            }
                             TranslationStore.save(
                                 context, book.id, index,
                                 PageTranslation(page.width, page.height, groups, lines)

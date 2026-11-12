@@ -44,6 +44,7 @@ import com.yingcolor.lumanga.data.BatchPreTranslate
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.TextLayout
+import com.yingcolor.lumanga.data.TranslateMode
 import com.yingcolor.lumanga.data.TranslationStore
 import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.util.folderLabel
@@ -116,7 +117,8 @@ fun BatchPreTranslateDialog(
                     BatchPreTranslate.start(
                         appContext, scopeLabel, queuedTargets,
                         api.trim(), apiKey.trim(), model.trim(),
-                        ApiProtocol.from(settings.translateProtocol)
+                        ApiProtocol.from(settings.translateProtocol),
+                        settings.translateMode == TranslateMode.GROUP
                     )
                 }) { Text(S.batchConfirmStart) }
             },
@@ -258,6 +260,21 @@ fun BatchPreTranslateDialog(
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
+                            S.preTranslateMode,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            if (settings.translateMode == TranslateMode.GROUP) {
+                                S.translateModeGroupShort
+                            } else S.translateModePageShort,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
                             S.preTranslateLayout,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -358,7 +375,8 @@ fun BatchPreTranslateDialog(
                                         message = null
                                         BatchPreTranslate.resume(
                                             appContext, api.trim(), apiKey.trim(), model.trim(),
-                                            ApiProtocol.from(settings.translateProtocol)
+                                            ApiProtocol.from(settings.translateProtocol),
+                                            settings.translateMode == TranslateMode.GROUP
                                         )
                                     }
                                 }
