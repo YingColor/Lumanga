@@ -663,7 +663,11 @@ object TranslationEngine {
         sourceLang: SourceLanguage,
         token: ApiClient.CancelToken?
     ): List<String> {
-        val missing = lines.indices.filter { lines[it].isBlank() }
+        // A punctuation-only bubble needs no request at all: it has no sentence to translate,
+        // and asking for one is what makes a small model recite the instructions back.
+        val missing = lines.indices.filter {
+            lines[it].isBlank() && !isTrivialSource(groups[it].source)
+        }
         // Nothing parsed at all is a different failure (wrong format, empty answer): retrying
         // every group one by one would turn one bad page into a page of requests.
         if (missing.isEmpty() || missing.size == lines.size) return lines
@@ -736,6 +740,12 @@ object TranslationEngine {
         val paint = Mutex()
         coroutineScope {
             groups.forEachIndexed { index, group ->
+                // Nothing to ask for a mark-only bubble; it keeps its original glyph. Counted as
+                // handled so a page made entirely of marks is not reported as a failed request.
+                if (isTrivialSource(group.source)) {
+                    answered++
+                    return@forEachIndexed
+                }
                 launch {
                     gate.withPermit {
                         val text = askGroup(
@@ -829,10 +839,8 @@ object TranslationEngine {
                 append(LEADING_INDEX.replace(REPLY_LABEL.replace(line, ""), ""))
             }
         }
-        val cleaned = tidy(body, source)
-        // An echoed source is worse than no answer.
-        if (isEcho(cleaned, source)) return ""
-        return cleaned
+        // An echoed source, a leaked instruction or a made-up sentence is worse than no answer.
+        return sanitize(tidy(body, source), source)
     }
 
     /**
@@ -844,6 +852,67 @@ object TranslationEngine {
         if (value.isEmpty()) return false
         val flat = { s: String -> s.replace(COLUMN_MARKS, "").replace(WHITESPACE, "") }
         return flat(value) == flat(source)
+    }
+
+    /**
+     * Wording that belongs to our own instructions, never to a line of dialogue.
+     *
+     * A bubble holding nothing but 「！」 is often read by OCR as a stray 「一•」. Asked to
+     * translate that on its own, a small model tends to answer by repeating the request back —
+     * the 「【要翻译的原文】」 label, the retry note, or a whole paragraph of the system prompt.
+     * [isEcho] only catches an exact copy of the source, so those 50-odd characters used to be
+     * accepted and squeezed into a 147x98 bubble at 12 px, which is exactly the "mystery text"
+     * on the page. Rejecting the answer leaves the original glyph in place, which is what a
+     * punctuation-only bubble should show anyway.
+     */
+    private val PROMPT_LEAK = Regex(
+        "【|】|不要照抄|不要输出|不要解释|不要复述|不要补全|译文本身|译文要短|" +
+            "只输出译文|上一次没有|上次没有|请直接给出|仅供|前文|上一页译文|" +
+            "要翻译的原文|省略号占位|条数必须|人名和称呼|纠正明显错字|按编号"
+    )
+
+    /**
+     * Punctuation-only bubbles and a single stray kanji carry no sentence to translate. A lone
+     * kana is real dialogue (「え？」「ん…」) and is deliberately not included here.
+     */
+    private fun isTrivialSource(text: String): Boolean {
+        // Keep only characters that can carry a sentence. OCR turns 「！」 into things like
+        // 「一•」 (a stray kanji plus a bullet), and that bullet is not in PUNCTUATION, so a
+        // whitelist is safer than stripping known punctuation here.
+        val meaningful = text.filter { ch ->
+            ch.code in 0x3040..0x30FF || ch.code in 0x3400..0x9FFF ||
+                ch in 'A'..'Z' || ch in 'a'..'z' || ch.isDigit()
+        }
+        if (meaningful.isEmpty()) return true
+        if (meaningful.length > 1) return false
+        val ch = meaningful[0]
+        return !(ch.code in 0x3040..0x309F || ch.code in 0x30A0..0x30FF ||
+            ch in 'A'..'Z' || ch in 'a'..'z')
+    }
+
+    /**
+     * Last gate before an answer reaches the page or the cache. It is deliberately shared by
+     * whole-page, per-group and cached answers: a bad reply must not be drawn just because it
+     * came from a different code path (or from a translation saved before this check existed).
+     */
+    private fun sanitize(value: String, source: String): String {
+        if (value.isEmpty() || isEcho(value, source)) return ""
+        if (PROMPT_LEAK.containsMatchIn(value)) {
+            android.util.Log.w("Translate", "TR reject prompt leak len=${value.length}")
+            return ""
+        }
+        // Four times the source plus slack still allows the short line the prompt asks the model
+        // to complete (「え？」 -> 「诶？」), but no instruction-sized paragraph fits a bubble.
+        if (value.length > source.length * 4 + 12) {
+            android.util.Log.w("Translate", "TR reject oversize len=${value.length} src=${source.length}")
+            return ""
+        }
+        // A bubble holding only a mark must not receive a sentence the model made up for it.
+        if (isTrivialSource(source) && !isTrivialSource(value)) {
+            android.util.Log.w("Translate", "TR reject invented line for mark len=${value.length}")
+            return ""
+        }
+        return value
     }
 
     /**
@@ -906,8 +975,7 @@ object TranslationEngine {
             val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
             return List(count) { i ->
                 val source = sourceOf(i)
-                val value = tidy(lines.getOrNull(i).orEmpty(), source)
-                if (isEcho(value, source)) "" else value
+                sanitize(tidy(lines.getOrNull(i).orEmpty(), source), source)
             }
         }
         val out = MutableList(count) { "" }
@@ -917,8 +985,8 @@ object TranslationEngine {
             val value = tidy(text.substring(entry.second, end), source)
             // An echoed Japanese line is not a translation: treat it as unanswered so the
             // per-bubble repair gets a chance, instead of erasing the bubble and painting the
-            // original text back on.
-            out[entry.first] = if (isEcho(value, source)) "" else value
+            // original text back on. The same gate drops leaked instructions and paragraphs.
+            out[entry.first] = sanitize(value, source)
         }
         val blank = out.count { it.isEmpty() }
         if (blank > 0) {
@@ -990,7 +1058,9 @@ object TranslationEngine {
         val seeds = groups.map { it.bubble }
         val placed = ArrayList<Rect>()
         groups.forEachIndexed { i, group ->
-            val value = tidy(translated.getOrNull(i).orEmpty(), group.source)
+            // Cached translations predate this gate, so filter here too: a bad answer must not
+            // be drawn just because it was saved by an older build.
+            val value = sanitize(tidy(translated.getOrNull(i).orEmpty(), group.source), group.source)
             if (value.isEmpty()) return@forEachIndexed
             // light lettering on dark artwork (titles, black bubbles) cannot be erased without
             // painting a bright patch over the drawing, so it is left alone
