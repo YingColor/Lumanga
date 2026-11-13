@@ -31,6 +31,14 @@ import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.UiSettings
 import kotlinx.coroutines.launch
 
+/**
+ * Everything the translator needs: recognition model, languages, rendering and the service.
+ *
+ * There is deliberately no on/off switch here. Turning translation on is the reader's own
+ * control (the 译 button, or plain reading with it already filled in); a second switch on this
+ * panel could disagree with it and hid the whole service section behind a toggle, which made
+ * the panel look empty until it was found.
+ */
 @Composable
 fun TranslationSettings(settings: UiSettings) {
     val scheme = MaterialTheme.colorScheme
@@ -77,144 +85,126 @@ fun TranslationSettings(settings: UiSettings) {
 
     Spacer(Modifier.height(16.dp))
 
+    ApiProtocolPicker(
+        current = settings.translateProtocol,
+        onSelect = {
+            settings.setTranslateProtocol(it)
+            // A result from the previous wire format says nothing about this one.
+            testResult = null
+        }
+    )
+    Spacer(Modifier.height(12.dp))
+    // A request strategy rather than a service setting, so it sits right under the protocol.
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = S.translateEnable, style = MaterialTheme.typography.bodyLarge)
+            Text(text = S.translateModeGroup, style = MaterialTheme.typography.bodyLarge)
             Text(
-                text = S.translateEnableTip,
+                text = S.translateModeGroupTip,
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant
             )
         }
         Switch(
-            checked = settings.translateEnabled,
-            onCheckedChange = settings::setTranslateEnabled
-        )
-    }
-
-    if (settings.translateEnabled) {
-        Spacer(Modifier.height(14.dp))
-        ApiProtocolPicker(
-            current = settings.translateProtocol,
-            onSelect = {
-                settings.setTranslateProtocol(it)
-                // A result from the previous wire format says nothing about this one.
+            checked = settings.translateMode == TranslateMode.GROUP,
+            onCheckedChange = {
+                settings.setTranslateMode(if (it) TranslateMode.GROUP else TranslateMode.PAGE)
                 testResult = null
             }
         )
-        Spacer(Modifier.height(12.dp))
-        // A request strategy rather than a service setting, so it sits right under the protocol.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = S.translateModeGroup, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    text = S.translateModeGroupTip,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant
+    }
+    Spacer(Modifier.height(12.dp))
+    OutlinedTextField(
+        value = api,
+        onValueChange = {
+            api = it
+            settings.setTranslateApi(it)
+        },
+        label = { Text(S.translateApi) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(10.dp))
+    OutlinedTextField(
+        value = apiKey,
+        onValueChange = {
+            apiKey = it
+            settings.setTranslateApiKey(it)
+        },
+        label = { Text(S.preTranslateApiKey) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(4.dp))
+    Text(
+        text = S.preTranslateApiKeyTip,
+        style = MaterialTheme.typography.labelSmall,
+        color = scheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(10.dp))
+    ModelField(
+        value = model,
+        onValueChange = {
+            model = it
+            settings.setTranslateModel(it)
+        },
+        api = api,
+        apiKey = apiKey,
+        protocol = settings.translateProtocol,
+        enabled = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(6.dp))
+    Text(
+        text = S.translateApiTip,
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant
+    )
+    Button(
+        onClick = {
+            testing = true
+            testResult = null
+            scope.launch {
+                // The probe has to be written in the language the page is printed in, or
+                // isUsable() rejects it and the connection test reports a false failure.
+                // "Auto" gets the Japanese sample: it is the pair this app is built for, and
+                // resolveSource() then settles the probe exactly like it would settle a page.
+                val probeText = when (SourceLanguage.from(settings.sourceLanguage)) {
+                    SourceLanguage.ENGLISH -> "Hello, how are you today?"
+                    SourceLanguage.CHINESE -> "今天天气真好啊。"
+                    SourceLanguage.JAPANESE, SourceLanguage.AUTO -> "今日はいい天気ですね。"
+                }
+                val probe = listOf(TextRegion(probeText, Rect(0, 0, 100, 40)))
+                val probeLang = TranslationEngine.resolveSource(probe)
+                val groups = TranslationEngine.groupBubbles(
+                    probe, 200, 80, bitmap = null, lang = probeLang
                 )
+                val result = TranslationEngine.translate(
+                    groups, api, model, emptyList(), apiKey,
+                    protocol = ApiProtocol.from(settings.translateProtocol),
+                    sourceLang = probeLang
+                )
+                testResult = if (result != null && result.firstOrNull()?.isNotBlank() == true)
+                    S.translateTestOk
+                else
+                    S.translateTestFail
+                testing = false
             }
-            Switch(
-                checked = settings.translateMode == TranslateMode.GROUP,
-                onCheckedChange = {
-                    settings.setTranslateMode(if (it) TranslateMode.GROUP else TranslateMode.PAGE)
-                    testResult = null
-                }
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = api,
-            onValueChange = {
-                api = it
-                settings.setTranslateApi(it)
-            },
-            label = { Text(S.translateApi) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = apiKey,
-            onValueChange = {
-                apiKey = it
-                settings.setTranslateApiKey(it)
-            },
-            label = { Text(S.preTranslateApiKey) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(4.dp))
+        },
+        enabled = !testing
+    ) {
+        Text(if (testing) S.translateTesting else S.translateTest)
+    }
+    testResult?.let {
+        Spacer(Modifier.height(8.dp))
         Text(
-            text = S.preTranslateApiKeyTip,
-            style = MaterialTheme.typography.labelSmall,
-            color = scheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(10.dp))
-        ModelField(
-            value = model,
-            onValueChange = {
-                model = it
-                settings.setTranslateModel(it)
-            },
-            api = api,
-            apiKey = apiKey,
-            protocol = settings.translateProtocol,
-            enabled = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = S.translateApiTip,
+            text = it,
             style = MaterialTheme.typography.bodySmall,
-            color = scheme.onSurfaceVariant
-        )
-        Button(
-            onClick = {
-                testing = true
-                testResult = null
-                scope.launch {
-                    // The probe has to be written in the language the page is printed in, or
-                    // isUsable() rejects it and the connection test reports a false failure.
-                    // "Auto" gets the Japanese sample: it is the pair this app is built for, and
-                    // resolveSource() then settles the probe exactly like it would settle a page.
-                    val probeText = when (SourceLanguage.from(settings.sourceLanguage)) {
-                        SourceLanguage.ENGLISH -> "Hello, how are you today?"
-                        SourceLanguage.CHINESE -> "今天天气真好啊。"
-                        SourceLanguage.JAPANESE, SourceLanguage.AUTO -> "今日はいい天気ですね。"
-                    }
-                    val probe = listOf(TextRegion(probeText, Rect(0, 0, 100, 40)))
-                    val probeLang = TranslationEngine.resolveSource(probe)
-                    val groups = TranslationEngine.groupBubbles(
-                        probe, 200, 80, bitmap = null, lang = probeLang
-                    )
-                    val result = TranslationEngine.translate(
-                        groups, api, model, emptyList(), apiKey,
-                        protocol = ApiProtocol.from(settings.translateProtocol),
-                        sourceLang = probeLang
-                    )
-                    testResult = if (result != null && result.firstOrNull()?.isNotBlank() == true)
-                        S.translateTestOk
-                    else
-                        S.translateTestFail
-                    testing = false
-                }
-            },
-            enabled = !testing
-        ) {
-            Text(if (testing) S.translateTesting else S.translateTest)
-        }
-        testResult?.let {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (it == S.translateTestOk) scheme.primary else scheme.error
-            )
-        }
-        Text(
-            text = S.translateOnlyText,
-            style = MaterialTheme.typography.labelSmall,
-            color = scheme.primary
+            color = if (it == S.translateTestOk) scheme.primary else scheme.error
         )
     }
+    Text(
+        text = S.translateOnlyText,
+        style = MaterialTheme.typography.labelSmall,
+        color = scheme.primary
+    )
 }
