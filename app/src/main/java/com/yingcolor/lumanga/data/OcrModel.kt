@@ -77,6 +77,9 @@ enum class OcrModel(
         /** Fresh installs and any unknown stored id land on the fast column reader. */
         val DEFAULT: OcrModel = SMALL
 
+        /** Default first, then the ones worth reaching for when small misses something. */
+        val choices: List<OcrModel> = listOf(SMALL, HYBRID, MEDIUM, MANGA)
+
         fun from(id: Int): OcrModel = entries.firstOrNull { it.id == id } ?: DEFAULT
     }
 }

@@ -7,6 +7,7 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.util.LruCache
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -1375,6 +1376,7 @@ private fun ReaderContent(
     onProgress: (Int, Int) -> Unit,
     onResetProgress: () -> Unit
 ) {
+    val context = LocalContext.current
     val rtl = settings.readingDirection == 1
     val doublePage = settings.doublePage
     val tapToTurn = settings.tapToTurn
@@ -1981,7 +1983,14 @@ private fun ReaderContent(
                         // out wrong can be redone without leaving the book. Dimmed while
                         // translation is off: there is nothing to redo then.
                         IconButton(
-                            onClick = { vm.restartTranslation() },
+                            onClick = {
+                                vm.restartTranslation()
+                                // The page stays as it was until OCR and the request finish, so
+                                // without this the tap looks like it did nothing.
+                                Toast.makeText(
+                                    context, S.retranslateStarted, Toast.LENGTH_SHORT
+                                ).show()
+                            },
                             enabled = translateOn,
                             modifier = iconBox
                         ) {

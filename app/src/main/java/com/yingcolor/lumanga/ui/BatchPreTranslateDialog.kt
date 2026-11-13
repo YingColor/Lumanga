@@ -265,18 +265,9 @@ fun BatchPreTranslateDialog(
                         ) { Text(S.preTranslateFollowGlobal) }
                     }
                     Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            S.preTranslateOcr,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            S.preTranslateOcrValue(OcrModel.from(settings.ocrModel).label),
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
+                    // Same selector as the single-book panel: the model is part of what a run
+                    // uses, not something to change in another screen first.
+                    OcrModelRow(settings = settings, enabled = !state.running)
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(

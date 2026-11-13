@@ -113,8 +113,12 @@ object TranslationEngine {
      * silently reuses a volume's existing Chinese translations.
      */
     val languageKey: String
-        get() = if (source == SourceLanguage.DEFAULT && target == TargetLanguage.DEFAULT) ""
-        else "s${source.id}t${target.id}"
+        // AUTO is not a separate pair: it resolves to Japanese on any page that carries kana, and
+        // that is the old default. Giving AUTO its own key would make every existing translation
+        // invisible the moment the default changed, so it keeps the unmodified key too.
+        get() = if ((source == SourceLanguage.DEFAULT || source.detected) &&
+            target == TargetLanguage.DEFAULT
+        ) "" else "s${source.id}t${target.id}"
 
     private fun buildSystemPrompt(lang: SourceLanguage): String = buildString {
         val horizontalSource = lang.horizontal

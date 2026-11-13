@@ -124,7 +124,9 @@ class Prefs(context: Context) {
 
     
     var readingDirection: Int
-        get() = sp.getInt(KEY_DIRECTION, 1)
+        // 0 = left to right, 1 = right to left. Left to right is the default now; someone who
+        // picked the other direction keeps their saved value.
+        get() = sp.getInt(KEY_DIRECTION, 0)
         set(value) = sp.edit().putInt(KEY_DIRECTION, value).apply()
 
     var doublePage: Boolean
@@ -187,7 +189,9 @@ class Prefs(context: Context) {
 
     /** Language printed on the page; see [SourceLanguage]. */
     var sourceLanguage: Int
-        get() = sp.getInt(KEY_SOURCE_LANGUAGE, SourceLanguage.DEFAULT.id)
+        // Auto-detect is the default now. It resolves to Japanese on pages that contain kana,
+        // which is the old default, so existing translations keep working (see languageKey).
+        get() = sp.getInt(KEY_SOURCE_LANGUAGE, SourceLanguage.AUTO.id)
         set(value) = sp.edit().putInt(KEY_SOURCE_LANGUAGE, SourceLanguage.coerce(value)).apply()
 
     /** Language the translation service should write; see [TargetLanguage]. */

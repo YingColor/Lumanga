@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -96,6 +97,7 @@ fun PreTranslateDialog(
     var preview by remember { mutableStateOf<BookPreview?>(null) }
     var selected by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var storedCount by remember { mutableIntStateOf(0) }
+    var translatedPages by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var resumeOnly by remember { mutableStateOf(true) }
     var running by remember { mutableStateOf(false) }
     var doneCount by remember { mutableIntStateOf(0) }
@@ -106,6 +108,7 @@ fun PreTranslateDialog(
 
     LaunchedEffect(book.id) {
         storedCount = TranslationStore.count(context, book.id)
+        translatedPages = TranslationStore.translatedIndexes(context, book.id)
         val opened = withContext(Dispatchers.IO) { runCatching { BookPreview(context, book) }.getOrNull() }
         preview = opened
         val count = opened?.pageCount ?: 0
@@ -256,19 +259,9 @@ fun PreTranslateDialog(
                 }
 
                 Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = S.preTranslateOcr,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        text = S.preTranslateOcrValue(OcrModel.from(settings.ocrModel).label),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
+                // Switchable right here: walking into 翻译配置 every time a page needs a stronger
+                // detector was the main complaint about this panel.
+                OcrModelRow(settings = settings, enabled = !running)
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -380,6 +373,7 @@ fun PreTranslateDialog(
                             index = index,
                             preview = preview,
                             checked = checked,
+                            translated = index in translatedPages,
                             thumbs = thumbs,
                             onClick = {
                                 if (!running) {
@@ -467,9 +461,17 @@ fun PreTranslateDialog(
                                             groupMode = settings.translateMode == TranslateMode.GROUP,
                                             skipStored = resumeOnly
                                         ) { done, _ ->
-                                            withContext(Dispatchers.Main) { doneCount = done }
+                                            // Read the store instead of trusting the callback:
+                                            // a failed page also reports progress, and it must not
+                                            // light up as translated.
+                                            val saved = TranslationStore.translatedIndexes(context, book.id)
+                                            withContext(Dispatchers.Main) {
+                                                doneCount = done
+                                                translatedPages = saved
+                                            }
                                         }
                                         storedCount = TranslationStore.count(context, book.id)
+                                        translatedPages = TranslationStore.translatedIndexes(context, book.id)
                                         message = when (result) {
                                             is PreTranslate.Result.Done -> when {
                                                 // A page that failed is skipped, so the count can be
@@ -515,6 +517,7 @@ private fun PageThumb(
     index: Int,
     preview: BookPreview?,
     checked: Boolean,
+    translated: Boolean,
     thumbs: LruCache<Int, Bitmap>,
     onClick: () -> Unit
 ) {
@@ -560,16 +563,37 @@ private fun PageThumb(
                     .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
             )
         }
+        // White on a solid dark pill: the old label used onSurface on a 55% black box, and an
+        // unselected page already sits under a 45% dim overlay, so the number was unreadable.
         Text(
             text = (index + 1).toString(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = Color.White,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(3.dp)
-                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
-                .padding(horizontal = 3.dp)
+                .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 4.dp, vertical = 1.dp)
         )
+        // A page whose translation is already on disk. Failed pages never get this mark, so a
+        // half-finished run can be read straight off the strip.
+        if (translated) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(3.dp)
+                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
+                    .padding(horizontal = 4.dp, vertical = 1.dp)
+            ) {
+                Text(
+                    text = S.translatedMark,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+        }
         if (checked) {
             Box(
                 modifier = Modifier
