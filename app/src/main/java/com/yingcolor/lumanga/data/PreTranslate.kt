@@ -17,10 +17,16 @@ import kotlin.math.max
  */
 object PreTranslate {
     /**
-     * Longest side of the bitmap handed to OCR. Bigger than a phone screen on purpose: the batch
-     * runs once, and finer columns lift recognition quality. Larger than this mostly buys time.
+     * Upper bound for the bitmap handed to OCR, not a target size.
+     *
+     * It used to be 1400, which made pre-translation work on a *smaller* page than the reader
+     * does: decoding already returns 1240x1754 for a 2480x3509 scan, and [fit] then shrank that
+     * to 989x1400. The same column was therefore read at 0.86 confidence by the reader and 0.45
+     * (dropped, below the 0.45 floor) by pre-translation — which is why a bubble could come out
+     * translated when read live and untouched after a batch run. Keeping the decoded size makes
+     * both paths see the identical page.
      */
-    private const val MAX_SIDE = 1400
+    private const val MAX_SIDE = 3000
 
     /** Three missed pages in a row means the endpoint is down, not that one page was unlucky. */
     private const val MAX_CONSECUTIVE_FAILURES = 3

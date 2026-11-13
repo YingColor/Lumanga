@@ -163,6 +163,8 @@ object TranslationEngine {
     }
 
     private val LEADING_INDEX = Regex("^\\s*\\d+\\s*[.、)]\\s*")
+    /** List marker inside an answer: "7. 译文", "7、译文", "7)译文". Digits are pre-normalised. */
+    private val NUMBER_MARK = Regex("(?:^|\\s)(\\d{1,2})\\s*[.、)]\\s*")
     private val REPLY_LABEL = Regex(
         "^(译文|翻译|中文|简体中文|翻译结果|Translation|English|Output)\\s*[:：]\\s*",
         RegexOption.IGNORE_CASE
@@ -305,7 +307,22 @@ object TranslationEngine {
         // An "auto" setting is settled once, here, so every rule below agrees with the prompt
         // and with the cache key that the caller derived from the same page.
         val language = if (lang.detected) detectSource(regions) else lang
-        val usable = regions.filter { isUsable(it, language) }
+        val usable = ArrayList<TextRegion>(regions.size)
+        regions.forEach { region ->
+            if (isUsable(region, language)) {
+                usable.add(region)
+            } else {
+                // Whatever is dropped here never reaches the model, and its bubble then keeps
+                // its Japanese. Logging the rejects is what tells a missing bubble apart from
+                // a bubble the translator answered badly.
+                android.util.Log.d(
+                    "Translate",
+                    "TR skip conf=${"%.2f".format(region.confidence)} " +
+                        "box=${region.box.left},${region.box.top}," +
+                        "${region.box.right},${region.box.bottom} text=${region.text}"
+                )
+            }
+        }
         if (usable.isEmpty()) return emptyList()
         val ordered = usable.sortedWith(regionOrder(language))
         val clusters = ArrayList<MutableList<TextRegion>>()
@@ -348,12 +365,25 @@ object TranslationEngine {
         val withMarks = absorbEllipsis(groups)
         // A fragment on its own is noise: one kana that lost the rest of its column would be
         // translated into a stray word floating over the artwork. Two or more letters are kept,
-        // because a short but real line like 「よし」 must not disappear.
+        // because a short but real line like 「よし」 must not disappear. The exception is a
+        // single kana that sits inside a clean white bubble: 「ん…?」「は？」 are complete lines
+        // of dialogue, and dropping them left the bubble in Japanese. The bubble test is what
+        // separates them from lettering printed on the artwork, which is still filtered out.
         val kept = withMarks.filter { cluster ->
-            cluster.sumOf { region -> region.text.count { isSourceLetter(it, language) } } >= 2 ||
+            val letters =
+                cluster.sumOf { region -> region.text.count { isSourceLetter(it, language) } }
+            val keep = letters >= 2 ||
                 // A column of nothing but 「…」 still has to be kept: it covers lettering on the
                 // page, and skipping it leaves the original dots showing between translated lines.
-                cluster.all { isEllipsisOnly(it) }
+                cluster.all { isEllipsisOnly(it) } ||
+                (bitmap != null && letters >= 1 && patchOf(bitmap, cluster) != null)
+            if (!keep) {
+                android.util.Log.d(
+                    "Translate",
+                    "TR skip group letters=$letters text=${cluster.joinToString(" ") { it.text }}"
+                )
+            }
+            keep
         }
         val horizontalSource = language.horizontal
         val japaneseSource = language == SourceLanguage.JAPANESE
@@ -590,7 +620,12 @@ object TranslationEngine {
             when (val result = ApiClient.chat(
                 protocol, api, model, apiKey, systemPrompt(sourceLang), numbered, token
             )) {
-                is ApiClient.ChatResult.Ok -> return@withContext parse(result.text, groups)
+                is ApiClient.ChatResult.Ok -> {
+                    val parsed = parse(result.text, groups)
+                    return@withContext fillBlanks(
+                        parsed, groups, protocol, api, model, apiKey, context, sourceLang, token
+                    )
+                }
                 is ApiClient.ChatResult.Fail -> {
                     lastError = result.reason
                     android.util.Log.w("Translate", "TR fail ${result.reason}")
@@ -605,6 +640,58 @@ object TranslationEngine {
         }
         android.util.Log.w("Translate", "TR gave up: $lastError")
         null
+    }
+
+    /**
+     * Fills the entries a whole-page answer skipped.
+     *
+     * A page request is one numbered list, and the model habitually drops a line: a lone 「ん…」,
+     * a fragment it decided was not a sentence, or two short answers compressed into one entry.
+     * Left alone, that index stays empty, [render] skips it, and the bubble keeps its Japanese —
+     * which reads like the text was never recognised. Asking for those bubbles one at a time is
+     * cheap (usually one or two per page) and almost never fails.
+     */
+    private suspend fun fillBlanks(
+        lines: List<String>,
+        groups: List<BubbleGroup>,
+        protocol: ApiProtocol,
+        api: String,
+        model: String,
+        apiKey: String,
+        context: List<String>,
+        sourceLang: SourceLanguage,
+        token: ApiClient.CancelToken?
+    ): List<String> {
+        val missing = lines.indices.filter { lines[it].isBlank() }
+        // Nothing parsed at all is a different failure (wrong format, empty answer): retrying
+        // every group one by one would turn one bad page into a page of requests.
+        if (missing.isEmpty() || missing.size == lines.size) return lines
+        val hint = context.filter { it.isNotBlank() }
+            .takeLast(GROUP_CONTEXT_LINES)
+            .joinToString("\n")
+        val fixed = lines.toMutableList()
+        val gate = Semaphore(GROUP_CONCURRENCY)
+        val write = Mutex()
+        var repaired = 0
+        coroutineScope {
+            missing.forEach { index ->
+                launch {
+                    gate.withPermit {
+                        if (token?.cancelled == true) return@withPermit
+                        val text = askGroup(
+                            protocol, api, model, apiKey, hint, groups[index].source,
+                            index, sourceLang, token
+                        ) ?: return@withPermit
+                        write.withLock {
+                            fixed[index] = text
+                            repaired++
+                        }
+                    }
+                }
+            }
+        }
+        android.util.Log.i("Translate", "TR repair blank=${missing.size} ok=$repaired")
+        return fixed
     }
 
     /**
@@ -668,7 +755,11 @@ object TranslationEngine {
     }
 
     /**
-     * One request for one group, retried once when the socket drops.
+     * One request for one group, retried once.
+     *
+     * The retry covers both a dropped socket and an answer that carried nothing usable — an
+     * echoed Japanese line, or just 「…」. Both used to leave the bubble in Japanese; the second
+     * attempt says so in the prompt, which is usually enough to get a real translation.
      *
      * Returns null when the model gave nothing usable, so the caller keeps that bubble's original
      * text instead of erasing it and painting nothing.
@@ -684,22 +775,29 @@ object TranslationEngine {
         sourceLang: SourceLanguage,
         token: ApiClient.CancelToken? = null
     ): String? {
-        val user = buildString {
-            if (hint.isNotEmpty()) {
-                append("【前文，仅供人名、称呼和语气参考】\n").append(hint).append("\n\n")
-            }
-            append("【要翻译的原文】\n").append(source)
-        }
         var lastError = "unknown"
         for (attempt in 0 until 2) {
             if (token?.cancelled == true) return null
+            val user = buildString {
+                if (hint.isNotEmpty()) {
+                    append("【前文，仅供人名、称呼和语气参考】\n").append(hint).append("\n\n")
+                }
+                append("【要翻译的原文】\n").append(source)
+                if (attempt > 0) {
+                    append("\n\n上一次没有给出可用的译文。这次请直接给出")
+                        .append(target.promptName)
+                        .append("译文本身，不要照抄原文，也不要输出省略号占位。")
+                }
+            }
             when (val result = ApiClient.chat(
                 protocol, api, model, apiKey, groupPrompt(sourceLang), user, token
             )) {
                 is ApiClient.ChatResult.Ok -> {
                     val value = tidyGroup(result.text, source)
                     if (value.isNotEmpty()) return value
-                    break
+                    lastError = "empty answer"
+                    android.util.Log.w("Translate", "TR group $index empty answer")
+                    if (token?.cancelled == true) return null
                 }
                 is ApiClient.ChatResult.Fail -> {
                     lastError = result.reason
@@ -710,7 +808,7 @@ object TranslationEngine {
                 }
             }
         }
-        android.util.Log.w("Translate", "TR group $index empty ($lastError)")
+        android.util.Log.w("Translate", "TR group $index gave up ($lastError)")
         return null
     }
 
@@ -731,15 +829,20 @@ object TranslationEngine {
             }
         }
         val cleaned = tidy(body, source)
-        // An echoed source is worse than no answer. For a Latin target the answer legitimately
-        // has spaces, so both sides are compared with whitespace removed.
-        val echoed = if (target.keepSpaces)
-            source.replace(COLUMN_MARKS, "").replace(WHITESPACE, "")
-        else source.replace(WHITESPACE, "")
-        if (cleaned.isNotEmpty() &&
-            cleaned.replace(WHITESPACE, "") == echoed.replace(WHITESPACE, "")
-        ) return ""
+        // An echoed source is worse than no answer.
+        if (isEcho(cleaned, source)) return ""
         return cleaned
+    }
+
+    /**
+     * True when the answer is just the original line handed back. Column marks and whitespace are
+     * ignored, because a Latin target legitimately keeps spaces and the source marker is an
+     * input-only cue.
+     */
+    private fun isEcho(value: String, source: String): Boolean {
+        if (value.isEmpty()) return false
+        val flat = { s: String -> s.replace(COLUMN_MARKS, "").replace(WHITESPACE, "") }
+        return flat(value) == flat(source)
     }
 
     /**
@@ -756,28 +859,71 @@ object TranslationEngine {
         ApiClient.listModels(protocol, api, apiKey)
     }
 
+    /**
+     * Reads the numbered answer back into one line per group.
+     *
+     * A line-per-entry reading is what left bubbles in Japanese. Two habits of the model break
+     * it: several short answers share one line ("3. 啊 4. 嗯…"), and the list marker comes back
+     * with full-width digits or a full-width dot. Both used to make the later indexes vanish, so
+     * their bubbles were never drawn. Markers are therefore found anywhere in the text, and only
+     * an ascending index within range counts, which keeps a line like "1.5倍" from splitting.
+     *
+     * Text that carries no marker at all is treated as the continuation of the entry above —
+     * that is what a wrapped translation looks like — and an answer with no markers whatsoever
+     * falls back to plain line order.
+     */
     private fun parse(content: String, groups: List<BubbleGroup>): List<String> {
         val count = groups.size
-        val lines = content.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        val byIndex = HashMap<Int, String>()
-        val numbered = Regex("^(\\d+)[.、)]\\s*(.+)$")
-        lines.forEach { line ->
-            val match = numbered.find(line)
-            if (match == null) {
-                // A long translation is sometimes wrapped onto a second line. Keep it as the
-                // continuation of the entry above instead of dropping that half of the sentence.
-                val last = byIndex.keys.maxOrNull() ?: return@forEach
-                byIndex[last] = byIndex[last] + line
-                return@forEach
+        val text = buildString(content.length) {
+            content.forEach { ch ->
+                append(
+                    when {
+                        ch in '０'..'９' -> '0' + (ch - '０')
+                        ch == '．' -> '.'
+                        else -> ch
+                    }
+                )
             }
-            val index = match.groupValues[1].toIntOrNull()?.minus(1) ?: return@forEach
-            byIndex[index] = match.groupValues[2].trim()
+        }
+        // index (0-based), body start, marker start
+        val entries = ArrayList<Triple<Int, Int, Int>>()
+        var lastIndex = 0
+        var cursor = 0
+        while (cursor < text.length) {
+            val match = NUMBER_MARK.find(text, cursor) ?: break
+            val index = match.groupValues[1].toIntOrNull()
+            val bodyStart = match.range.last + 1
+            val followedByDigit = bodyStart < text.length && text[bodyStart].isDigit()
+            if (index != null && index in 1..count && index > lastIndex && !followedByDigit) {
+                entries.add(Triple(index - 1, bodyStart, match.range.first))
+                lastIndex = index
+            }
+            cursor = match.range.last + 1
         }
         val sourceOf = { i: Int -> groups.getOrNull(i)?.source.orEmpty() }
-        if (byIndex.isNotEmpty()) {
-            return List(count) { i -> tidy(byIndex[i].orEmpty(), sourceOf(i)) }
+        if (entries.isEmpty()) {
+            val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            return List(count) { i ->
+                val source = sourceOf(i)
+                val value = tidy(lines.getOrNull(i).orEmpty(), source)
+                if (isEcho(value, source)) "" else value
+            }
         }
-        return List(count) { i -> tidy(lines.getOrNull(i).orEmpty(), sourceOf(i)) }
+        val out = MutableList(count) { "" }
+        entries.forEachIndexed { k, entry ->
+            val end = entries.getOrNull(k + 1)?.third ?: text.length
+            val source = sourceOf(entry.first)
+            val value = tidy(text.substring(entry.second, end), source)
+            // An echoed Japanese line is not a translation: treat it as unanswered so the
+            // per-bubble repair gets a chance, instead of erasing the bubble and painting the
+            // original text back on.
+            out[entry.first] = if (isEcho(value, source)) "" else value
+        }
+        val blank = out.count { it.isEmpty() }
+        if (blank > 0) {
+            android.util.Log.i("Translate", "TR parse answered=${count - blank}/$count")
+        }
+        return out
     }
 
     /**
