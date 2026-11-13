@@ -1123,7 +1123,6 @@ fun ReaderScreen(
     onBack: () -> Unit,
     onSettings: () -> Unit,
     onTranslateConfig: () -> Unit,
-    onPreTranslate: () -> Unit,
     settingsOpen: Boolean,
     onCloseSettings: () -> Unit,
     onProgress: (Int, Int) -> Unit,
@@ -1204,7 +1203,6 @@ fun ReaderScreen(
                             onBack = onBack,
                             onSettings = onSettings,
                             onTranslateConfig = onTranslateConfig,
-                            onPreTranslate = onPreTranslate,
                             settingsOpen = settingsOpen,
                             onCloseSettings = onCloseSettings,
                             onProgress = onProgress,
@@ -1256,7 +1254,6 @@ private fun ReaderContent(
     onBack: () -> Unit,
     onSettings: () -> Unit,
     onTranslateConfig: () -> Unit,
-    onPreTranslate: () -> Unit,
     settingsOpen: Boolean,
     onCloseSettings: () -> Unit,
     onProgress: (Int, Int) -> Unit,
@@ -1865,15 +1862,15 @@ private fun ReaderContent(
                         // off, so the current state reads at a glance. Sits just left of the gear.
                         val translateOn = settings.translateEnabled
                         // Short tap toggles translation; holding for half a second opens the
-                        // single-volume pre-translate panel. The system long-press is also
-                        // 500 ms, so this stays a custom timer: a cancelled press can never be
-                        // mistaken for a long one. UpdatedState keeps the callbacks fresh without
-                        // restarting pointerInput (which would reset the timer).
+                        // translate config. The system long-press is also 500 ms, so this stays a
+                        // custom timer: a cancelled press can never be mistaken for a long one.
+                        // UpdatedState keeps the callbacks fresh without restarting pointerInput
+                        // (which would reset the timer).
                         val tapToggle = rememberUpdatedState<() -> Unit> {
                             if (!translateOn && settings.translateApi.isBlank()) onTranslateConfig()
                             else settings.setTranslateEnabled(!translateOn)
                         }
-                        val openPreTranslate = rememberUpdatedState(onPreTranslate)
+                        val openConfig = rememberUpdatedState(onTranslateConfig)
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = (if (compactBar) Modifier.size(30.dp) else Modifier.size(48.dp))
@@ -1890,7 +1887,7 @@ private fun ReaderContent(
                                             val timer = launch {
                                                 delay(500L)
                                                 longFired = true
-                                                openPreTranslate.value()
+                                                openConfig.value()
                                             }
                                             try {
                                                 val up = waitForUpOrCancellation()

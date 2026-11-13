@@ -148,7 +148,7 @@ private fun ComicApp() {
     var currentBook by remember { mutableStateOf<Book?>(null) }
     var settingsRoute by remember { mutableIntStateOf(SettingsRoute.CLOSED) }
     var translateConfigOpen by remember { mutableStateOf(false) }
-    // Long-pressing the reader's 译 button opens the single-volume pre-translate panel here.
+    // Set from the "预翻译整本" shortcut inside the translate config dialog.
     var preTranslateBook by remember { mutableStateOf<Book?>(null) }
     var folders by remember { mutableStateOf(prefs.folderUris) }
     var toast by remember { mutableStateOf<String?>(null) }
@@ -278,7 +278,6 @@ private fun ComicApp() {
                         },
                         onSettings = { openSettings(SettingsRoute.READING) },
                         onTranslateConfig = { translateConfigOpen = true },
-                        onPreTranslate = { preTranslateBook = book },
                         settingsOpen = settingsRoute != SettingsRoute.CLOSED,
                         onCloseSettings = { settingsRoute = SettingsRoute.CLOSED },
                         onProgress = { page, total -> prefs.setProgress(book.id, page, total) },
@@ -377,7 +376,15 @@ private fun ComicApp() {
             if (translateConfigOpen) {
                 TranslateConfigDialog(
                     settings = settings,
-                    onDismiss = { translateConfigOpen = false }
+                    onDismiss = { translateConfigOpen = false },
+                    // Inside a volume the panel also offers the per-volume pre-translate, so
+                    // that shortcut is not lost now that the long press opens this dialog.
+                    onPreTranslate = currentBook?.takeIf { screen == "reader" }?.let { open ->
+                        {
+                            translateConfigOpen = false
+                            preTranslateBook = open
+                        }
+                    }
                 )
             }
 

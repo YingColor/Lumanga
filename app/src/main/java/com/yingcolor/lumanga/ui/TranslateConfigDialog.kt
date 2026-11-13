@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -26,12 +27,17 @@ import com.yingcolor.lumanga.data.UiSettings
 /**
  * Translation is about a service and a key, not about how pages are drawn, so it lives
  * outside the reading settings. Opened from the shelf drawer, and from the reader's
- * translate button when no endpoint has been filled in yet.
+ * translate button.
+ *
+ * @param onPreTranslate when set, a shortcut to the single-volume pre-translate panel is
+ *   shown. The reader passes it so the panel stays reachable without a second long-press
+ *   gesture; the shelf drawer leaves it null because no volume is open there.
  */
 @Composable
 fun TranslateConfigDialog(
     settings: UiSettings,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onPreTranslate: (() -> Unit)? = null
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -69,6 +75,10 @@ fun TranslateConfigDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
+                    if (onPreTranslate != null) {
+                        TextButton(onClick = onPreTranslate) { Text(S.preTranslateTitle) }
+                        Spacer(Modifier.width(4.dp))
+                    }
                     TextButton(onClick = onDismiss) { Text(S.done) }
                 }
             }
