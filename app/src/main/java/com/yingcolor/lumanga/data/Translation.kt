@@ -183,8 +183,11 @@ object TranslationEngine {
     @Volatile
     var ocr: OcrEngine = NoOpOcrEngine
 
-    suspend fun recognize(bitmap: Bitmap, parallel: Boolean = false): List<TextRegion> =
-        ocr.recognize(bitmap, parallel)
+    suspend fun recognize(
+        bitmap: Bitmap,
+        parallel: Boolean = false,
+        token: ApiClient.CancelToken? = null
+    ): List<TextRegion> = ocr.recognize(bitmap, parallel, token)
 
     /**
      * Turns the "auto" setting into a concrete language for one page.

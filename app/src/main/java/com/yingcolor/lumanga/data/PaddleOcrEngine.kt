@@ -101,8 +101,11 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
 
     override suspend fun recognize(
         bitmap: Bitmap,
-        parallel: Boolean
+        parallel: Boolean,
+        token: ApiClient.CancelToken?
     ): List<TextRegion> = withContext(Dispatchers.IO) {
+        // Local runs are cancelled by the coroutine itself (ensureActive below), so the token is
+        // only used by the online engine.
         // Only pre-translation asks for a pooled runtime, so a release can never pull one out
         // from under the reader. Both paths run the same models and filters.
         val pool = parallelPool

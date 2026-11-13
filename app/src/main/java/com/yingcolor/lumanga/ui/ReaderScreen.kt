@@ -205,6 +205,9 @@ private const val GROUP_PAGE_BUDGET_MS = 150_000L
  */
 private const val OCR_BUDGET_MS = 40_000L
 private const val MEDIUM_OCR_BUDGET_MS = 70_000L
+
+/** A vision model reads the whole page in one request; that round trip can take a minute. */
+private const val ONLINE_OCR_BUDGET_MS = 120_000L
 private const val MEDIUM_PAGE_BUDGET_MS = 110_000L
 
 /** How long a neighbouring page waits for the focused page to start before it goes ahead. */
@@ -213,6 +216,7 @@ private const val YIELD_BUDGET_MS = 3_000L
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = Prefs(app)
     private val mediumOcr: Boolean get() = prefs.ocrModel == OcrModel.MEDIUM.id
+    private val onlineOcr: Boolean get() = prefs.ocrOnline
 
     @Volatile
     private var reader: PageSource? = null
@@ -941,9 +945,16 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         val ocrStarted = System.currentTimeMillis()
         // The medium OCR model is several times slower than the small one; give it room to
         // finish instead of throwing away a full recognition at the 25 s mark.
-        val ocrBudget = if (mediumOcr) MEDIUM_OCR_BUDGET_MS else OCR_BUDGET_MS
-        val regions = withTimeoutOrNull(ocrBudget) { TranslationEngine.recognize(source) }
-            ?: run {
+        val ocrBudget = when {
+            onlineOcr -> ONLINE_OCR_BUDGET_MS
+            mediumOcr -> MEDIUM_OCR_BUDGET_MS
+            else -> OCR_BUDGET_MS
+        }
+        val regions = withTimeoutOrNull(ocrBudget) {
+            // The token also cuts the HTTP request when this page is abandoned; a vision request
+            // can otherwise sit in the socket long after the user has moved on.
+            TranslationEngine.recognize(source, token = token)
+        } ?: run {
                 android.util.Log.w("Translate", "TR ocr timeout index=$index")
                 return TranslateOutcome.Failed("ocr timeout")
             }

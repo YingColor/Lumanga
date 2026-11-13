@@ -109,8 +109,11 @@ object PreTranslate {
         val translateParallel = prefs.translateConcurrency
         val engine = PaddleOcr.engine(context)
         // Recognition workers are only built for a model that can use more than one; otherwise
-        // this is a no-op and the run shares the reader's serialised runtime.
-        engine.preparePool(OcrModel.from(prefs.ocrModel), ocrParallel)
+        // this is a no-op and the run shares the reader's serialised runtime. Online OCR needs no
+        // local runtimes at all, and building them would load the models for nothing.
+        if (!prefs.ocrOnline) {
+            engine.preparePool(OcrModel.from(prefs.ocrModel), ocrParallel)
+        }
         var source: PageSource? = null
         var current = pages.first()
         try {
@@ -277,7 +280,7 @@ object PreTranslate {
         val decoded = PageDecoder.decode(bytes, MAX_SIDE, MAX_SIDE)
         val page = fit(decoded, MAX_SIDE)
         try {
-            val regions = TranslationEngine.recognize(page, parallel = true)
+            val regions = TranslationEngine.recognize(page, parallel = true, token = token)
             if (token.cancelled) return PageOutcome.Cancelled(index)
             // "Auto" is settled per page here too, so the filters, the reading order and the
             // prompt all agree with what the reader would do on the same page.

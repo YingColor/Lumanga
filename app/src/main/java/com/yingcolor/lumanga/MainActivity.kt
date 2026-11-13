@@ -71,7 +71,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yingcolor.lumanga.data.BatchPreTranslate
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.MangaOcr
-import com.yingcolor.lumanga.data.PaddleOcr
+import com.yingcolor.lumanga.data.RoutingOcrEngine
 import com.yingcolor.lumanga.data.Prefs
 import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.UiSettings
@@ -99,7 +99,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        TranslationEngine.ocr = PaddleOcr.engine(this)
+        TranslationEngine.ocr = RoutingOcrEngine(this)
         MangaOcr.init(this)
         BatchPreTranslate.attach(this)
         enableEdgeToEdge()

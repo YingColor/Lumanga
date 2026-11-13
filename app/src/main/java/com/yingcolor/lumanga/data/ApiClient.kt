@@ -38,6 +38,10 @@ object ApiClient {
      * self-hosted server is exactly the setup this setting exists for.
      */
     private const val CHAT_TIMEOUT = 120_000
+
+    /** A vision model has to read a whole page before it answers; text requests never take this long. */
+    private const val VISION_TIMEOUT = 180_000
+    private const val VISION_MAX_TOKENS = 2048
     private const val LIST_TIMEOUT = 15_000
 
     private const val ANTHROPIC_VERSION = "2023-06-01"
@@ -116,15 +120,48 @@ object ApiClient {
         system: String,
         user: String,
         token: CancelToken? = null
+    ): ChatResult = sendChat(
+        protocol, api, model, apiKey,
+        chatBody(protocol, model, system, user), CHAT_TIMEOUT, token
+    )
+
+    /**
+     * One request with a page image attached. Online OCR is just a vision model asked for boxes,
+     * so it shares the transport, the endpoint fallbacks and the error mapping with [chat]; only
+     * the body differs, and each protocol nests the picture its own way.
+     */
+    fun vision(
+        protocol: ApiProtocol,
+        api: String,
+        model: String,
+        apiKey: String,
+        system: String,
+        user: String,
+        imageBase64: String,
+        mime: String = "image/jpeg",
+        token: CancelToken? = null
+    ): ChatResult = sendChat(
+        protocol, api, model, apiKey,
+        visionBody(protocol, model, system, user, imageBase64, mime),
+        VISION_TIMEOUT, token
+    )
+
+    private fun sendChat(
+        protocol: ApiProtocol,
+        api: String,
+        model: String,
+        apiKey: String,
+        body: String,
+        timeout: Int,
+        token: CancelToken? = null
     ): ChatResult {
         val base = baseOf(api)
         if (base.isEmpty()) return ChatResult.Fail("没填服务地址")
         if (model.isBlank()) return ChatResult.Fail("没填模型名称")
-        val body = chatBody(protocol, model, system, user)
         var last = "请求失败"
         for (endpoint in chatEndpoints(protocol, base, model)) {
             if (token?.cancelled == true) return ChatResult.Fail("已停止")
-            when (val raw = request(protocol, endpoint, "POST", apiKey, body, CHAT_TIMEOUT, token)) {
+            when (val raw = request(protocol, endpoint, "POST", apiKey, body, timeout, token)) {
                 is Raw.Ok -> {
                     val content = extractContent(protocol, raw.body)
                     if (content.isNullOrBlank()) {
@@ -376,6 +413,107 @@ object ApiClient {
             .put(
                 "generationConfig",
                 JSONObject().put("temperature", TEMPERATURE).put("maxOutputTokens", MAX_TOKENS)
+            )
+            .toString()
+    }
+
+    /**
+     * The same request, with one image attached. Every dialect has its own place for the picture:
+     * OpenAI takes a `data:` URL inside the content array, Anthropic a base64 `source` block,
+     * Gemini an `inlineData` part, Ollama an `images` array beside the text.
+     */
+    private fun visionBody(
+        protocol: ApiProtocol,
+        model: String,
+        system: String,
+        user: String,
+        imageBase64: String,
+        mime: String
+    ): String = when (protocol) {
+        ApiProtocol.OPENAI -> JSONObject()
+            .put("model", model)
+            .put("temperature", 0.1)
+            .put("max_tokens", VISION_MAX_TOKENS)
+            .put(
+                "messages", JSONArray()
+                    .put(JSONObject().put("role", "system").put("content", system))
+                    .put(
+                        JSONObject().put("role", "user").put(
+                            "content", JSONArray()
+                                .put(JSONObject().put("type", "text").put("text", user))
+                                .put(
+                                    JSONObject().put("type", "image_url").put(
+                                        "image_url", JSONObject()
+                                            .put("url", "data:$mime;base64,$imageBase64")
+                                    )
+                                )
+                        )
+                    )
+            )
+            .toString()
+
+        ApiProtocol.ANTHROPIC -> JSONObject()
+            .put("model", model)
+            .put("max_tokens", VISION_MAX_TOKENS)
+            .put("temperature", 0.1)
+            .put("system", system)
+            .put(
+                "messages", JSONArray().put(
+                    JSONObject().put("role", "user").put(
+                        "content", JSONArray()
+                            .put(
+                                JSONObject().put("type", "image").put(
+                                    "source", JSONObject()
+                                        .put("type", "base64")
+                                        .put("media_type", mime)
+                                        .put("data", imageBase64)
+                                )
+                            )
+                            .put(JSONObject().put("type", "text").put("text", user))
+                    )
+                )
+            )
+            .toString()
+
+        ApiProtocol.GEMINI -> JSONObject()
+            .put(
+                "systemInstruction",
+                JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system)))
+            )
+            .put(
+                "contents", JSONArray().put(
+                    JSONObject().put("role", "user").put(
+                        "parts", JSONArray()
+                            .put(JSONObject().put("text", user))
+                            .put(
+                                JSONObject().put(
+                                    "inlineData",
+                                    JSONObject()
+                                        .put("mimeType", mime)
+                                        .put("data", imageBase64)
+                                )
+                            )
+                    )
+                )
+            )
+            .put(
+                "generationConfig",
+                JSONObject().put("temperature", 0.1).put("maxOutputTokens", VISION_MAX_TOKENS)
+            )
+            .toString()
+
+        ApiProtocol.OLLAMA -> JSONObject()
+            .put("model", model)
+            .put("stream", false)
+            .put(
+                "options",
+                JSONObject().put("temperature", 0.1).put("num_predict", VISION_MAX_TOKENS)
+            )
+            .put(
+                "messages", JSONArray().put(
+                    JSONObject().put("role", "user").put("content", user)
+                        .put("images", JSONArray().put(imageBase64))
+                )
             )
             .toString()
     }

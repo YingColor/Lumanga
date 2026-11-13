@@ -150,6 +150,47 @@ class UiSettings(private val prefs: Prefs) {
     private var stateOcrModel by mutableIntStateOf(OcrModel.from(prefs.ocrModel).id)
     val ocrModel: Int get() = stateOcrModel
 
+    private var stateOcrOnline by mutableStateOf(prefs.ocrOnline)
+    val ocrOnline: Boolean get() = stateOcrOnline
+
+    private var stateOcrApi by mutableStateOf(prefs.ocrApi)
+    val ocrApi: String get() = stateOcrApi
+
+    private var stateOcrApiKey by mutableStateOf(prefs.ocrApiKey)
+    val ocrApiKey: String get() = stateOcrApiKey
+
+    private var stateOcrApiModel by mutableStateOf(prefs.ocrApiModel)
+    val ocrApiModel: String get() = stateOcrApiModel
+
+    private var stateOcrProtocol by mutableIntStateOf(prefs.ocrProtocol)
+    val ocrProtocol: Int get() = stateOcrProtocol
+
+    fun setOcrOnline(value: Boolean) {
+        stateOcrOnline = value
+        prefs.ocrOnline = value
+    }
+
+    fun setOcrApi(value: String) {
+        stateOcrApi = value
+        prefs.ocrApi = value
+    }
+
+    fun setOcrApiKey(value: String) {
+        stateOcrApiKey = value
+        prefs.ocrApiKey = value
+    }
+
+    fun setOcrApiModel(value: String) {
+        stateOcrApiModel = value
+        prefs.ocrApiModel = value
+    }
+
+    fun setOcrProtocol(value: Int) {
+        val safe = ApiProtocol.coerce(value)
+        stateOcrProtocol = safe
+        prefs.ocrProtocol = safe
+    }
+
     private var stateTextLayout by mutableIntStateOf(TextLayout.coerce(prefs.textLayout))
     val textLayout: Int get() = stateTextLayout
 
@@ -226,6 +267,9 @@ class UiSettings(private val prefs: Prefs) {
         val safe = OcrModel.from(value).id
         stateOcrModel = safe
         prefs.ocrModel = safe
+        // Choosing a local model is also the way out of online mode: the two are exclusive.
+        stateOcrOnline = false
+        prefs.ocrOnline = false
     }
 
     private var stateReadMode by mutableStateOf(prefs.readMode)

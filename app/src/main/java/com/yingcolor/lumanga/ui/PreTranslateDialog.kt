@@ -286,7 +286,7 @@ fun PreTranslateDialog(
                     value = settings.ocrConcurrency,
                     min = Concurrency.OCR_MIN,
                     max = Concurrency.OCR_MAX,
-                    enabled = !running && settings.ocrModel == OcrModel.SMALL.id,
+                    enabled = !running && (settings.ocrOnline || settings.ocrModel == OcrModel.SMALL.id),
                     disabledHint = S.concurrencyOcrUnavailable,
                     onChange = settings::setOcrConcurrency
                 )

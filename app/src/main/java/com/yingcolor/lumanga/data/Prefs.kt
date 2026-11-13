@@ -249,6 +249,33 @@ class Prefs(context: Context) {
         set(value) = sp.edit().putInt(KEY_OCR_MODEL, OcrModel.from(value).id).apply()
 
     /**
+     * Online OCR sends the page to a vision model instead of running PP-OCR on the phone.
+     *
+     * Its endpoint is separate from the translation one: a text model and a vision model are
+     * usually different services, and the model name that reads pictures is not the one that
+     * translates text.
+     */
+    var ocrOnline: Boolean
+        get() = sp.getBoolean(KEY_OCR_ONLINE, false)
+        set(value) = sp.edit().putBoolean(KEY_OCR_ONLINE, value).apply()
+
+    var ocrApi: String
+        get() = sp.getString(KEY_OCR_API, "") ?: ""
+        set(value) = sp.edit().putString(KEY_OCR_API, value).apply()
+
+    var ocrApiKey: String
+        get() = sp.getString(KEY_OCR_API_KEY, "") ?: ""
+        set(value) = sp.edit().putString(KEY_OCR_API_KEY, value).apply()
+
+    var ocrApiModel: String
+        get() = sp.getString(KEY_OCR_API_MODEL, "") ?: ""
+        set(value) = sp.edit().putString(KEY_OCR_API_MODEL, value).apply()
+
+    var ocrProtocol: Int
+        get() = sp.getInt(KEY_OCR_PROTOCOL, ApiProtocol.DEFAULT.id)
+        set(value) = sp.edit().putInt(KEY_OCR_PROTOCOL, ApiProtocol.coerce(value)).apply()
+
+    /**
      * How translated text is laid out on the page. 0 keeps the source orientation (vertical
      * columns for a Japanese bubble), 1 forces horizontal lines read left to right.
      */
@@ -408,6 +435,11 @@ class Prefs(context: Context) {
         const val KEY_TRANSLATE_MODEL = "translate_model"
         const val KEY_TRANSLATE_KEY = "translate_api_key"
         const val KEY_OCR_MODEL = "ocr_model"
+        const val KEY_OCR_ONLINE = "ocr_online"
+        const val KEY_OCR_API = "ocr_api"
+        const val KEY_OCR_API_KEY = "ocr_api_key"
+        const val KEY_OCR_API_MODEL = "ocr_api_model"
+        const val KEY_OCR_PROTOCOL = "ocr_protocol"
         const val KEY_TEXT_LAYOUT = "text_layout"
         const val KEY_SOURCE_LANGUAGE = "source_language"
         const val KEY_TARGET_LANGUAGE = "target_language"

@@ -87,6 +87,7 @@ fun OcrModelRow(settings: UiSettings, enabled: Boolean) {
     val scheme = MaterialTheme.colorScheme
     var expanded by remember { mutableStateOf(false) }
     val current = OcrModel.from(settings.ocrModel)
+    val label = if (settings.ocrOnline) S.ocrOnlineModel else current.label
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -100,7 +101,7 @@ fun OcrModelRow(settings: UiSettings, enabled: Boolean) {
                     onClick = { expanded = true },
                     enabled = enabled
                 ) {
-                    Text(current.label, style = MaterialTheme.typography.labelSmall)
+                    Text(label, style = MaterialTheme.typography.labelSmall)
                     Text(
                         text = if (expanded) " ▴" else " ▾",
                         style = MaterialTheme.typography.labelSmall,
@@ -108,8 +109,20 @@ fun OcrModelRow(settings: UiSettings, enabled: Boolean) {
                     )
                 }
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = S.ocrOnlineModel,
+                                color = if (settings.ocrOnline) scheme.primary else scheme.onSurface
+                            )
+                        },
+                        onClick = {
+                            expanded = false
+                            settings.setOcrOnline(true)
+                        }
+                    )
                     OcrModel.choices.forEach { model ->
-                        val selected = model.id == settings.ocrModel
+                        val selected = !settings.ocrOnline && model.id == settings.ocrModel
                         DropdownMenuItem(
                             text = {
                                 Text(
@@ -120,6 +133,7 @@ fun OcrModelRow(settings: UiSettings, enabled: Boolean) {
                             },
                             onClick = {
                                 expanded = false
+                                // Also leaves online mode; the two are exclusive.
                                 settings.setOcrModel(model.id)
                             }
                         )
@@ -129,7 +143,7 @@ fun OcrModelRow(settings: UiSettings, enabled: Boolean) {
         }
         Spacer(Modifier.height(2.dp))
         Text(
-            text = S.ocrModelSharedHint,
+            text = if (settings.ocrOnline) S.onlineOcrShortHint else S.ocrModelSharedHint,
             style = MaterialTheme.typography.labelSmall,
             color = scheme.onSurfaceVariant
         )

@@ -289,7 +289,7 @@ fun BatchPreTranslateDialog(
                         value = settings.ocrConcurrency,
                         min = Concurrency.OCR_MIN,
                         max = Concurrency.OCR_MAX,
-                        enabled = !state.running && settings.ocrModel == OcrModel.SMALL.id,
+                        enabled = !state.running && (settings.ocrOnline || settings.ocrModel == OcrModel.SMALL.id),
                         disabledHint = S.concurrencyOcrUnavailable,
                         onChange = settings::setOcrConcurrency
                     )
