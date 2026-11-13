@@ -104,6 +104,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.ArchiveException
+import com.yingcolor.lumanga.data.ApiClient
 import com.yingcolor.lumanga.data.ApiProtocol
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BubbleGroup
@@ -193,8 +194,14 @@ private const val PAGE_BUDGET_MS = 70_000L
  */
 private const val GROUP_PAGE_BUDGET_MS = 150_000L
 
-/** OCR alone should never take this long; a wedged interpreter should fail fast instead. */
-private const val OCR_BUDGET_MS = 25_000L
+/**
+ * OCR alone should never take this long; a wedged interpreter should fail fast instead.
+ *
+ * Recognition is serialised (one page at a time), so this has to fit *a* page plus the one
+ * neighbour that may already hold the slot — pages further away are cancelled while they wait.
+ * At 25 s a 20 s neighbour plus a 20 s page was a false failure on every fast turn.
+ */
+private const val OCR_BUDGET_MS = 40_000L
 private const val MEDIUM_OCR_BUDGET_MS = 70_000L
 private const val MEDIUM_PAGE_BUDGET_MS = 110_000L
 
@@ -624,8 +631,30 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     
     fun setVisibleFocus(focus: Int) {
         focusIndex = focus
+        dropOutside(focus)
         wakeVisible.trySend(Unit)
         wakeWarm.trySend(Unit)
+    }
+
+    /**
+     * Abandons work for pages the user has left. A recognition slot and a socket are the two
+     * scarce things in the pipeline, and a job nobody is waiting for must not hold either: on a
+     * self-hosted model one stale request sat in the server queue for a minute and every later
+     * page — including the retry button — queued behind it.
+     *
+     * One page of slack is kept so a two-page spread still translates both halves.
+     */
+    private fun dropOutside(focus: Int) {
+        val dropped = synchronized(translationLock) {
+            val stale = translatingPages.keys.filter { abs(it - focus) > 1 }
+            val jobs = stale.mapNotNull { i ->
+                translatingPages.remove(i)?.let { k -> translating.remove(k) }
+            }
+            val tokens = stale.mapNotNull { liveTokens.remove(it) }
+            jobs to tokens
+        }
+        dropped.first.forEach { it.cancel() }
+        dropped.second.forEach { it.cancel() }
     }
 
     
@@ -640,6 +669,15 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val pageResults = object : LruCache<String, PageResult>(16) {}
     private val translating = HashMap<String, Deferred<TranslateOutcome>>()
     private val translationLock = Any()
+
+    /**
+     * Page index -> cache key of the job running for it, and the HTTP handle that job holds.
+     * Both exist so that leaving a page can drop its socket: cancelling the coroutine alone only
+     * detaches the awaiter, while the blocking request keeps its slot on a self-hosted server and
+     * every later page (including a retry) queues behind it.
+     */
+    private val translatingPages = HashMap<Int, String>()
+    private val liveTokens = HashMap<Int, ApiClient.CancelToken>()
 
     /** Keys whose page already had bubbles painted while a per-group run was still going. */
     private val partialPages = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -661,11 +699,17 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         translatedCache.evictAll()
         pageResults.evictAll()
         // Cancel the in-flight jobs as well, otherwise a slow attempt that is already running
-        // keeps writing into the caches and the retry silently does nothing.
-        synchronized(translationLock) {
+        // keeps writing into the caches and the retry silently does nothing. Their sockets are
+        // dropped too: without that the retry lands behind them in the server's queue.
+        val handles = synchronized(translationLock) {
+            val tokens = liveTokens.values.toList()
             translating.values.forEach { it.cancel() }
             translating.clear()
+            translatingPages.clear()
+            liveTokens.clear()
+            tokens
         }
+        handles.forEach { it.cancel() }
         translationStates[index] = TranslateState()
         translationRetry++
     }
@@ -718,12 +762,28 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 onPartial
             }
+        val token = ApiClient.CancelToken()
         val deferred = synchronized(translationLock) {
-            translating[key] ?: viewModelScope.async(Dispatchers.IO) {
-                runTranslate(
-                    index, key, source, api, apiKey, model, protocol, groupMode, horizontal, streaming
-                )
-            }.also { translating[key] = it }
+            translating[key] ?: run {
+                liveTokens[index] = token
+                translatingPages[index] = key
+                viewModelScope.async(Dispatchers.IO) {
+                    runTranslate(
+                        index, key, source, api, apiKey, model, protocol, groupMode, horizontal,
+                        streaming, token
+                    )
+                }.also { job ->
+                    // The job can outlive the awaiter (it caches its own result), so the handle
+                    // is released here rather than in translate().
+                    job.invokeOnCompletion {
+                        synchronized(translationLock) {
+                            if (translatingPages[index] == key) translatingPages.remove(index)
+                            if (liveTokens[index] === token) liveTokens.remove(index)
+                        }
+                    }
+                    translating[key] = job
+                }
+            }
         }
         val started = System.currentTimeMillis()
         val pageBudget = when {
@@ -735,7 +795,14 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             val done = withTimeoutOrNull(pageBudget) { deferred.await() }
             if (done == null) {
                 deferred.cancel()
-                synchronized(translationLock) { translating.remove(key) }
+                val live = synchronized(translationLock) {
+                    translating.remove(key)
+                    translatingPages.remove(index)
+                    liveTokens.remove(index)
+                }
+                // Cancel the coroutine only detaches the awaiter; this drops the socket, so the
+                // server is free for the page the user is actually looking at.
+                live?.cancel()
                 android.util.Log.w("Translate", "TR watchdog index=$index ${pageBudget}ms")
                 // Per-group mode may already have painted several bubbles; those are real results,
                 // so clear the badge instead of claiming the page failed.
@@ -803,7 +870,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         protocol: ApiProtocol,
         groupMode: Boolean,
         horizontal: Boolean,
-        onPartial: (suspend (Bitmap) -> Unit)?
+        onPartial: (suspend (Bitmap) -> Unit)?,
+        token: ApiClient.CancelToken? = null
     ): TranslateOutcome {
         val rk = resultKey(index, protocol, groupMode, api, model)
         pageResults.get(rk)?.let { cached ->
@@ -868,6 +936,14 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             "TR bubbles index=$index groups=${groups.size} lang=${pageSource.name}"
         )
         if (groups.isEmpty()) return TranslateOutcome.NoText
+        // Recognition is the expensive local half; the network half is what the server queues.
+        // Rereading a page the user has already left and then asking the model about it was
+        // exactly how a burst of page turns starved the page they stopped on, so stop here —
+        // the recognition is not wasted twice.
+        if (abs(index - focusIndex) > 1) {
+            android.util.Log.i("Translate", "TR stale index=$index focus=$focusIndex after ocr")
+            return TranslateOutcome.Stale
+        }
         val previous = synchronized(contextLock) {
             translationContext.entries
                 .filter { it.key < index }
@@ -882,7 +958,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             val collected = arrayOfNulls<String>(groups.size)
             var answered = 0
             TranslationEngine.translateEach(
-                groups, api, model, previous, apiKey, protocol, sourceLang = pageSource
+                groups, api, model, previous, apiKey, protocol,
+                sourceLang = pageSource, token = token
             ) { i, text ->
                 collected[i] = text
                 answered++
@@ -897,7 +974,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             }
         } else {
             TranslationEngine.translate(
-                groups, api, model, previous, apiKey, protocol, sourceLang = pageSource
+                groups, api, model, previous, apiKey, protocol,
+                sourceLang = pageSource, token = token
             )
         }
         android.util.Log.i(
@@ -972,7 +1050,15 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun clearTranslations() {
         translatedCache.evictAll()
         pageResults.evictAll()
-        synchronized(translationLock) { translating.clear() }
+        val handles = synchronized(translationLock) {
+            val tokens = liveTokens.values.toList()
+            translating.values.forEach { it.cancel() }
+            translating.clear()
+            translatingPages.clear()
+            liveTokens.clear()
+            tokens
+        }
+        handles.forEach { it.cancel() }
         synchronized(contextLock) { translationContext.clear() }
         translationStates.clear()
     }

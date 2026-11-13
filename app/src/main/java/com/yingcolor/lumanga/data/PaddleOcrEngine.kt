@@ -11,6 +11,10 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.tensorflow.lite.Interpreter
@@ -40,10 +44,18 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
     private val prefs = Prefs(context.applicationContext)
     private var runtime: PaddleRuntime? = null
     private var runtimeModel: OcrModel? = null
-    private val lock = Any()
+    /**
+     * One page at a time, but a *cancellable* queue. A monitor (`synchronized`) cannot be
+     * interrupted: a page the user has already scrolled past still waited for the lock, ran the
+     * whole recognition, and only then noticed it was cancelled — which is what made a fast page
+     * turn queued behind stale pages until the current one hit its budget.
+     */
+    private val gate = Mutex()
 
     override suspend fun recognize(bitmap: Bitmap): List<TextRegion> = withContext(Dispatchers.IO) {
-        synchronized(lock) {
+        gate.withLock {
+            // Cancelled while waiting? Leave without touching the models: this page is gone.
+            currentCoroutineContext().ensureActive()
             // Re-read on every page so switching the model in 翻译配置 takes effect without
             // restarting the app; the previous sessions are released before the new ones load.
             val model = OcrModel.from(prefs.ocrModel)
