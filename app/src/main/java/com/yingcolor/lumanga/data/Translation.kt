@@ -569,7 +569,8 @@ object TranslationEngine {
         context: List<String> = emptyList(),
         apiKey: String = "",
         protocol: ApiProtocol = ApiProtocol.DEFAULT,
-        sourceLang: SourceLanguage = source
+        sourceLang: SourceLanguage = source,
+        token: ApiClient.CancelToken? = null
     ): List<String>? = withContext(Dispatchers.IO) {
         if (groups.isEmpty()) return@withContext emptyList()
         val numbered = buildString {
@@ -586,11 +587,14 @@ object TranslationEngine {
         repeat(2) { attempt ->
             // A wrong key or a closed port fails identically the second time, so only timeouts
             // and the service's own 429/5xx are retried.
-            when (val result = ApiClient.chat(protocol, api, model, apiKey, systemPrompt(sourceLang), numbered)) {
+            when (val result = ApiClient.chat(
+                protocol, api, model, apiKey, systemPrompt(sourceLang), numbered, token
+            )) {
                 is ApiClient.ChatResult.Ok -> return@withContext parse(result.text, groups)
                 is ApiClient.ChatResult.Fail -> {
                     lastError = result.reason
                     android.util.Log.w("Translate", "TR fail ${result.reason}")
+                    if (token?.cancelled == true) return@withContext null
                     if (!result.retryable) {
                         android.util.Log.w("Translate", "TR no retry: $lastError")
                         return@withContext null
@@ -629,6 +633,7 @@ object TranslationEngine {
         protocol: ApiProtocol = ApiProtocol.DEFAULT,
         concurrency: Int = GROUP_CONCURRENCY,
         sourceLang: SourceLanguage = source,
+        token: ApiClient.CancelToken? = null,
         onGroup: suspend (index: Int, text: String) -> Unit = { _, _ -> }
     ): List<String>? = withContext(Dispatchers.IO) {
         if (groups.isEmpty()) return@withContext emptyList()
@@ -646,7 +651,8 @@ object TranslationEngine {
                 launch {
                     gate.withPermit {
                         val text = askGroup(
-                            protocol, api, model, apiKey, hint, group.source, index, sourceLang
+                            protocol, api, model, apiKey, hint, group.source, index,
+                            sourceLang, token
                         ) ?: return@withPermit
                         paint.withLock {
                             lines[index] = text
@@ -675,7 +681,8 @@ object TranslationEngine {
         hint: String,
         source: String,
         index: Int,
-        sourceLang: SourceLanguage
+        sourceLang: SourceLanguage,
+        token: ApiClient.CancelToken? = null
     ): String? {
         val user = buildString {
             if (hint.isNotEmpty()) {
@@ -685,8 +692,10 @@ object TranslationEngine {
         }
         var lastError = "unknown"
         for (attempt in 0 until 2) {
-            when (val result =
-                ApiClient.chat(protocol, api, model, apiKey, groupPrompt(sourceLang), user)) {
+            if (token?.cancelled == true) return null
+            when (val result = ApiClient.chat(
+                protocol, api, model, apiKey, groupPrompt(sourceLang), user, token
+            )) {
                 is ApiClient.ChatResult.Ok -> {
                     val value = tidyGroup(result.text, source)
                     if (value.isNotEmpty()) return value
@@ -695,6 +704,7 @@ object TranslationEngine {
                 is ApiClient.ChatResult.Fail -> {
                     lastError = result.reason
                     android.util.Log.w("Translate", "TR group $index fail ${result.reason}")
+                    if (token?.cancelled == true) return null
                     if (!result.retryable) break
                     delay(800)
                 }

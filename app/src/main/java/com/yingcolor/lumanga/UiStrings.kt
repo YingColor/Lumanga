@@ -11,6 +11,7 @@ object S {
     const val readingEmptyBody = "随便打开一本看几页，它就会自动出现在这里。看到最后一页后会从这一栏移出。"
     const val goShelf = "去书架看看"
     const val search = "搜索漫画"
+    const val searchClose = "收起搜索"
     const val chooseFolder = "选择漫画文件夹"
     const val changeFolder = "更换文件夹"
     const val manageFolders = "管理文件夹"
@@ -174,7 +175,7 @@ object S {
 
     
     const val translateConfig = "翻译配置"
-    const val translateConfigTip = "填好翻译服务，阅读时点「译」就能用；预翻译整本也用这套配置。阅读时长按「译」1 秒也能打开这里。"
+    const val translateConfigTip = "填好翻译服务，阅读时点「译」就能用；预翻译整本默认也用这套配置，但预翻译面板里可以单独改。阅读时长按「译」0.5 秒打开预翻译面板。"
     const val translate = "漫画实时翻译"
     const val translateSummary = "把画面里的外文认出来，译好再贴回页面"
     const val translateEnable = "开启实时翻译"
@@ -248,6 +249,9 @@ object S {
     const val preTranslateResumeToggle = "跳过已译好的页（断点续传）"
     const val preTranslateResumeHint = "中断后再开始，只补没译完的页；关掉这个开关会全部重译。"
     const val preTranslateBusy = "批量预翻译正在进行，请先到批量窗口里停止或查看"
+    const val preTranslateConfigTip = "这里的地址、Key、模型和接口类型只用于预翻译，不会改动「翻译配置」里的全局设置。没单独改过的项跟随全局设置；识别模型、原文/译文语言、译文排版和翻译方式始终跟随全局。"
+    const val preTranslateFollowGlobal = "恢复跟随全局"
+    const val preTranslateFollowing = "已恢复为跟随全局设置"
     const val translatedBadge = "已翻译"
     const val translateTest = "测试连接"
     const val translateTesting = "测试中…"

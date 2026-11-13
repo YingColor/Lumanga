@@ -96,11 +96,17 @@ object BatchPreTranslate {
 
     fun cancel() {
         cancelInternal()
+        // Cancelling the job alone is not enough: its final state update only happens once the
+        // blocking OCR / HTTP call finishes, which can take a minute. The button must show
+        // "stopped" at once, and stop() breaks that call instead of waiting for its timeout.
+        PreTranslate.stop()
+        stateFlow.update { it.copy(running = false, message = S.batchStopped) }
     }
 
     /** Drops only the to-do list; stored pages and their "translated" badges stay intact. */
     fun discard(context: Context) {
         cancelInternal()
+        PreTranslate.stop()
         clear(context.applicationContext)
         stateFlow.value = BatchState()
     }

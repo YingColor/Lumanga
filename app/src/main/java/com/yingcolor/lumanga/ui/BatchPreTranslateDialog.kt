@@ -63,9 +63,10 @@ fun BatchPreTranslateDialog(
     val context = LocalContext.current
     val appContext = context.applicationContext
 
-    var api by remember { mutableStateOf(settings.translateApi) }
-    var apiKey by remember { mutableStateOf(settings.translateApiKey) }
-    var model by remember { mutableStateOf(settings.translateModel) }
+    // Pre-translate owns its endpoint settings; untouched items keep following the global ones.
+    var api by remember { mutableStateOf(settings.preApi) }
+    var apiKey by remember { mutableStateOf(settings.preApiKey) }
+    var model by remember { mutableStateOf(settings.preModel) }
     var scope by remember {
         mutableStateOf(if (initialGroup.isEmpty()) "" else "group:$initialGroup")
     }
@@ -117,7 +118,7 @@ fun BatchPreTranslateDialog(
                     BatchPreTranslate.start(
                         appContext, scopeLabel, queuedTargets,
                         api.trim(), apiKey.trim(), model.trim(),
-                        ApiProtocol.from(settings.translateProtocol),
+                        ApiProtocol.from(settings.preProtocol),
                         settings.translateMode == TranslateMode.GROUP
                     )
                 }) { Text(S.batchConfirmStart) }
@@ -212,14 +213,14 @@ fun BatchPreTranslateDialog(
 
                     Spacer(Modifier.height(12.dp))
                     ApiProtocolPicker(
-                        current = settings.translateProtocol,
-                        onSelect = settings::setTranslateProtocol,
+                        current = settings.preProtocol,
+                        onSelect = settings::setPreProtocol,
                         enabled = !state.running
                     )
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = api,
-                        onValueChange = { api = it },
+                        onValueChange = { api = it; settings.setPreApi(it) },
                         label = { Text(S.translateApi) },
                         singleLine = true,
                         enabled = !state.running,
@@ -228,7 +229,7 @@ fun BatchPreTranslateDialog(
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = apiKey,
-                        onValueChange = { apiKey = it },
+                        onValueChange = { apiKey = it; settings.setPreApiKey(it) },
                         label = { Text(S.preTranslateApiKey) },
                         singleLine = true,
                         enabled = !state.running,
@@ -237,13 +238,31 @@ fun BatchPreTranslateDialog(
                     Spacer(Modifier.height(8.dp))
                     ModelField(
                         value = model,
-                        onValueChange = { model = it; settings.setTranslateModel(it) },
+                        onValueChange = { model = it; settings.setPreModel(it) },
                         api = api,
                         apiKey = apiKey,
-                        protocol = settings.translateProtocol,
+                        protocol = settings.preProtocol,
                         enabled = !state.running,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = S.preTranslateConfigTip,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (settings.preCustomised) {
+                        TextButton(
+                            enabled = !state.running,
+                            onClick = {
+                                settings.resetPreConfig()
+                                api = settings.preApi
+                                apiKey = settings.preApiKey
+                                model = settings.preModel
+                                message = S.preTranslateFollowing
+                            }
+                        ) { Text(S.preTranslateFollowGlobal) }
+                    }
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -375,9 +394,8 @@ fun BatchPreTranslateDialog(
                                     message = if (scoped.isEmpty()) S.batchNoBooks else S.batchAllDone
                                     return@Button
                                 }
-                                settings.setTranslateApi(api.trim())
-                                settings.setTranslateModel(model.trim())
-                                settings.setTranslateApiKey(apiKey.trim())
+                                // No global settings are written here: the endpoint fields are
+                                // stored as pre-translate overrides as they are typed.
                                 queuedTargets = targets
                                 confirmStart = true
                             }
@@ -389,13 +407,10 @@ fun BatchPreTranslateDialog(
                                     if (api.isBlank()) {
                                         message = S.batchNeedEndpoint
                                     } else {
-                                        settings.setTranslateApi(api.trim())
-                                        settings.setTranslateModel(model.trim())
-                                        settings.setTranslateApiKey(apiKey.trim())
                                         message = null
                                         BatchPreTranslate.resume(
                                             appContext, api.trim(), apiKey.trim(), model.trim(),
-                                            ApiProtocol.from(settings.translateProtocol),
+                                            ApiProtocol.from(settings.preProtocol),
                                             settings.translateMode == TranslateMode.GROUP
                                         )
                                     }

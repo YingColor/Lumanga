@@ -75,6 +75,60 @@ class UiSettings(private val prefs: Prefs) {
     private var stateTargetLanguage by mutableIntStateOf(TargetLanguage.coerce(prefs.targetLanguage))
     val targetLanguage: Int get() = stateTargetLanguage
 
+    // Pre-translate endpoint: a null override means "follow the global config". Reading these
+    // effective values also subscribes the panel to global changes while it is still following.
+    private var statePreApi by mutableStateOf(prefs.preTranslateApi)
+    private var statePreApiKey by mutableStateOf(prefs.preTranslateApiKey)
+    private var statePreModel by mutableStateOf(prefs.preTranslateModel)
+    private var statePreProtocol by mutableStateOf(prefs.preTranslateProtocol)
+
+    /** Effective values: an item with no override keeps following the global config live. */
+    val preApi: String get() = statePreApi ?: translateApi
+    val preApiKey: String get() = statePreApiKey ?: translateApiKey
+    val preModel: String get() = statePreModel ?: translateModel
+    val preProtocol: Int get() = statePreProtocol ?: translateProtocol
+
+    /** True once any endpoint item has been edited away from the global value. */
+    val preCustomised: Boolean get() =
+        statePreApi != null || statePreApiKey != null ||
+            statePreModel != null || statePreProtocol != null
+
+    fun setPreApi(value: String) {
+        val trimmed = value.trim()
+        statePreApi = trimmed
+        prefs.preTranslateApi = trimmed
+    }
+
+    fun setPreApiKey(value: String) {
+        val trimmed = value.trim()
+        statePreApiKey = trimmed
+        prefs.preTranslateApiKey = trimmed
+    }
+
+    fun setPreModel(value: String) {
+        val trimmed = value.trim()
+        statePreModel = trimmed
+        prefs.preTranslateModel = trimmed
+    }
+
+    fun setPreProtocol(value: Int) {
+        val safe = ApiProtocol.coerce(value)
+        statePreProtocol = safe
+        prefs.preTranslateProtocol = safe
+    }
+
+    /** Clears every override so the pre-translate panels follow the global config again. */
+    fun resetPreConfig() {
+        prefs.preTranslateApi = null
+        prefs.preTranslateApiKey = null
+        prefs.preTranslateModel = null
+        prefs.preTranslateProtocol = null
+        statePreApi = null
+        statePreApiKey = null
+        statePreModel = null
+        statePreProtocol = null
+    }
+
     /** Part of every reader cache key, so switching languages can never serve a stale page. */
     val languageKey: String
         get() = if (stateSourceLanguage == SourceLanguage.DEFAULT.id &&

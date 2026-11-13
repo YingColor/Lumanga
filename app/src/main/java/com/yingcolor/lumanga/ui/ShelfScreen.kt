@@ -43,6 +43,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Edit
@@ -70,6 +71,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -85,6 +87,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -327,6 +331,13 @@ fun ShelfScreen(
     onGoHome: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
+    // The search field is folded away behind a magnifier until it is needed. Opening it hides
+    // the chips to its left, so the field can take the whole middle of the bar.
+    var searchExpanded by remember { mutableStateOf(false) }
+    val searchFocus = remember { FocusRequester() }
+    LaunchedEffect(searchExpanded) {
+        if (searchExpanded) runCatching { searchFocus.requestFocus() }
+    }
     var sortMenu by remember { mutableStateOf(false) }
     var groupMenu by remember { mutableStateOf(false) }
     var columnMenu by remember { mutableStateOf(false) }
@@ -448,24 +459,25 @@ fun ShelfScreen(
                         tint = scheme.onSurfaceVariant
                     )
                 }
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = {
-                        Text(S.search, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Filled.Search,
-                            contentDescription = null,
-                            tint = scheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    },
-                    singleLine = true,
-                    shape = CircleShape,
-                    modifier = Modifier.weight(1f)
-                )
+                if (searchExpanded) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = {
+                            Text(S.search, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                        },
+                        singleLine = true,
+                        shape = CircleShape,
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(searchFocus)
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                // Search replaces every chip to its left; while it is open only the menu button,
+                // the field, the search toggle and Refresh remain.
+                if (!searchExpanded) {
                 if (groups.isNotEmpty()) {
                     Spacer(Modifier.width(6.dp))
                     Box {
@@ -594,6 +606,21 @@ fun ShelfScreen(
                             )
                         }
                     }
+                }
+                }
+                // The magnifier sits immediately left of Refresh. Tapping it again folds the
+                // field away and clears the filter, so the shelf cannot stay hidden by a query
+                // the user can no longer see.
+                IconButton(onClick = {
+                    searchExpanded = !searchExpanded
+                    if (!searchExpanded) query = ""
+                }) {
+                    Icon(
+                        imageVector = if (searchExpanded) Icons.Filled.Close
+                        else Icons.Filled.Search,
+                        contentDescription = if (searchExpanded) S.searchClose else S.search,
+                        tint = scheme.onSurfaceVariant
+                    )
                 }
                 IconButton(onClick = onRefresh) {
                     Icon(

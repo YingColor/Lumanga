@@ -69,13 +69,53 @@ object ApiClient {
         ) : Raw
     }
 
+    /**
+     * A stop handle for one pre-translate run.
+     *
+     * [request] uses a blocking HttpURLConnection, which does not react to coroutine
+     * cancellation while it waits for an answer. Remembering the live connection lets [cancel]
+     * disconnect it from the UI thread, so a 120 s read timeout ends immediately instead of
+     * keeping the batch alive long after the user pressed stop. Only the run that owns this
+     * token is affected; reader pages pass no token at all.
+     */
+    class CancelToken {
+        private val lock = Any()
+        @Volatile
+        var cancelled: Boolean = false
+            private set
+        private var connection: HttpURLConnection? = null
+
+        fun attach(connection: HttpURLConnection) {
+            val alreadyCancelled = synchronized(lock) {
+                this.connection = connection
+                cancelled
+            }
+            if (alreadyCancelled) runCatching { connection.disconnect() }
+        }
+
+        fun detach(connection: HttpURLConnection) {
+            synchronized(lock) {
+                if (this.connection === connection) this.connection = null
+            }
+        }
+
+        fun cancel() {
+            val live = synchronized(lock) {
+                cancelled = true
+                connection
+            }
+            live?.let { runCatching { it.disconnect() } }
+        }
+    }
+
     fun chat(
         protocol: ApiProtocol,
         api: String,
         model: String,
         apiKey: String,
         system: String,
-        user: String
+        user: String,
+        token: CancelToken? = null
     ): ChatResult {
         val base = baseOf(api)
         if (base.isEmpty()) return ChatResult.Fail("没填服务地址")
@@ -83,7 +123,8 @@ object ApiClient {
         val body = chatBody(protocol, model, system, user)
         var last = "请求失败"
         for (endpoint in chatEndpoints(protocol, base, model)) {
-            when (val raw = request(protocol, endpoint, "POST", apiKey, body, CHAT_TIMEOUT)) {
+            if (token?.cancelled == true) return ChatResult.Fail("已停止")
+            when (val raw = request(protocol, endpoint, "POST", apiKey, body, CHAT_TIMEOUT, token)) {
                 is Raw.Ok -> {
                     val content = extractContent(protocol, raw.body)
                     if (content.isNullOrBlank()) {
@@ -186,7 +227,8 @@ object ApiClient {
         method: String,
         apiKey: String,
         body: String?,
-        timeout: Int
+        timeout: Int,
+        token: CancelToken? = null
     ): Raw {
         var connection: HttpURLConnection? = null
         try {
@@ -216,6 +258,7 @@ object ApiClient {
                     ApiProtocol.OLLAMA -> Unit
                 }
             }
+            connection?.let { token?.attach(it) }
             if (body != null) {
                 val payload = body.toByteArray(Charsets.UTF_8)
                 connection.doOutput = true
@@ -244,6 +287,7 @@ object ApiClient {
             Log.w(TAG, "fail ${t.javaClass.simpleName}: ${t.message} $endpoint")
             return Raw.Fail(explain(t), retryable = isRetryable(t))
         } finally {
+            connection?.let { token?.detach(it) }
             connection?.disconnect()
         }
     }

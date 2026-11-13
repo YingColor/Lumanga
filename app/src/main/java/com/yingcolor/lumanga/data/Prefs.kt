@@ -190,6 +190,45 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_TRANSLATE_KEY, "") ?: ""
         set(value) = sp.edit().putString(KEY_TRANSLATE_KEY, value.trim()).apply()
 
+    /**
+     * Pre-translate keeps its own endpoint settings. `null` means "still following the global
+     * config"; the first edit writes a value and from then on that item is independent. The
+     * global keys above are never written by a pre-translate panel.
+     */
+    var preTranslateApi: String?
+        get() = if (sp.contains(KEY_PRE_API)) sp.getString(KEY_PRE_API, null) else null
+        set(value) {
+            val edit = sp.edit()
+            if (value == null) edit.remove(KEY_PRE_API) else edit.putString(KEY_PRE_API, value.trim())
+            edit.apply()
+        }
+
+    var preTranslateApiKey: String?
+        get() = if (sp.contains(KEY_PRE_KEY)) sp.getString(KEY_PRE_KEY, null) else null
+        set(value) {
+            val edit = sp.edit()
+            if (value == null) edit.remove(KEY_PRE_KEY) else edit.putString(KEY_PRE_KEY, value.trim())
+            edit.apply()
+        }
+
+    var preTranslateModel: String?
+        get() = if (sp.contains(KEY_PRE_MODEL)) sp.getString(KEY_PRE_MODEL, null) else null
+        set(value) {
+            val edit = sp.edit()
+            if (value == null) edit.remove(KEY_PRE_MODEL) else edit.putString(KEY_PRE_MODEL, value.trim())
+            edit.apply()
+        }
+
+    var preTranslateProtocol: Int?
+        get() = if (sp.contains(KEY_PRE_PROTOCOL))
+            sp.getInt(KEY_PRE_PROTOCOL, ApiProtocol.DEFAULT.id) else null
+        set(value) {
+            val edit = sp.edit()
+            if (value == null) edit.remove(KEY_PRE_PROTOCOL)
+            else edit.putInt(KEY_PRE_PROTOCOL, ApiProtocol.coerce(value))
+            edit.apply()
+        }
+
     /** 0 = PP-OCRv6 Small (default), 1 = PP-OCRv6 Medium, 2 = MangaOCR_mobile. */
     var ocrModel: Int
         get() = sp.getInt(KEY_OCR_MODEL, OcrModel.DEFAULT.id)
@@ -356,6 +395,10 @@ class Prefs(context: Context) {
         const val KEY_TEXT_LAYOUT = "text_layout"
         const val KEY_SOURCE_LANGUAGE = "source_language"
         const val KEY_TARGET_LANGUAGE = "target_language"
+        const val KEY_PRE_API = "pretranslate_api"
+        const val KEY_PRE_KEY = "pretranslate_api_key"
+        const val KEY_PRE_MODEL = "pretranslate_model"
+        const val KEY_PRE_PROTOCOL = "pretranslate_protocol"
 
         const val MIN_ZOOM_PERCENT = 40
         const val MAX_ZOOM_PERCENT = 400

@@ -25,6 +25,19 @@ object PreTranslate {
     /** Three missed pages in a row means the endpoint is down, not that one page was unlucky. */
     private const val MAX_CONSECUTIVE_FAILURES = 3
 
+    /**
+     * The stop button has to reach into the blocking HTTP call, which a cancelled coroutine
+     * cannot interrupt by itself. Only one run exists at a time (the single-volume panel refuses
+     * to start while a batch is running), so one live token is enough.
+     */
+    @Volatile
+    private var activeToken: ApiClient.CancelToken? = null
+
+    /** Stops the run in progress immediately, from the UI thread. */
+    fun stop() {
+        activeToken?.cancel()
+    }
+
     sealed interface Result {
         /**
          * [translated] pages written this run, [skipped] pages reused from an earlier run,
@@ -63,6 +76,8 @@ object PreTranslate {
     ): Result = withContext(Dispatchers.IO) {
         if (pages.isEmpty()) return@withContext Result.Done(0, 0)
         if (api.isBlank()) return@withContext Result.Failed(pages.first(), "no endpoint")
+        val token = ApiClient.CancelToken()
+        activeToken = token
         val stored = if (skipStored) TranslationStore.translatedIndexes(context, book.id) else emptySet()
         // Carry the previous lines into the first page of a resumed run so the model keeps the
         // tone of the conversation instead of treating it as a fresh volume.
@@ -84,6 +99,7 @@ object PreTranslate {
             var streak = 0
             for (index in pages) {
                 coroutineContext.ensureActive()
+                if (token.cancelled) return@withContext Result.Cancelled
                 current = index
                 onProgress(done, index)
                 if (index in stored) {
@@ -104,6 +120,9 @@ object PreTranslate {
                 val page = fit(decoded, MAX_SIDE)
                 try {
                     val regions = TranslationEngine.recognize(page)
+                    // OCR is a blocking native call; check right after it so a stop pressed
+                    // during recognition does not start yet another request.
+                    if (token.cancelled) return@withContext Result.Cancelled
                     // "Auto" is settled per page here too, so the filters, the reading order and
                     // the prompt all agree with what the reader would do on the same page.
                     val pageSource = TranslationEngine.resolveSource(regions)
@@ -129,14 +148,15 @@ object PreTranslate {
                             val lines = if (groupMode) {
                                 TranslationEngine.translateEach(
                                     groups, api, model, previous, apiKey, protocol,
-                                    sourceLang = pageSource
+                                    sourceLang = pageSource, token = token
                                 )
                             } else {
                                 TranslationEngine.translate(
                                     groups, api, model, previous, apiKey, protocol,
-                                    sourceLang = pageSource
+                                    sourceLang = pageSource, token = token
                                 )
                             }
+                            if (token.cancelled) return@withContext Result.Cancelled
                             // A per-group run can answer some bubbles and miss others. Saving that
                             // page would mark it translated forever (skipStored) and could light
                             // the "done" badge with Japanese still on it, so report it as a page
@@ -201,8 +221,10 @@ object PreTranslate {
         } catch (cancel: CancellationException) {
             Result.Cancelled
         } catch (t: Throwable) {
-            Result.Failed(current, t.javaClass.simpleName)
+            if (token.cancelled) Result.Cancelled
+            else Result.Failed(current, t.javaClass.simpleName)
         } finally {
+            if (activeToken === token) activeToken = null
             runCatching { source?.close() }
         }
     }

@@ -79,6 +79,7 @@ import com.yingcolor.lumanga.theme.ComicTheme
 import com.yingcolor.lumanga.ui.Backdrop
 import com.yingcolor.lumanga.ui.BackdropShot
 import com.yingcolor.lumanga.ui.MotionSpec
+import com.yingcolor.lumanga.ui.PreTranslateDialog
 import com.yingcolor.lumanga.ui.ReaderScreen
 import com.yingcolor.lumanga.ui.ReaderViewModel
 import com.yingcolor.lumanga.ui.SHELF_MODE_HOME
@@ -147,6 +148,8 @@ private fun ComicApp() {
     var currentBook by remember { mutableStateOf<Book?>(null) }
     var settingsRoute by remember { mutableIntStateOf(SettingsRoute.CLOSED) }
     var translateConfigOpen by remember { mutableStateOf(false) }
+    // Long-pressing the reader's 译 button opens the single-volume pre-translate panel here.
+    var preTranslateBook by remember { mutableStateOf<Book?>(null) }
     var folders by remember { mutableStateOf(prefs.folderUris) }
     var toast by remember { mutableStateOf<String?>(null) }
 
@@ -275,6 +278,7 @@ private fun ComicApp() {
                         },
                         onSettings = { openSettings(SettingsRoute.READING) },
                         onTranslateConfig = { translateConfigOpen = true },
+                        onPreTranslate = { preTranslateBook = book },
                         settingsOpen = settingsRoute != SettingsRoute.CLOSED,
                         onCloseSettings = { settingsRoute = SettingsRoute.CLOSED },
                         onProgress = { page, total -> prefs.setProgress(book.id, page, total) },
@@ -374,6 +378,14 @@ private fun ComicApp() {
                 TranslateConfigDialog(
                     settings = settings,
                     onDismiss = { translateConfigOpen = false }
+                )
+            }
+
+            preTranslateBook?.let { volume ->
+                PreTranslateDialog(
+                    book = volume,
+                    settings = settings,
+                    onDismiss = { preTranslateBook = null }
                 )
             }
 

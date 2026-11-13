@@ -85,9 +85,12 @@ fun PreTranslateDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var api by remember { mutableStateOf(settings.translateApi) }
-    var apiKey by remember { mutableStateOf(settings.translateApiKey) }
-    var model by remember { mutableStateOf(settings.translateModel) }
+    // These three (plus the protocol below) belong to pre-translate alone. An untouched item
+    // reads the global value, so it keeps following changes made in 翻译配置; the first edit
+    // stores an override and leaves the global config alone.
+    var api by remember { mutableStateOf(settings.preApi) }
+    var apiKey by remember { mutableStateOf(settings.preApiKey) }
+    var model by remember { mutableStateOf(settings.preModel) }
 
     var preview by remember { mutableStateOf<BookPreview?>(null) }
     var selected by remember { mutableStateOf<Set<Int>>(emptySet()) }
@@ -116,6 +119,7 @@ fun PreTranslateDialog(
     DisposableEffect(book.id) {
         onDispose {
             job?.cancel()
+            PreTranslate.stop()
             preview?.close()
         }
     }
@@ -124,7 +128,13 @@ fun PreTranslateDialog(
     val runningText = if (running) S.preTranslateRunning(doneCount, selected.size) else null
 
     Dialog(
-        onDismissRequest = { if (!running) { job?.cancel(); onDismiss() } },
+        onDismissRequest = {
+            if (!running) {
+                job?.cancel()
+                PreTranslate.stop()
+                onDismiss()
+            }
+        },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
@@ -191,14 +201,14 @@ fun PreTranslateDialog(
 
                 Spacer(Modifier.height(12.dp))
                 ApiProtocolPicker(
-                    current = settings.translateProtocol,
-                    onSelect = settings::setTranslateProtocol,
+                    current = settings.preProtocol,
+                    onSelect = settings::setPreProtocol,
                     enabled = !running
                 )
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = api,
-                    onValueChange = { api = it },
+                    onValueChange = { api = it; settings.setPreApi(it) },
                     label = { Text(S.translateApi) },
                     singleLine = true,
                     enabled = !running,
@@ -207,7 +217,7 @@ fun PreTranslateDialog(
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = apiKey,
-                    onValueChange = { apiKey = it },
+                    onValueChange = { apiKey = it; settings.setPreApiKey(it) },
                     label = { Text(S.preTranslateApiKey) },
                     singleLine = true,
                     enabled = !running,
@@ -218,13 +228,31 @@ fun PreTranslateDialog(
                     value = model,
                     // Persist right away so a model picked here is still selected next time,
                     // even if the panel is closed without starting a run.
-                    onValueChange = { model = it; settings.setTranslateModel(it) },
+                    onValueChange = { model = it; settings.setPreModel(it) },
                     api = api,
                     apiKey = apiKey,
-                    protocol = settings.translateProtocol,
+                    protocol = settings.preProtocol,
                     enabled = !running,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = S.preTranslateConfigTip,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (settings.preCustomised) {
+                    TextButton(
+                        enabled = !running,
+                        onClick = {
+                            settings.resetPreConfig()
+                            api = settings.preApi
+                            apiKey = settings.preApiKey
+                            model = settings.preModel
+                            message = S.preTranslateFollowing
+                        }
+                    ) { Text(S.preTranslateFollowGlobal) }
+                }
 
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -373,7 +401,15 @@ fun PreTranslateDialog(
                 Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (running) {
-                        Button(onClick = { job?.cancel() }) { Text(S.preTranslateStop) }
+                        Button(onClick = {
+                            // Reset the UI here, not after the coroutine returns: a cancelled
+                            // job never reaches the code below, which used to leave the panel
+                            // stuck on "running" until the app was restarted.
+                            PreTranslate.stop()
+                            job?.cancel()
+                            running = false
+                            message = S.preTranslateCancelled
+                        }) { Text(S.preTranslateStop) }
                     } else {
                         Button(
                             enabled = selected.isNotEmpty(),
@@ -390,44 +426,48 @@ fun PreTranslateDialog(
                                     message = S.preTranslateNeedPages
                                     return@Button
                                 }
-                                settings.setTranslateApi(api.trim())
-                                settings.setTranslateModel(model.trim())
-                                settings.setTranslateApiKey(apiKey.trim())
+                                // The endpoint fields above are already stored as pre-translate
+                                // overrides; never write them into the global config.
                                 message = null
                                 doneCount = 0
                                 running = true
                                 val pages = selected.sorted()
                                 job = scope.launch {
-                                    val result = PreTranslate.run(
-                                        context = context,
-                                        book = book,
-                                        pages = pages,
-                                        api = api.trim(),
-                                        apiKey = apiKey.trim(),
-                                        model = model.trim(),
-                                        protocol = ApiProtocol.from(settings.translateProtocol),
-                                        groupMode = settings.translateMode == TranslateMode.GROUP,
-                                        skipStored = resumeOnly
-                                    ) { done, _ ->
-                                        withContext(Dispatchers.Main) { doneCount = done }
-                                    }
-                                    running = false
-                                    storedCount = TranslationStore.count(context, book.id)
-                                    message = when (result) {
-                                        is PreTranslate.Result.Done -> when {
-                                            // A page that failed is skipped, so the count can be
-                                            // short of the volume — say so instead of "完成".
-                                            result.failed.isNotEmpty() ->
-                                                S.preTranslateDoneWithFailures(
-                                                    storedCount, result.failed.size
-                                                )
-                                            result.skipped > 0 ->
-                                                S.preTranslateDoneResume(result.translated, result.skipped)
-                                            else -> S.preTranslateDone(storedCount)
+                                    try {
+                                        val result = PreTranslate.run(
+                                            context = context,
+                                            book = book,
+                                            pages = pages,
+                                            api = api.trim(),
+                                            apiKey = apiKey.trim(),
+                                            model = model.trim(),
+                                            protocol = ApiProtocol.from(settings.preProtocol),
+                                            groupMode = settings.translateMode == TranslateMode.GROUP,
+                                            skipStored = resumeOnly
+                                        ) { done, _ ->
+                                            withContext(Dispatchers.Main) { doneCount = done }
                                         }
-                                        is PreTranslate.Result.Failed ->
-                                            S.preTranslateFailed(result.page)
-                                        PreTranslate.Result.Cancelled -> S.preTranslateCancelled
+                                        storedCount = TranslationStore.count(context, book.id)
+                                        message = when (result) {
+                                            is PreTranslate.Result.Done -> when {
+                                                // A page that failed is skipped, so the count can be
+                                                // short of the volume — say so instead of "完成".
+                                                result.failed.isNotEmpty() ->
+                                                    S.preTranslateDoneWithFailures(
+                                                        storedCount, result.failed.size
+                                                    )
+                                                result.skipped > 0 ->
+                                                    S.preTranslateDoneResume(result.translated, result.skipped)
+                                                else -> S.preTranslateDone(storedCount)
+                                            }
+                                            is PreTranslate.Result.Failed ->
+                                                S.preTranslateFailed(result.page)
+                                            PreTranslate.Result.Cancelled -> S.preTranslateCancelled
+                                        }
+                                    } finally {
+                                        // Cancellation is a normal way out of this coroutine; the
+                                        // panel must not stay frozen in its "running" state.
+                                        running = false
                                     }
                                 }
                             }
@@ -436,7 +476,11 @@ fun PreTranslateDialog(
                     Spacer(Modifier.weight(1f))
                     TextButton(
                         enabled = !running,
-                        onClick = { job?.cancel(); onDismiss() }
+                        onClick = {
+                            job?.cancel()
+                            PreTranslate.stop()
+                            onDismiss()
+                        }
                     ) { Text(S.cancel) }
                 }
             }
