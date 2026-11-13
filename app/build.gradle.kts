@@ -23,7 +23,7 @@ android {
         // "版本 <name>（构建 <code>）". Version *name* stays 1.5.0 on purpose — only this counter
         // moves. The release notes must repeat the same number on their first line, or the
         // in-app update check either misses a build or offers one that is already installed.
-        versionCode = 27
+        versionCode = 28
         versionName = "1.5.0"
         vectorDrawables { useSupportLibrary = true }
         // Both OCR backends ship native libs for four ABIs. Only real phones matter here;

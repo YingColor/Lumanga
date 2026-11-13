@@ -18,7 +18,7 @@ import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.UiSettings
 
-/** Three bundled OCR models; the choice is shared by live translation and pre-translate. */
+/** Four bundled OCR models; the choice is shared by live translation and pre-translate. */
 @Composable
 fun OcrModelPicker(settings: UiSettings) {
     val scheme = MaterialTheme.colorScheme
@@ -32,7 +32,7 @@ fun OcrModelPicker(settings: UiSettings) {
         )
         Spacer(Modifier.height(6.dp))
         // Default first, so the recommended model is the first row a user sees.
-        listOf(OcrModel.SMALL, OcrModel.MEDIUM, OcrModel.MANGA).forEach { model ->
+        listOf(OcrModel.SMALL, OcrModel.HYBRID, OcrModel.MEDIUM, OcrModel.MANGA).forEach { model ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -51,6 +51,7 @@ fun OcrModelPicker(settings: UiSettings) {
                     )
                     val tip = when (model) {
                         OcrModel.MEDIUM -> S.ocrModelMediumTip
+                        OcrModel.HYBRID -> S.ocrModelHybridTip
                         OcrModel.MANGA -> S.ocrModelMangaTip
                         else -> S.ocrModelSmallTip
                     }

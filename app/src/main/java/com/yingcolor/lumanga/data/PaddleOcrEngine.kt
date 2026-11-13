@@ -47,7 +47,7 @@ object PaddleOcr {
 
 class PaddleOcrEngine(private val context: Context) : OcrEngine {
     /** Bump whenever a bundled model file changes, so old installs refresh their cache. */
-    private val MODEL_BUNDLE_REV = 2
+    private val MODEL_BUNDLE_REV = 3
     private val prefs = Prefs(context.applicationContext)
     private var runtime: PaddleRuntime? = null
     private var runtimeModel: OcrModel? = null
@@ -252,10 +252,12 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         JSONArray(File(dir, "characters.json").readText(Charsets.UTF_8))
             .let { array -> List(array.length()) { array.getString(it) } }
 
+    // SMALL and MEDIUM use identical tensor shapes, so the detector and the recogniser can
+    // come from different bundles (see OcrModel.HYBRID). Each half picks its own backend.
     private val detShared: OnnxSession? =
-        if (model.onnx) OnnxSession(detFile, longArrayOf(1, 3, 640, 640), 3 * 640 * 640) else null
+        if (model.detOnnx) OnnxSession(detFile, longArrayOf(1, 3, 640, 640), 3 * 640 * 640) else null
     private val recShared: OnnxSession? =
-        if (model.onnx) OnnxSession(recFile, longArrayOf(1, 3, 48, 640), 3 * 48 * 640) else null
+        if (model.recOnnx) OnnxSession(recFile, longArrayOf(1, 3, 48, 640), 3 * 48 * 640) else null
     private val owned = Collections.synchronizedList(mutableListOf<OcrSession>())
 
     /**
