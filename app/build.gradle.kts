@@ -19,7 +19,11 @@ android {
         
         minSdk = 26
         targetSdk = 36
-        versionCode = 23
+        // Bumped with every delivered build so an install can be told apart: 关于 dialog shows
+        // "版本 <name>（构建 <code>）". Version *name* stays 1.5.0 on purpose — only this counter
+        // moves. The release notes must repeat the same number on their first line, or the
+        // in-app update check either misses a build or offers one that is already installed.
+        versionCode = 24
         versionName = "1.5.0"
         vectorDrawables { useSupportLibrary = true }
         // Both OCR backends ship native libs for four ABIs. Only real phones matter here;
