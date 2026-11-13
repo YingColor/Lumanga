@@ -4,11 +4,17 @@ import android.content.Context
 import android.graphics.Bitmap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.Closeable
 import kotlin.coroutines.coroutineContext
 import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Whole-volume translation: walks the picked pages, runs the same OCR → bubble → API pipeline the
@@ -67,6 +73,11 @@ object PreTranslate {
     /**
      * [skipStored] is what makes a batch resumable: every page already in [TranslationStore] is
      * left alone, so a cancelled run, a dead battery or a network drop never redoes finished work.
+     *
+     * Pages are worked on in batches. Inside one batch recognition and translation run on several
+     * pages at once (sized by the two concurrency settings), which is where the speed-up comes
+     * from; between batches the page order and the carried-over context are kept, so names and
+     * tone stay coherent. A batch of one is exactly the old serial behaviour.
      */
     suspend fun run(
         context: Context,
@@ -93,125 +104,120 @@ object PreTranslate {
             val prior = pages.filter { it < firstPending && it in stored }.maxOrNull()
             if (prior != null) previous = TranslationStore.page(context, book.id, prior)?.lines.orEmpty()
         }
+        val prefs = Prefs(context)
+        val ocrParallel = prefs.ocrConcurrency
+        val translateParallel = prefs.translateConcurrency
+        val engine = PaddleOcr.engine(context)
+        // Recognition workers are only built for a model that can use more than one; otherwise
+        // this is a no-op and the run shares the reader's serialised runtime.
+        engine.preparePool(OcrModel.from(prefs.ocrModel), ocrParallel)
         var source: PageSource? = null
         var current = pages.first()
         try {
             var done = 0
             var translated = 0
             var skipped = 0
-            // Pages the service refused, and how many in a row. A single miss is normal on a
-            // self-hosted endpoint; three in a row means it is down and the run should stop.
             val failedPages = ArrayList<Int>()
             var streak = 0
+            val reader = PageSource.open(context, book).also { source = it }
+            // Stored pages cost nothing and must not occupy a worker slot; fold them in first so
+            // the batch loop only deals with pages that actually need work.
+            val pending = ArrayList<Int>(pages.size)
             for (index in pages) {
-                coroutineContext.ensureActive()
-                if (token.cancelled) return@withContext Result.Cancelled
-                current = index
-                onProgress(done, index)
                 if (index in stored) {
                     skipped++
                     done++
                     onProgress(done, index)
                     continue
                 }
-                val reader = source ?: PageSource.open(context, book).also { source = it }
                 if (index < 0 || index >= reader.pageCount) {
                     done++
                     onProgress(done, index)
                     continue
                 }
-                android.util.Log.i("PreTranslate", "page=$index start")
-                val bytes = reader.readPage(index)
-                val decoded = PageDecoder.decode(bytes, MAX_SIDE, MAX_SIDE)
-                val page = fit(decoded, MAX_SIDE)
-                try {
-                    val regions = TranslationEngine.recognize(page)
-                    // OCR is a blocking native call; check right after it so a stop pressed
-                    // during recognition does not start yet another request.
-                    if (token.cancelled) return@withContext Result.Cancelled
-                    // "Auto" is settled per page here too, so the filters, the reading order and
-                    // the prompt all agree with what the reader would do on the same page.
-                    val pageSource = TranslationEngine.resolveSource(regions)
-                    if (regions.isEmpty() ||
-                        !TranslationEngine.looksJapanese(regions, pageSource)
-                    ) {
-                        // Remember the verdict so the reader does not re-run OCR on this page.
-                        TranslationStore.save(
-                            context, book.id, index,
-                            PageTranslation(page.width, page.height, emptyList(), emptyList())
-                        )
-                        android.util.Log.i("PreTranslate", "page=$index skipped")
-                    } else {
-                        val groups = TranslationEngine.groupBubbles(
-                            regions, page.width, page.height, page, pageSource
-                        )
-                        if (groups.isEmpty()) {
-                            TranslationStore.save(
-                                context, book.id, index,
-                                PageTranslation(page.width, page.height, emptyList(), emptyList())
+                pending.add(index)
+            }
+            val batchSize = max(ocrParallel, translateParallel)
+            val translateGate = Semaphore(translateParallel.coerceAtLeast(1))
+            var cursor = 0
+            while (cursor < pending.size) {
+                coroutineContext.ensureActive()
+                if (token.cancelled) return@withContext Result.Cancelled
+                val end = min(cursor + batchSize, pending.size)
+                val batch = ArrayList<Int>(end - cursor)
+                for (i in cursor until end) batch.add(pending[i])
+                current = batch.last()
+                // Bytes are read on this thread (one archive handle), then each page is decoded,
+                // recognised and translated on its own coroutine.
+                val bytes = batch.map { reader.readPage(it) }
+                android.util.Log.i(
+                    "PreTranslate", "batch start ${batch.first()}..${batch.last()} n=${batch.size}"
+                )
+                val outcomes = coroutineScope {
+                    batch.mapIndexed { offset, index ->
+                        async {
+                            processPage(
+                                index, bytes[offset], previous, api, apiKey, model,
+                                protocol, groupMode, token, translateGate
                             )
-                        } else {
-                            val lines = if (groupMode) {
-                                TranslationEngine.translateEach(
-                                    groups, api, model, previous, apiKey, protocol,
-                                    sourceLang = pageSource, token = token
+                        }
+                    }.awaitAll()
+                }
+                cursor = end
+                for (outcome in outcomes) {
+                    when (outcome) {
+                        is PageOutcome.Cancelled -> return@withContext Result.Cancelled
+                        is PageOutcome.Ok -> {
+                            TranslationStore.save(
+                                context, book.id, outcome.index,
+                                PageTranslation(
+                                    outcome.width, outcome.height, outcome.groups, outcome.lines
                                 )
-                            } else {
-                                TranslationEngine.translate(
-                                    groups, api, model, previous, apiKey, protocol,
-                                    sourceLang = pageSource, token = token
-                                )
-                            }
-                            if (token.cancelled) return@withContext Result.Cancelled
-                            // A per-group run can answer some bubbles and miss others. Saving that
-                            // page would mark it translated forever (skipStored) and could light
-                            // the "done" badge with Japanese still on it, so report it as a page
-                            // to retry instead of storing a half-finished result.
-                            val partial = groupMode && lines?.any { it.isBlank() } == true
-                            if (lines == null || lines.all { it.isBlank() }) {
-                                // Keep the volume going: a dropped connection on one page should
-                                // not cost the pages after it. Three misses in a row is a dead
-                                // service, and there stopping is the honest answer.
-                                failedPages.add(index)
-                                streak++
-                                android.util.Log.w(
-                                    "PreTranslate", "page=$index failed streak=$streak"
-                                )
-                                if (streak >= MAX_CONSECUTIVE_FAILURES) {
-                                    return@withContext Result.Failed(index, "network")
-                                }
-                                done++
-                                onProgress(done, index)
-                                continue
-                            }
+                            )
+                            previous = outcome.lines
                             streak = 0
-                            if (partial) {
-                                failedPages.add(index)
-                                android.util.Log.w(
-                                    "PreTranslate",
-                                    "page=$index partial answered=" +
-                                        "${lines.count { it.isNotBlank() }}/${lines.size}"
-                                )
-                                previous = lines.filter { it.isNotBlank() }
-                                done++
-                                onProgress(done, index)
-                                continue
-                            }
-                            TranslationStore.save(
-                                context, book.id, index,
-                                PageTranslation(page.width, page.height, groups, lines)
+                            translated++
+                            done++
+                            onProgress(done, outcome.index)
+                            android.util.Log.i(
+                                "PreTranslate",
+                                "page=${outcome.index} ok groups=${outcome.groups.size}"
                             )
-                            previous = lines
-                            android.util.Log.i("PreTranslate", "page=$index ok groups=${groups.size}")
+                        }
+                        is PageOutcome.Empty -> {
+                            TranslationStore.save(
+                                context, book.id, outcome.index,
+                                PageTranslation(outcome.width, outcome.height, emptyList(), emptyList())
+                            )
+                            streak = 0
+                            translated++
+                            done++
+                            onProgress(done, outcome.index)
+                            android.util.Log.i("PreTranslate", "page=${outcome.index} skipped")
+                        }
+                        is PageOutcome.Partial -> {
+                            // Answered some bubbles and missed others: do not store it (skipStored
+                            // would then treat it as finished forever), report it for a re-run.
+                            failedPages.add(outcome.index)
+                            previous = outcome.lines
+                            streak = 0
+                            done++
+                            onProgress(done, outcome.index)
+                        }
+                        is PageOutcome.Failed -> {
+                            failedPages.add(outcome.index)
+                            streak++
+                            android.util.Log.w(
+                                "PreTranslate", "page=${outcome.index} failed streak=$streak"
+                            )
+                            if (streak >= MAX_CONSECUTIVE_FAILURES) {
+                                return@withContext Result.Failed(outcome.index, outcome.reason)
+                            }
+                            done++
+                            onProgress(done, outcome.index)
                         }
                     }
-                } finally {
-                    if (page !== decoded) page.recycle()
-                    decoded.recycle()
                 }
-                done++
-                translated++
-                onProgress(done, index)
             }
             // Every page present means the volume is finished, even if this run only had to fill
             // a handful of gaps. This is what lights up the shelf badge.
@@ -230,8 +236,82 @@ object PreTranslate {
             if (token.cancelled) Result.Cancelled
             else Result.Failed(current, t.javaClass.simpleName)
         } finally {
+            engine.releasePool()
             if (activeToken === token) activeToken = null
             runCatching { source?.close() }
+        }
+    }
+
+    /** What one page produced inside a batch; the caller stores and counts it in page order. */
+    private sealed interface PageOutcome {
+        val index: Int
+        data class Ok(
+            override val index: Int,
+            val width: Int,
+            val height: Int,
+            val groups: List<BubbleGroup>,
+            val lines: List<String>
+        ) : PageOutcome
+        data class Empty(override val index: Int, val width: Int, val height: Int) : PageOutcome
+        data class Failed(override val index: Int, val reason: String) : PageOutcome
+        data class Partial(override val index: Int, val lines: List<String>) : PageOutcome
+        data class Cancelled(override val index: Int) : PageOutcome
+    }
+
+    /**
+     * One page's share of a batch: decode, recognise, group, translate. Recognition is capped by
+     * the OCR runtime pool, translation by [translateGate]; everything else runs concurrently.
+     */
+    private suspend fun processPage(
+        index: Int,
+        bytes: ByteArray,
+        previous: List<String>,
+        api: String,
+        apiKey: String,
+        model: String,
+        protocol: ApiProtocol,
+        groupMode: Boolean,
+        token: ApiClient.CancelToken,
+        translateGate: Semaphore
+    ): PageOutcome {
+        val decoded = PageDecoder.decode(bytes, MAX_SIDE, MAX_SIDE)
+        val page = fit(decoded, MAX_SIDE)
+        try {
+            val regions = TranslationEngine.recognize(page, parallel = true)
+            if (token.cancelled) return PageOutcome.Cancelled(index)
+            // "Auto" is settled per page here too, so the filters, the reading order and the
+            // prompt all agree with what the reader would do on the same page.
+            val pageSource = TranslationEngine.resolveSource(regions)
+            if (regions.isEmpty() || !TranslationEngine.looksJapanese(regions, pageSource)) {
+                return PageOutcome.Empty(index, page.width, page.height)
+            }
+            val groups = TranslationEngine.groupBubbles(
+                regions, page.width, page.height, page, pageSource
+            )
+            if (groups.isEmpty()) return PageOutcome.Empty(index, page.width, page.height)
+            val lines = translateGate.withPermit {
+                if (groupMode) {
+                    TranslationEngine.translateEach(
+                        groups, api, model, previous, apiKey, protocol,
+                        sourceLang = pageSource, token = token
+                    )
+                } else {
+                    TranslationEngine.translate(
+                        groups, api, model, previous, apiKey, protocol,
+                        sourceLang = pageSource, token = token
+                    )
+                }
+            }
+            if (token.cancelled) return PageOutcome.Cancelled(index)
+            if (lines == null || lines.all { it.isBlank() }) {
+                return PageOutcome.Failed(index, "network")
+            }
+            val partial = groupMode && lines.any { it.isBlank() }
+            if (partial) return PageOutcome.Partial(index, lines.filter { it.isNotBlank() })
+            return PageOutcome.Ok(index, page.width, page.height, groups, lines)
+        } finally {
+            if (page !== decoded) page.recycle()
+            decoded.recycle()
         }
     }
 

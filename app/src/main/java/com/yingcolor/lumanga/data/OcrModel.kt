@@ -42,6 +42,18 @@ enum class OcrModel(
     val files: List<String>
         get() = listOf(det, rec, "characters.json")
 
+    /**
+     * Whether [PaddleOcrEngine] may read several pages at once with this model.
+     *
+     * - SMALL: every runtime owns its own LiteRT interpreters (the 21 MB recogniser is copied per
+     *   worker), so extra runtimes are safe and a page's columns stay independent.
+     * - MEDIUM: each runtime would load its own 67 MB ONNX recogniser on top of the detector, so
+     *   extra runtimes cost ~134 MB each. It stays serial.
+     * - MANGA: [MangaOcr] is a single `synchronized` object, so parallel pages would only queue
+     *   behind the same lock — no speed-up, just extra bitmaps in memory.
+     */
+    val supportsParallel: Boolean get() = this == SMALL
+
     companion object {
         /** Fresh installs and any unknown stored id land on the fast column reader. */
         val DEFAULT: OcrModel = SMALL

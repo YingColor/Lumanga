@@ -175,6 +175,16 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_TRANSLATE_MODE, TranslateMode.PAGE)
         set(value) = sp.edit().putInt(KEY_TRANSLATE_MODE, TranslateMode.coerce(value)).apply()
 
+    /** Pages pre-translation may recognise at once; see [Concurrency]. Reader ignores this. */
+    var ocrConcurrency: Int
+        get() = sp.getInt(KEY_OCR_CONCURRENCY, Concurrency.OCR_MIN)
+        set(value) = sp.edit().putInt(KEY_OCR_CONCURRENCY, Concurrency.ocr(value)).apply()
+
+    /** Pages pre-translation may translate at once; see [Concurrency]. Reader ignores this. */
+    var translateConcurrency: Int
+        get() = sp.getInt(KEY_TRANSLATE_CONCURRENCY, Concurrency.TRANSLATE_MIN)
+        set(value) = sp.edit().putInt(KEY_TRANSLATE_CONCURRENCY, Concurrency.translate(value)).apply()
+
     /** Language printed on the page; see [SourceLanguage]. */
     var sourceLanguage: Int
         get() = sp.getInt(KEY_SOURCE_LANGUAGE, SourceLanguage.DEFAULT.id)
@@ -389,6 +399,8 @@ class Prefs(context: Context) {
         const val KEY_TRANSLATE_API = "translate_api"
         const val KEY_TRANSLATE_PROTOCOL = "translate_protocol"
         const val KEY_TRANSLATE_MODE = "translate_mode"
+        const val KEY_OCR_CONCURRENCY = "ocr_concurrency"
+        const val KEY_TRANSLATE_CONCURRENCY = "translate_concurrency"
         const val KEY_TRANSLATE_MODEL = "translate_model"
         const val KEY_TRANSLATE_KEY = "translate_api_key"
         const val KEY_OCR_MODEL = "ocr_model"

@@ -11,6 +11,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
@@ -27,6 +28,12 @@ import java.util.concurrent.Executors
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
+
+/**
+ * Upper bound on OCR runtimes pre-translation may hold. Three pages at once already saturates the
+ * big cores; more only adds thread contention and memory (21 MB of recogniser per runtime).
+ */
+private const val MAX_PARALLEL_OCR = 3
 
 object PaddleOcr {
     @Volatile
@@ -52,20 +59,75 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
      */
     private val gate = Mutex()
 
-    override suspend fun recognize(bitmap: Bitmap): List<TextRegion> = withContext(Dispatchers.IO) {
-        gate.withLock {
-            // Cancelled while waiting? Leave without touching the models: this page is gone.
-            currentCoroutineContext().ensureActive()
-            // Re-read on every page so switching the model in 翻译配置 takes effect without
-            // restarting the app; the previous sessions are released before the new ones load.
-            val model = OcrModel.from(prefs.ocrModel)
-            if (runtime == null || runtimeModel != model) {
-                android.util.Log.i("Ocr", "loading ${model.label}")
-                runtime?.close()
-                runtime = PaddleRuntime(copyModels(context, model), model)
-                runtimeModel = model
+    /**
+     * Runtimes lent to pre-translation so several pages are read at once; null means the reader's
+     * single serialised runtime is in use. [preparePool] builds it for one run, [releasePool]
+     * closes it afterwards — the models themselves are not touched.
+     */
+    private class ParallelPool(
+        val model: OcrModel,
+        val channel: Channel<PaddleRuntime>,
+        val runtimes: List<PaddleRuntime>
+    )
+
+    @Volatile
+    private var parallelPool: ParallelPool? = null
+
+    /**
+     * Builds [size] independent runtimes for one pre-translation run. A size of 1 (or a model that
+     * cannot use more, see [OcrModel.supportsParallel]) allocates nothing and leaves the run on
+     * the reader's serialised runtime, so the default behaviour is unchanged.
+     */
+    fun preparePool(model: OcrModel, size: Int) {
+        releasePool()
+        val count = if (model.supportsParallel) size.coerceIn(1, MAX_PARALLEL_OCR) else 1
+        if (count <= 1) return
+        val dir = copyModels(context, model)
+        val runtimes = ArrayList<PaddleRuntime>(count)
+        repeat(count) { runtimes.add(PaddleRuntime(dir, model)) }
+        val channel = Channel<PaddleRuntime>(count)
+        runtimes.forEach { channel.trySend(it) }
+        parallelPool = ParallelPool(model, channel, runtimes)
+        android.util.Log.i("Ocr", "pool ready model=${model.label} size=$count")
+    }
+
+    /** Closes every pooled runtime. Called when the run ends; a no-op when nothing was pooled. */
+    fun releasePool() {
+        val pool = parallelPool ?: return
+        parallelPool = null
+        pool.runtimes.forEach { runCatching { it.close() } }
+        android.util.Log.i("Ocr", "pool released size=${pool.runtimes.size}")
+    }
+
+    override suspend fun recognize(
+        bitmap: Bitmap,
+        parallel: Boolean
+    ): List<TextRegion> = withContext(Dispatchers.IO) {
+        // Only pre-translation asks for a pooled runtime, so a release can never pull one out
+        // from under the reader. Both paths run the same models and filters.
+        val pool = parallelPool
+        if (parallel && pool != null && pool.model == OcrModel.from(prefs.ocrModel)) {
+            val worker = pool.channel.receive()
+            try {
+                worker.recognize(bitmap)
+            } finally {
+                pool.channel.trySend(worker)
             }
-            runtime!!.recognize(bitmap)
+        } else {
+            gate.withLock {
+                // Cancelled while waiting? Leave without touching the models: this page is gone.
+                currentCoroutineContext().ensureActive()
+                // Re-read on every page so switching the model in 翻译配置 takes effect without
+                // restarting the app; the previous sessions are released before the new ones load.
+                val model = OcrModel.from(prefs.ocrModel)
+                if (runtime == null || runtimeModel != model) {
+                    android.util.Log.i("Ocr", "loading ${model.label}")
+                    runtime?.close()
+                    runtime = PaddleRuntime(copyModels(context, model), model)
+                    runtimeModel = model
+                }
+                runtime!!.recognize(bitmap)
+            }
         }
     }
 

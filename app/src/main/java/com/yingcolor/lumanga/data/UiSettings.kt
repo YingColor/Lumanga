@@ -69,6 +69,12 @@ class UiSettings(private val prefs: Prefs) {
     private var stateTranslateMode by mutableIntStateOf(TranslateMode.coerce(prefs.translateMode))
     val translateMode: Int get() = stateTranslateMode
 
+    private var stateOcrConcurrency by mutableIntStateOf(Concurrency.ocr(prefs.ocrConcurrency))
+    val ocrConcurrency: Int get() = stateOcrConcurrency
+
+    private var stateTranslateConcurrency by mutableIntStateOf(Concurrency.translate(prefs.translateConcurrency))
+    val translateConcurrency: Int get() = stateTranslateConcurrency
+
     private var stateSourceLanguage by mutableIntStateOf(SourceLanguage.coerce(prefs.sourceLanguage))
     val sourceLanguage: Int get() = stateSourceLanguage
 
@@ -183,6 +189,18 @@ class UiSettings(private val prefs: Prefs) {
         val safe = TranslateMode.coerce(value)
         stateTranslateMode = safe
         prefs.translateMode = safe
+    }
+
+    fun setOcrConcurrency(value: Int) {
+        val safe = Concurrency.ocr(value)
+        stateOcrConcurrency = safe
+        prefs.ocrConcurrency = safe
+    }
+
+    fun setTranslateConcurrency(value: Int) {
+        val safe = Concurrency.translate(value)
+        stateTranslateConcurrency = safe
+        prefs.translateConcurrency = safe
     }
 
     fun setSourceLanguage(value: Int) {
