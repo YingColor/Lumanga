@@ -28,32 +28,41 @@ import com.yingcolor.lumanga.data.TargetLanguage
 import com.yingcolor.lumanga.data.UiSettings
 
 /**
- * Two drop-downs instead of two rows of buttons. Four languages laid out side by side took a
- * whole line each and made the panel scroll; a closed drop-down costs one line and shows the
- * value that is actually in effect. Reading settings.sourceLanguage / targetLanguage here also
- * subscribes the screen to the change, which is what makes the reader recompute its page keys.
+ * The language the page is printed in. It belongs to recognition (it decides which characters
+ * count as lettering and how columns are ordered), so it lives on the OCR page.
  */
 @Composable
-fun LanguagePickers(settings: UiSettings) {
-    Column {
-        LanguageRow(
-            title = S.translateSourceLanguage,
-            tip = S.translateSourceLanguageTip,
-            options = SourceLanguage.entries.map { it.id to it.label },
-            current = settings.sourceLanguage,
-            onSelect = settings::setSourceLanguage
-        )
-        Spacer(Modifier.height(14.dp))
-        LanguageRow(
-            title = S.translateTargetLanguage,
-            tip = S.translateTargetLanguageTip,
-            options = TargetLanguage.entries.map { it.id to it.label },
-            current = settings.targetLanguage,
-            onSelect = settings::setTargetLanguage
-        )
-    }
+fun SourceLanguagePicker(settings: UiSettings) {
+    LanguageRow(
+        title = S.translateSourceLanguage,
+        tip = S.translateSourceLanguageTip,
+        options = SourceLanguage.entries.map { it.id to it.label },
+        current = settings.sourceLanguage,
+        onSelect = settings::setSourceLanguage
+    )
 }
 
+/**
+ * The language to translate into. It only changes the prompt and the rendering, never the
+ * recognition, so it lives with the translation service.
+ */
+@Composable
+fun TargetLanguagePicker(settings: UiSettings) {
+    LanguageRow(
+        title = S.translateTargetLanguage,
+        tip = S.translateTargetLanguageTip,
+        options = TargetLanguage.entries.map { it.id to it.label },
+        current = settings.targetLanguage,
+        onSelect = settings::setTargetLanguage
+    )
+}
+
+/**
+ * A drop-down instead of a row of buttons. Four languages laid out side by side took a whole
+ * line each and made the panel scroll; a closed drop-down costs one line and shows the value
+ * that is actually in effect. Reading settings.sourceLanguage / targetLanguage here also
+ * subscribes the screen to the change, which is what makes the reader recompute its page keys.
+ */
 @Composable
 private fun LanguageRow(
     title: String,

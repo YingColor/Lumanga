@@ -175,7 +175,10 @@ object S {
 
     
     const val translateConfig = "翻译配置"
-    const val translateConfigTip = "填好翻译服务，阅读时点「译」就能用；预翻译整本默认也用这套配置，但预翻译面板里可以单独改。阅读时长按「译」0.5 秒打开这里，底部可进预翻译整本。"
+    const val translateConfigTip = "预翻译整本默认也用这套配置，但预翻译面板里可以单独改。阅读时点「译」开启实时翻译。"
+    const val translateConfigOcr = "OCR 配置"
+    const val translateConfigModel = "翻译大模型配置"
+    const val translateModelEmpty = "还没填模型"
     const val translate = "漫画实时翻译"
     const val translateSummary = "把画面里的外文认出来，译好再贴回页面。开关在阅读页的「译」按钮上，这里只放识别和翻译服务的设置。"
     const val translateApi = "翻译服务地址"
