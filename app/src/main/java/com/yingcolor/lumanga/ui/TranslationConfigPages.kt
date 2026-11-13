@@ -6,8 +6,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -21,12 +19,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.ApiProtocol
-import com.yingcolor.lumanga.data.Concurrency
-import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.SourceLanguage
 import com.yingcolor.lumanga.data.TextLayout
 import com.yingcolor.lumanga.data.TextRegion
@@ -40,17 +35,6 @@ import kotlinx.coroutines.launch
 fun OcrSettingsPage(settings: UiSettings) {
     Column {
         OcrModelPicker(settings)
-        Spacer(Modifier.height(18.dp))
-        ConcurrencyField(
-            label = S.concurrencyOcr,
-            tip = S.concurrencyOcrTip,
-            value = settings.ocrConcurrency,
-            min = Concurrency.OCR_MIN,
-            max = Concurrency.OCR_MAX,
-            enabled = settings.ocrModel == OcrModel.SMALL.id,
-            disabledHint = S.concurrencyOcrUnavailable,
-            onChange = settings::setOcrConcurrency
-        )
         Spacer(Modifier.height(18.dp))
         SourceLanguagePicker(settings)
     }
@@ -219,68 +203,6 @@ fun ModelSettingsPage(settings: UiSettings) {
                     settings.setTranslateMode(if (it) TranslateMode.GROUP else TranslateMode.PAGE)
                     testResult = null
                 }
-            )
-        }
-
-        Spacer(Modifier.height(16.dp))
-        // Only pre-translation reads this; the reader translates the page it shows.
-        ConcurrencyField(
-            label = S.concurrencyTranslate,
-            tip = S.concurrencyTranslateTip,
-            value = settings.translateConcurrency,
-            min = Concurrency.TRANSLATE_MIN,
-            max = Concurrency.TRANSLATE_MAX,
-            onChange = settings::setTranslateConcurrency
-        )
-    }
-}
-
-/**
- * A one- or two-digit field next to its label. Input is clamped to [min]..[max] as it is typed;
- * [remember] keyed on [value] snaps the text back to the stored number whenever it is clamped.
- */
-@Composable
-private fun ConcurrencyField(
-    label: String,
-    tip: String,
-    value: Int,
-    min: Int,
-    max: Int,
-    enabled: Boolean = true,
-    disabledHint: String? = null,
-    onChange: (Int) -> Unit
-) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = label, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    text = tip,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(Modifier.width(10.dp))
-            OutlinedTextField(
-                value = text,
-                onValueChange = { raw ->
-                    val digits = raw.filter { it.isDigit() }.take(2)
-                    text = digits
-                    digits.toIntOrNull()?.let { onChange(it.coerceIn(min, max)) }
-                },
-                singleLine = true,
-                enabled = enabled,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.width(76.dp)
-            )
-        }
-        if (!enabled && disabledHint != null) {
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = disabledHint,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.error
             )
         }
     }

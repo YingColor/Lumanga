@@ -60,6 +60,7 @@ import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.BatchPreTranslate
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BookPreview
+import com.yingcolor.lumanga.data.Concurrency
 import com.yingcolor.lumanga.data.PreTranslate
 import com.yingcolor.lumanga.data.TextLayout
 import com.yingcolor.lumanga.data.TranslateMode
@@ -284,6 +285,27 @@ fun PreTranslateDialog(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
+                Spacer(Modifier.height(6.dp))
+                // Concurrency only affects pre-translation, so it lives here rather than in the
+                // global translation settings.
+                ConcurrencyField(
+                    label = S.concurrencyOcr,
+                    value = settings.ocrConcurrency,
+                    min = Concurrency.OCR_MIN,
+                    max = Concurrency.OCR_MAX,
+                    enabled = !running && settings.ocrModel == OcrModel.SMALL.id,
+                    disabledHint = S.concurrencyOcrUnavailable,
+                    onChange = settings::setOcrConcurrency
+                )
+                Spacer(Modifier.height(4.dp))
+                ConcurrencyField(
+                    label = S.concurrencyTranslate,
+                    value = settings.translateConcurrency,
+                    min = Concurrency.TRANSLATE_MIN,
+                    max = Concurrency.TRANSLATE_MAX,
+                    enabled = !running,
+                    onChange = settings::setTranslateConcurrency
+                )
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
