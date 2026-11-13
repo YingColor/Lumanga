@@ -25,6 +25,7 @@ object S {
     const val settings = "阅读设置"
     const val settingsRoot = "设置"
     const val translateToggleMark = "译"
+    const val retranslate = "重新翻译这一页"
     const val settingsReadingSummary = "阅读模式、缩放方式、翻页方向与动画、屏幕方向、亮度等"
     const val back = "返回"
     const val previous = "上一页"

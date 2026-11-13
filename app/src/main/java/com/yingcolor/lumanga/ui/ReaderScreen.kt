@@ -55,6 +55,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -711,6 +712,35 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
         handles.forEach { it.cancel() }
         translationStates[index] = TranslateState()
+        translationRetry++
+    }
+
+    /**
+     * Starts the page on screen over: recognition and translation are dropped mid-flight and the
+     * reader shows the untouched image until new text arrives — the state a freshly opened book
+     * begins from.
+     *
+     * Cancelling rather than waiting matters on a self-hosted endpoint: a half-finished request
+     * that is left alone holds the single socket, and the restart would queue behind it. The
+     * carried-over context is dropped too, so the new answer is not steered by the old one.
+     *
+     * Pre-translated pages are deliberately not bypassed; their lines live on disk and are read
+     * again, exactly as closing and reopening the book would do.
+     */
+    fun restartTranslation() {
+        translatedCache.evictAll()
+        pageResults.evictAll()
+        synchronized(contextLock) { translationContext.clear() }
+        val handles = synchronized(translationLock) {
+            val tokens = liveTokens.values.toList()
+            translating.values.forEach { it.cancel() }
+            translating.clear()
+            translatingPages.clear()
+            liveTokens.clear()
+            tokens
+        }
+        handles.forEach { it.cancel() }
+        translationStates.clear()
         translationRetry++
     }
 
@@ -1947,6 +1977,25 @@ private fun ReaderContent(
                         // Translation on/off without leaving the page: filled when on, hollow when
                         // off, so the current state reads at a glance. Sits just left of the gear.
                         val translateOn = settings.translateEnabled
+                        // Throw away the page being read and start it over, so a page that came
+                        // out wrong can be redone without leaving the book. Dimmed while
+                        // translation is off: there is nothing to redo then.
+                        IconButton(
+                            onClick = { vm.restartTranslation() },
+                            enabled = translateOn,
+                            modifier = iconBox
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Refresh,
+                                contentDescription = S.retranslate,
+                                tint = if (translateOn) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                },
+                                modifier = Modifier.size(iconSize)
+                            )
+                        }
                         // Short tap toggles translation; holding for half a second opens the
                         // translate config. The system long-press is also 500 ms, so this stays a
                         // custom timer: a cancelled press can never be mistaken for a long one.
