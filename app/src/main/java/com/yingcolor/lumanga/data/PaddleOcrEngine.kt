@@ -755,6 +755,8 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
                 val overlap = min(column.right, component.right) - max(column.left, component.left)
                 val minWidth = min(column.width(), component.width()).coerceAtLeast(1)
                 val gap = maxOf(column.top, component.top) - min(column.bottom, component.bottom)
+                // Measured on CG p.8: widening this to 2.2x merged the shout bubble's columns
+                // and made the small model read even less (one box, 「Cるのか 一」). Keep 1.1x.
                 val allowedGap = maxOf(4f, minWidth * 1.1f)
                 overlap.toFloat() / minWidth > 0.5f && gap <= allowedGap
             }
