@@ -332,7 +332,42 @@ object TranslationEngine {
             }
         }
         if (usable.isEmpty()) return emptyList()
-        val ordered = usable.sortedWith(regionOrder(language))
+        // A detector can report a patch of artwork as a text box, and because such a blob is
+        // wide it can reach a real bubble: on one page a 384 px wide blob read as 「左小」 sat
+        // close enough to a bubble for the clustering pass to swallow it, so the merged footprint
+        // ran from x=56 to x=551. The bubble test then rejected that footprint, leaving the raw
+        // box as the patch — and the translation was drawn across the drawing at font 69.
+        // A column is about one character cell wide, a horizontal line about one cell tall, so
+        // anything several times thicker is a blob. The test only looks at the picture, which
+        // means it holds for any engine, local or online.
+        val plausible = if (language.horizontal) {
+            usable
+        } else {
+            val column = usable.map {
+                if (it.vertical) it.box.width() else it.box.height()
+            }.sorted().let { it[it.size / 2] }.coerceIn(10, 96)
+            usable.filter { region ->
+                // One Japanese column is about one character cell wide, and one horizontal
+                // line about one cell tall. Anything thicker than that is a detector blob: on
+                // this page such a box was wide enough to reach a real bubble, so the clustering
+                // pass joined them and the merged footprint spanned the drawing.
+                val keep = if (region.vertical) {
+                    region.box.width() <= column * 3
+                } else {
+                    region.box.height() <= column * 2
+                }
+                if (!keep) {
+                    android.util.Log.d(
+                        "Translate",
+                        "TR skip huge box=${region.box.width()}x${region.box.height()} " +
+                            "text=${region.text}"
+                    )
+                }
+                keep
+            }
+        }
+        if (plausible.isEmpty()) return emptyList()
+        val ordered = plausible.sortedWith(regionOrder(language))
         val clusters = ArrayList<MutableList<TextRegion>>()
         for (region in ordered) {
             var target: MutableList<TextRegion>? = null

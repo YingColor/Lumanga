@@ -157,7 +157,16 @@ object OnlineOcr {
             if (rect.width() < 4 || rect.height() < 4) continue
             val vertical = if (item.has("vertical")) item.optBoolean("vertical")
             else rect.height() > rect.width() * 1.2f
-            regions.add(TextRegion(value, rect, 1f, vertical))
+            // Optional: a service that reports its own confidence is taken at its word, and one
+            // that does not keeps the old assumption. Without this every reply looked perfect,
+            // so the low-score filter that throws away artwork never fired on this path.
+            val score = item.optDouble("score", item.optDouble("confidence", -1.0))
+            val confidence = when {
+                score < 0.0 -> 1f
+                score > 1.5 -> (score / 100.0).toFloat().coerceIn(0f, 1f)
+                else -> score.toFloat().coerceIn(0f, 1f)
+            }
+            regions.add(TextRegion(value, rect, confidence, vertical))
         }
         return regions
     }
