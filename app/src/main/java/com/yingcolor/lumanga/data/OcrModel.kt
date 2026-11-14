@@ -13,7 +13,12 @@ enum class OcrModel(
     val det: String,
     val rec: String,
     val detOnnx: Boolean,
-    val recOnnx: Boolean
+    val recOnnx: Boolean,
+    /**
+     * Input widths the recogniser was trained at. PP-OCR ships one model per width; the caller
+     * picks the shortest that fits the content. Empty means "one fixed 640 model".
+     */
+    val recBuckets: List<Int> = emptyList()
 ) {
     SMALL(
         0,
@@ -21,7 +26,8 @@ enum class OcrModel(
         "ppocrv6_small_det_640_fp32.tflite",
         "ppocrv6_small_rec_640_fp32.tflite",
         false,
-        false
+        false,
+        listOf(320, 640, 960)
     ),
     MEDIUM(
         1,
@@ -55,11 +61,18 @@ enum class OcrModel(
         "ppocrv6_medium_det_640_fp16.onnx",
         "ppocrv6_small_rec_640_fp32.tflite",
         true,
-        false
+        false,
+        listOf(320, 640, 960)
     );
 
     val files: List<String>
-        get() = listOf(det, rec, "characters.json")
+        get() = buildList {
+            add(det)
+            add(rec)
+            add("characters.json")
+            // The extra widths are named by convention so the enum stays a data table.
+            recBuckets.filter { it != 640 }.forEach { add("ppocrv6_small_rec_${it}_fp32.tflite") }
+        }
 
     /**
      * Whether [PaddleOcrEngine] may read several pages at once with this model.

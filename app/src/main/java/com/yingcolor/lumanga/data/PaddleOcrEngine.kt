@@ -258,11 +258,20 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
      */
     private val BALLOON_REDETECT_SHARE = 0.03f
 
+
     /** Below this confidence the column is read again with the wider margin. */
     private val WIDE_RETRY_CONF = 0.85f
     private val detFile = File(dir, model.det)
     private val recFile = File(dir, model.rec)
-    private val recOutSize = 80 * 18710
+
+    /**
+     * Recogniser input widths this model ships. PP-OCR's recogniser is trained at one fixed
+     * width, and the reference project bundles 320/640/960, choosing by content width. This is
+     * what recovers short columns: a 299 px strip fed to the 640 model spends most of its output
+     * grid on padding and 「ふふふ」 came back as 「…」, while the 320 model reads it.
+     */
+    private val recBuckets: List<Int> =
+        if (model.recBuckets.isEmpty()) listOf(640) else model.recBuckets
     private val vocabulary: List<String> =
         JSONArray(File(dir, "characters.json").readText(Charsets.UTF_8))
             .let { array -> List(array.length()) { array.getString(it) } }
@@ -284,9 +293,15 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         Thread(runnable, "ocr-rec").apply { isDaemon = true }
     }
     private val recLocal = ThreadLocal.withInitial {
-        val session: OcrSession = recShared
-            ?: TfLiteSession(recFile, 3 * 48 * 640, recOutSize).also { owned.add(it) }
-        RecWorker(session, recOutSize)
+        RecWorker(
+            fileFor = { bucket ->
+                val named = File(dir, "ppocrv6_small_rec_${bucket}_fp32.tflite")
+                if (named.exists() && named.length() > 0) named else recFile
+            },
+            shared = recShared,
+            buckets = recBuckets,
+            owned = owned
+        )
     }
 
     private val detWorkers = Executors.newFixedThreadPool(2) { runnable ->
@@ -305,16 +320,34 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         val pixels = IntArray(640 * 640)
     }
 
-    /** One recogniser plus its reusable buffers, owned by a single worker thread. */
-    private class RecWorker(private val session: OcrSession, outputSize: Int) {
-        val input = FloatArray(3 * 48 * 640)
-        private val output = FloatArray(outputSize)
-
-        fun run() {
-            session.run(input, output)
+    /**
+     * One recogniser per worker thread per input width. Widths share nothing but the vocabulary,
+     * so each slot owns its interpreter and buffers, and they are created lazily: a page of short
+     * columns only ever touches the 320 slot.
+     */
+    private class RecWorker(
+        private val fileFor: (Int) -> File,
+        private val shared: OcrSession?,
+        private val buckets: List<Int>,
+        private val owned: MutableList<OcrSession>
+    ) {
+        class Slot(val session: OcrSession, val input: FloatArray, val output: FloatArray) {
+            /** Model input width this slot was built for. */
+            val width: Int get() = input.size / (3 * 48)
         }
 
-        fun logits(): FloatArray = output
+        private val slots = HashMap<Int, Slot>(buckets.size)
+
+        fun slot(bucket: Int): Slot {
+            // An ONNX recogniser has one fixed shape, so every bucket collapses onto it.
+            val wanted = if (shared != null) 640 else bucket
+            return slots.getOrPut(wanted) {
+                val session = shared
+                    ?: TfLiteSession(fileFor(wanted), 3 * 48 * wanted, (wanted / 8) * 18710)
+                        .also { owned.add(it) }
+                Slot(session, FloatArray(3 * 48 * wanted), FloatArray((wanted / 8) * 18710))
+            }
+        }
     }
 
     fun close() {
@@ -441,12 +474,13 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
                     var piece = Bitmap.createBitmap(bitmap, rect.left, rect.top,
                         rect.width(), rect.height())
                     if (vertical) piece = rotate(piece)
-                    val outcome = recognizeLine(piece, worker)
+                    val outcome = recognizeHorizontal(piece, worker)
                     piece.recycle()
                     return outcome
                 }
 
                 var best = read(TIGHT_PAD) ?: return@Callable
+
                 // A tight crop clips the outer strokes of the first and last glyph and the
                 // recogniser substitutes a look-alike (ホ comes back as 木). Re-reading with a
                 // wider margin recovers them, but too much margin drags the neighbouring column
@@ -790,10 +824,19 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
     }
 
-    private fun recognizeLine(crop: Bitmap, worker: RecWorker): Pair<String, Float> {
-        val targetW = 640
-        val naturalW = max(1, ceil(48.0 * crop.width / crop.height.toDouble()).toInt())
-        val resizedW = min(naturalW, targetW)
+
+    private fun recognizeHorizontal(crop: Bitmap, worker: RecWorker): Pair<String, Float> {
+        val required = max(1, ceil(48.0 * crop.width / crop.height.toDouble()).toInt())
+        // Same bucket rule as the reference implementation: the shortest grid that still fits the
+        // content, so a four-glyph column is not padded out to 640.
+        val bucket = when {
+            required <= 320 -> 320
+            required <= 640 -> 640
+            else -> 960
+        }
+        val slot = worker.slot(bucket)
+        val targetW = slot.width
+        val resizedW = min(required, targetW)
         val scaled = Bitmap.createScaledBitmap(crop, resizedW, 48, true)
         val pixels = IntArray(resizedW * 48)
         scaled.getPixels(pixels, 0, resizedW, 0, 0, resizedW, 48)
@@ -801,7 +844,7 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
 
         // Same buffer every call: the trailing padding has to be cleared explicitly now that the
         // array is no longer freshly allocated.
-        val input = worker.input
+        val input = slot.input
         input.fill(0f)
         for (y in 0 until 48) {
             val rowOffset = y * resizedW
@@ -817,8 +860,8 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
             }
         }
 
-        worker.run()
-        val output = worker.logits()
+        slot.session.run(slot.input, slot.output)
+        val output = slot.output
         val steps = output.size / vocabulary.size
         val text = StringBuilder()
         var previous = -1
