@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -458,7 +459,25 @@ object TranslationEngine {
         // Their patches overlap, so each one would erase and repaint the same strip of page and
         // the translations end up printed on top of one another.
         val joined = mergeOverlapping(separated)
-        return joined.map { cluster ->
+        // A full-width block of free lettering (a whole page of narration) is detected as one
+        // very wide group. Keeping it whole produces a single translation which only fills a few
+        // columns in the middle, so the rest of the Japanese stays visible next to the Chinese.
+        // Such a block has no bubble outline and is made of many independent columns; each one
+        // is its own reading unit, just like a separate speech balloon. The size and column
+        // count gates keep ordinary multi-column dialogue bubbles intact.
+        val split = joined.flatMap { cluster ->
+            val union = unionOf(cluster)
+            val unit = clusterUnit(cluster)
+            if (cluster.size >= 5 && union.width() > unit * 6f &&
+                bitmap != null && !insideWhiteBubble(bitmap, union)
+            ) {
+                android.util.Log.i(
+                    "Translate", "TR split columns n=${cluster.size} w=${union.width()}"
+                )
+                cluster.map { mutableListOf(it) }
+            } else listOf(cluster)
+        }
+        return split.map { cluster ->
             cluster.sortWith(regionOrder(language))
             val union = Rect(cluster[0].box)
             cluster.forEach { union.union(it.box) }
@@ -1221,9 +1240,19 @@ object TranslationEngine {
         return out.trimStart('，', '、', '。', '；', '：', ',')
     }
 
+    /**
+     * Cover each patch with its sampled background colour and write the translation on top,
+     * instead of erasing ink pixel by pixel. Coloured lettering, white outlines, halftone dots
+     * and anti-aliased fringes all survived that eraser in some form; a solid cover hides them
+     * at once. This only works because groupBubbles() now splits a full-width free-lettering
+     * block into one patch per column: covering the unsplit 1300x1400 box hid half the artwork.
+     * Set to false to restore the old erase path for A/B comparison.
+     */
+    private const val COVER_ORIGINAL = true
+
     private class Patch(
         val text: String,
-        /** Erased area: the bubble interior, grown so no original ink survives. */
+        /** Area covered by the translation (and, with [COVER_ORIGINAL], by its background). */
         val area: Rect,
         /** Where the original lettering sat. The translation is anchored here, not centred in [area]. */
         val anchor: Rect,
@@ -1236,11 +1265,12 @@ object TranslationEngine {
     )
 
     /**
-     * Draws [translated] over the erased bubble areas.
+     * Draws [translated] over the original lettering, either by covering each patch with its
+     * sampled background colour or, with [COVER_ORIGINAL] off, by erasing the ink pixels.
      *
      * [horizontal] forces ordinary left-to-right lines even when the source bubble was vertical.
-     * Only the drawing direction changes: patch growth, erasing and sampling all follow the
-     * source geometry, so a page translated earlier renders correctly in either mode.
+     * Only the drawing direction changes: patch growth, covering and colour sampling all follow
+     * the source geometry, so a page translated earlier renders correctly in either mode.
      */
     fun render(
         source: Bitmap,
@@ -1264,9 +1294,12 @@ object TranslationEngine {
             // be drawn just because it was saved by an older build.
             val value = sanitize(tidy(translated.getOrNull(i).orEmpty(), group.source), group.source)
             if (value.isEmpty()) return@forEachIndexed
-            // light lettering on dark artwork (titles, black bubbles) cannot be erased without
-            // painting a bright patch over the drawing, so it is left alone
-            if (medianLuminance(source, group.bubble) < 100) return@forEachIndexed
+            // Light lettering on dark artwork could not be *erased* without painting a bright
+            // patch over the drawing. With a cover we sample that dark background instead and
+            // write white text on it, so the block no longer has to be abandoned.
+            if (!COVER_ORIGINAL && medianLuminance(source, group.bubble) < 100) {
+                return@forEachIndexed
+            }
 
             // The detector returns one tight box per Japanese column. A bubble is drawn around
             // all of its columns, but short and low-confidence columns are dropped, so using
@@ -1310,11 +1343,25 @@ object TranslationEngine {
                     "area=${area.width()}x${area.height()} unit=$unit target=$target"
             )
         }
-        // Erase every patch before drawing any text: a later patch overlapping an earlier one
-        // must not wipe the already-drawn Chinese off the page.
-        patches.forEach {
-            eraseLettering(out, it.area, it.background, it.anchor)
-            it.extra.forEach { rect -> eraseColouredInk(out, rect, it.background) }
+        // All backgrounds first, all text afterwards: a later patch overlapping an earlier one
+        // must not wipe Chinese that was already drawn. A wide free-lettering block is split into
+        // one column per group before reaching render(), so each patch here is a narrow strip or
+        // one bubble interior — covering it whole hides the original lettering without painting
+        // over unrelated artwork.
+        if (COVER_ORIGINAL) {
+            val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+            patches.forEach { patch ->
+                coverPaint.color = patch.background
+                val rect = RectF(patch.area)
+                rect.inset(-3f, -3f)
+                val radius = min(rect.width(), rect.height()) * 0.12f
+                canvas.drawRoundRect(rect, radius, radius, coverPaint)
+            }
+        } else {
+            patches.forEach { patch ->
+                eraseLettering(out, patch.area, patch.background, patch.anchor)
+                patch.extra.forEach { eraseColouredInk(out, it, patch.background) }
+            }
         }
         patches.forEach { patch ->
             paint.color = if (luminance(patch.background) > 140) {
