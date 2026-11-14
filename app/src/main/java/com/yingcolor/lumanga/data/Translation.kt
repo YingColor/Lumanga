@@ -368,6 +368,17 @@ object TranslationEngine {
         }
         if (plausible.isEmpty()) return emptyList()
         val ordered = plausible.sortedWith(regionOrder(language))
+        // Columns belong together when they have the same bubble, not merely when they are close:
+        // two bubbles that touch are close too, and that made one sentence out of two
+        // ("舐めててもいいが" + "彼氏待たせるぞいいのか" on one page). Comparing the white interiors
+        // does not separate them — the paper between two bubbles is connected, so both interiors
+        // grow into one blob. What does separate them is ink: the outlines themselves. The test
+        // runs on trimmed ink extents rather than on the detection boxes, because unclip padding
+        // makes neighbouring boxes overlap and there would be no gutter left to look at.
+        val inkByRegion = HashMap<TextRegion, Rect>()
+        fun inkOf(region: TextRegion): Rect = inkByRegion.getOrPut(region) {
+            if (bitmap == null) region.box else inkExtent(bitmap, region.box)
+        }
         val clusters = ArrayList<MutableList<TextRegion>>()
         for (region in ordered) {
             var target: MutableList<TextRegion>? = null
@@ -382,6 +393,15 @@ object TranslationEngine {
                     val unit = min(min(region.box.width(), member.box.width()).toFloat(), 96f)
                         .coerceAtLeast(12f)
                     if (gap < unit * 0.75f && gap < bestGap) {
+                        if (bitmap != null && strokeBetween(bitmap, inkOf(region), inkOf(member))) {
+                            android.util.Log.d(
+                                "Translate",
+                                "TR split a=${region.box.left},${region.box.top} " +
+                                    "b=${member.box.left},${member.box.top} " +
+                                    "text=${region.text}"
+                            )
+                            continue
+                        }
                         target = cluster
                         bestGap = gap
                     }
@@ -430,7 +450,13 @@ object TranslationEngine {
         }
         val horizontalSource = language.horizontal
         val japaneseSource = language == SourceLanguage.JAPANESE
-        return kept.map { cluster ->
+        // Columns of one bubble are packed: the detector pads its boxes, so neighbours overlap and
+        // the gap between them is zero. Two bubbles that have been clustered together are the only
+        // case where a real gap appears inside a group — on one page four columns came back with
+        // gaps 0, 14, 0 and the 14 was the boundary between "舐めててもいいが" and "彼氏待たせるぞ
+        // いいのか". Splitting at the widest gap keeps the two sentences apart.
+        val separated = kept.flatMap { cluster -> splitAtWidestGap(cluster, language) }
+        return separated.map { cluster ->
             cluster.sortWith(regionOrder(language))
             val union = Rect(cluster[0].box)
             cluster.forEach { union.union(it.box) }
@@ -561,6 +587,125 @@ object TranslationEngine {
             }
         }
         return groups
+    }
+
+    /**
+     * The detection box trimmed back to where the ink is.
+     *
+     * The detector pads its boxes, so two neighbouring columns can have boxes that overlap even
+     * when there is visible paper between the letters; trimming makes the real gutter measurable.
+     */
+    private fun inkExtent(source: Bitmap, box: Rect): Rect {
+        val r = Rect(box)
+        if (!r.intersect(0, 0, source.width, source.height)) return box
+        val w = r.width()
+        val h = r.height()
+        if (w < 4 || h < 4) return box
+        val pixels = IntArray(w * h)
+        source.getPixels(pixels, 0, w, r.left, r.top, w, h)
+        val luminance = IntArray(w * h)
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            luminance[i] = ((c shr 16 and 0xFF) * 299 + (c shr 8 and 0xFF) * 587 +
+                (c and 0xFF) * 114) / 1000
+        }
+        val background = luminance.sorted()[luminance.size / 2]
+        val limit = background - 60
+        var left = w
+        var top = h
+        var right = -1
+        var bottom = -1
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                if (luminance[y * w + x] < limit) {
+                    if (x < left) left = x
+                    if (x > right) right = x
+                    if (y < top) top = y
+                    if (y > bottom) bottom = y
+                }
+            }
+        }
+        if (right < left || bottom < top) return box
+        return Rect(r.left + left, r.top + top, r.left + right + 1, r.top + bottom + 1)
+    }
+
+    /**
+     * True when a stroke of ink runs between the two lettering blocks, i.e. they sit in different
+     * bubbles. Columns inside one bubble are divided by blank paper; two bubbles always have at
+     * least one outline between them, and that outline is what this measures.
+     */
+    private fun strokeBetween(source: Bitmap, a: Rect, b: Rect): Boolean {
+        val left = if (a.centerX() <= b.centerX()) a else b
+        val right = if (left === a) b else a
+        val top = maxOf(left.top, right.top)
+        val bottom = minOf(left.bottom, right.bottom)
+        // Too little shared height to judge, or the lettering itself overlaps.
+        if (bottom - top < 12) return false
+        val from = left.right
+        val to = right.left
+        if (to - from < 1) return false
+        val x0 = from.coerceIn(0, source.width - 1)
+        val x1 = to.coerceIn(x0 + 1, source.width)
+        val w = x1 - x0
+        val h = bottom - top
+        val pixels = IntArray(w * h)
+        source.getPixels(pixels, 0, w, x0, top, w, h)
+        val needed = (h * 0.5f).toInt().coerceAtLeast(4)
+        for (x in 0 until w) {
+            var dark = 0
+            for (y in 0 until h) {
+                val c = pixels[y * w + x]
+                val luminance = ((c shr 16 and 0xFF) * 299 + (c shr 8 and 0xFF) * 587 +
+                    (c and 0xFF) * 114) / 1000
+                if (luminance < 110) dark++
+            }
+            if (dark >= needed) return true
+        }
+        return false
+    }
+
+    /**
+     * Cuts a group in two where the columns are visibly apart.
+     *
+     * Proximity alone cannot tell one bubble from two touching ones, and pixel tests failed on
+     * real pages (the outline between two bubbles is diagonal, the paper around them is white,
+     * and a flood fill leaks through broken outlines). What does hold is that columns inside one
+     * bubble have *no* gap at all — the detector pads its boxes until they overlap — so a gap in
+     * the middle of a group is the boundary between two bubbles. Groups of two columns are left
+     * alone: with only one gap there is nothing to compare it against.
+     */
+    private fun splitAtWidestGap(
+        cluster: List<TextRegion>,
+        lang: SourceLanguage
+    ): List<MutableList<TextRegion>> {
+        if (cluster.size < 3 || lang.horizontal) return listOf(ArrayList(cluster))
+        val ordered = cluster.sortedWith(regionOrder(lang))
+        val widths = ordered.map { it.box.width() }.sorted()
+        val unit = widths[widths.size / 2].coerceIn(10, 96).toFloat()
+        var widest = -1f
+        var at = -1
+        for (i in 0 until ordered.size - 1) {
+            val gap = horizontalGap(ordered[i].box, ordered[i + 1].box)
+            if (gap > widest) {
+                widest = gap
+                at = i
+            }
+        }
+        // A whole missing column leaves a gap of about one column width; that is the case
+        // mergeNeighbours exists for, so only narrower gaps are treated as a bubble boundary.
+        if (at < 0 || widest < maxOf(8f, unit * 0.3f) || widest > unit * 0.9f) {
+            return listOf(ArrayList(cluster))
+        }
+        android.util.Log.i(
+            "Translate",
+            "TR cut gap=%.0f unit=%.0f n=%d|%d".format(
+                widest, unit, at + 1, ordered.size - at - 1
+            )
+        )
+        return listOf(
+            ArrayList(ordered.subList(0, at + 1)),
+            ArrayList(ordered.subList(at + 1, ordered.size))
+        )
     }
 
     /** Footprints of the other clusters, so their lettering is not mistaken for artwork. */
