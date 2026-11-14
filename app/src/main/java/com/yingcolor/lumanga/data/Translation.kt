@@ -1069,10 +1069,14 @@ object TranslationEngine {
 
     private class Patch(
         val text: String,
+        /** Erased area: the bubble interior, grown so no original ink survives. */
         val area: Rect,
+        /** Where the original lettering sat. The translation is anchored here, not centred in [area]. */
+        val anchor: Rect,
         val background: Int,
         val vertical: Boolean,
-        val maxGlyph: Float
+        /** Font size the page was typeset at, measured from the source pixels. */
+        val target: Float
     )
 
     /**
@@ -1131,12 +1135,18 @@ object TranslationEngine {
             // otherwise erased lettering turns into bright white glyph-shaped holes.
             val background = sampleBubbleColor(out, area)
             val verticalText = if (forceHorizontal) false else group.vertical
-            patches.add(Patch(value, area, background, verticalText, unit * 1.45f))
+            // The erasing area is the bubble, but the translation has to sit where the Japanese
+            // sat and be about as large as the Japanese was. Both come from the source, not from
+            // whatever room the bubble happens to offer.
+            val target = sourceGlyphSize(group)
+            patches.add(
+                Patch(value, area, Rect(group.bubble), background, verticalText, target)
+            )
             android.util.Log.d(
                 "Translate",
                 "TR patch i=$i clean=$clean vertical=$verticalText " +
                     "seed=${group.bubble.width()}x${group.bubble.height()} " +
-                    "area=${area.width()}x${area.height()} unit=$unit"
+                    "area=${area.width()}x${area.height()} unit=$unit target=$target"
             )
         }
         // Erase every patch before drawing any text: a later patch overlapping an earlier one
@@ -1149,7 +1159,7 @@ object TranslationEngine {
                 Color.WHITE
             }
             drawFittedText(
-                canvas, paint, patch.text, patch.area, patch.vertical, patch.maxGlyph
+                canvas, paint, patch.text, patch.anchor, patch.area, patch.vertical, patch.target
             )
         }
         return out
@@ -1397,34 +1407,51 @@ object TranslationEngine {
         val size: Float
     )
 
+    /**
+     * Draws [text] at the size the page was typeset at, centred on the spot the original
+     * lettering occupied.
+     *
+     * [anchor] is the footprint of the original text, [bounds] the erased bubble interior. The
+     * drawing box starts at [anchor] and grows symmetrically inside [bounds] only as far as the
+     * translation needs, so the block stays centred where the Japanese was instead of drifting to
+     * the middle of the bubble. The font shrinks only when the whole bubble is too small.
+     */
     private fun drawFittedText(
         canvas: Canvas,
         paint: Paint,
         text: String,
-        box: Rect,
+        anchor: Rect,
+        bounds: Rect,
         vertical: Boolean,
-        maxGlyph: Float
+        target: Float
     ) {
-        if (box.width() < 10 || box.height() < 10) return
-        val pad = maxOf(1.5f, minOf(box.width(), box.height()) * 0.035f)
-        val availW = box.width() - 2f * pad
-        val availH = box.height() - 2f * pad
-        if (availW < 8f || availH < 8f) return
+        if (bounds.width() < 10 || bounds.height() < 10) return
+        // A little slack, so a descender or a heavy last stroke is not clipped by the box edge.
+        val margin = (target * 0.22f).toInt().coerceAtLeast(2)
+        val box = Rect(anchor)
+        box.inset(-margin, -margin)
+        if (!box.intersect(bounds)) box.set(anchor)
 
-        var fit: Fit? = null
-        // never blow the lettering up beyond what the original text occupied
-        var size = min(min(min(availW, availH) * 1.15f, 96f), maxGlyph.coerceAtLeast(9f))
-        while (size >= 7f) {
-            fit = layout(text, paint, size, availW, availH, vertical)
-            if (fit != null) break
+        val sizeCap = target.coerceIn(7f, 96f)
+        var fit = layoutIn(text, paint, box, sizeCap, vertical)
+        // Borrow empty bubble before shrinking the text: a long line in a big bubble should use
+        // the room that is there, not turn into tiny text floating in the middle of it. Growth is
+        // stepped a quarter of a glyph at a time so the block stays tight around where the
+        // original lettering was instead of being spread across the whole bubble.
+        while (fit == null && growWithin(box, bounds, sizeCap * 0.25f)) {
+            fit = layoutIn(text, paint, box, sizeCap, vertical)
+        }
+        var size = sizeCap
+        while (fit == null && size > 7f) {
             size -= 1f
+            fit = layoutIn(text, paint, box, size, vertical)
         }
         if (fit == null) {
             // nothing fits even at the floor: shorten instead of drawing outside the bubble
             var keep = text.length
             while (keep > 1) {
                 keep -= 1
-                fit = layout(text.take(keep) + "…", paint, 7f, availW, availH, vertical)
+                fit = layoutIn(text.take(keep) + "…", paint, box, 7f, vertical)
                 if (fit != null) break
             }
         }
@@ -1432,7 +1459,8 @@ object TranslationEngine {
         paint.textSize = chosen.size
         android.util.Log.d(
             "Translate",
-            "TR fit size=${chosen.size} box=${box.width()}x${box.height()} " +
+            "TR fit size=${chosen.size} target=$target box=${box.width()}x${box.height()} " +
+                "anchor=${anchor.width()}x${anchor.height()} " +
                 "chars=${chosen.columns.sumOf { it.length } + chosen.lines.sumOf { it.length }}"
         )
 
@@ -1442,7 +1470,7 @@ object TranslationEngine {
         val glyphH = metrics.descent - metrics.ascent
         if (vertical) {
             val colW = chosen.size * 1.10f
-            val lineH = chosen.size * 1.12f
+            val lineH = chosen.size * 1.04f
             val totalW = chosen.columns.size * colW
             var x = box.left + (box.width() - totalW) / 2f + totalW - colW
             for (column in chosen.columns) {
@@ -1471,6 +1499,74 @@ object TranslationEngine {
         canvas.restore()
     }
 
+    /** Lays out inside [box] after the same small padding the drawing uses. */
+    private fun layoutIn(
+        text: String,
+        paint: Paint,
+        box: Rect,
+        size: Float,
+        vertical: Boolean
+    ): Fit? {
+        val pad = maxOf(1.5f, minOf(box.width(), box.height()) * 0.035f)
+        val availW = box.width() - 2f * pad
+        val availH = box.height() - 2f * pad
+        if (availW < 8f || availH < 8f) return null
+        return layout(text, paint, size, availW, availH, vertical)
+    }
+
+    /** Grows [box] evenly towards [bounds]; false once it already fills them. */
+    private fun growWithin(box: Rect, bounds: Rect, step: Float): Boolean {
+        val s = step.coerceAtLeast(3f).toInt()
+        var changed = false
+        if (box.left > bounds.left) {
+            box.left = maxOf(bounds.left, box.left - s)
+            changed = true
+        }
+        if (box.right < bounds.right) {
+            box.right = minOf(bounds.right, box.right + s)
+            changed = true
+        }
+        if (box.top > bounds.top) {
+            box.top = maxOf(bounds.top, box.top - s)
+            changed = true
+        }
+        if (box.bottom < bounds.bottom) {
+            box.bottom = minOf(bounds.bottom, box.bottom + s)
+            changed = true
+        }
+        return changed
+    }
+
+    /**
+     * Font size the original lettering was set in, measured from the page.
+     *
+     * The detector box is not the answer: it carries slack from the unclip step and from columns
+     * detected a little wide, and the old code then multiplied that width by 1.45, which is why a
+     * short translation came out much larger than the Japanese it replaced.
+     *
+     * Japanese is set solid, so one character occupies one em along the column: dividing a
+     * column's height by the number of characters the OCR read from it gives the size directly,
+     * and the median over the group ignores a column the detector padded or clipped. Ink
+     * measurements were tried first and were unreliable — thin strokes under-measure, halftone
+     * over-measures — so the result is only clamped to stay near the column width.
+     */
+    private fun sourceGlyphSize(group: BubbleGroup): Float {
+        val unit = columnWidth(group).toFloat()
+        val pitches = ArrayList<Float>()
+        for (region in group.regions) {
+            val chars = region.text.count { !it.isWhitespace() }
+            if (chars < 1) continue
+            pitches.add(if (region.vertical) region.box.height().toFloat() / chars
+            else region.box.height().toFloat())
+        }
+        if (pitches.isEmpty()) return unit
+        pitches.sort()
+        val median = pitches[pitches.size / 2]
+        // A single-character column is all padding, and a merged two-column box reads as two
+        // characters per line; both are kept within reach of the column width.
+        return median.coerceIn(unit * 0.6f, unit * 1.05f)
+    }
+
     private fun layout(
         text: String,
         paint: Paint,
@@ -1481,7 +1577,7 @@ object TranslationEngine {
     ): Fit? {
         if (text.isEmpty()) return null
         if (vertical) {
-            val lineH = size * 1.12f
+            val lineH = size * 1.04f
             val colW = size * 1.10f
             val per = floor(availH / lineH).toInt()
             if (per < 1) return null
