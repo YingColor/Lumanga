@@ -42,7 +42,9 @@ data class BubbleGroup(
     val regions: List<TextRegion>,
     val bubble: Rect,
     val source: String,
-    val vertical: Boolean
+    val vertical: Boolean,
+    /** Rejected low-confidence columns whose original lettering still has to be erased. */
+    val eraseExtra: List<Rect> = emptyList()
 )
 
 object TranslationEngine {
@@ -317,6 +319,7 @@ object TranslationEngine {
         // and with the cache key that the caller derived from the same page.
         val language = if (lang.detected) detectSource(regions) else lang
         val usable = ArrayList<TextRegion>(regions.size)
+        val faint = ArrayList<TextRegion>()
         regions.forEach { region ->
             if (isUsable(region, language)) {
                 usable.add(region)
@@ -330,6 +333,14 @@ object TranslationEngine {
                         "box=${region.box.left},${region.box.top}," +
                         "${region.box.right},${region.box.bottom} text=${region.text}"
                 )
+                // A real column can miss the confidence floor by a hair (0.43 against 0.45).
+                // It must not be sent to the translator, but its ink is still on the page and
+                // has to be cleared, or the translation is drawn over the Japanese. Only a
+                // near-miss with letters of the source language counts — the artwork "C", "K"
+                // and "X" boxes on the same page must not become erase rectangles.
+                if (region.confidence >= 0.38f &&
+                    region.text.any { isSourceLetter(it, language) }
+                ) faint.add(region)
             }
         }
         if (usable.isEmpty()) return emptyList()
@@ -443,7 +454,11 @@ object TranslationEngine {
         // gaps 0, 14, 0 and the 14 was the boundary between "舐めててもいいが" and "彼氏待たせるぞ
         // いいのか". Splitting at the widest gap keeps the two sentences apart.
         val separated = kept.flatMap { cluster -> splitAtWidestGap(cluster, language) }
-        return separated.map { cluster ->
+        // A long column is sometimes returned as several boxes stacked on top of each other.
+        // Their patches overlap, so each one would erase and repaint the same strip of page and
+        // the translations end up printed on top of one another.
+        val joined = mergeOverlapping(separated)
+        return joined.map { cluster ->
             cluster.sortWith(regionOrder(language))
             val union = Rect(cluster[0].box)
             cluster.forEach { union.union(it.box) }
@@ -465,7 +480,16 @@ object TranslationEngine {
             val text = if (japaneseSource)
                 MangaOcr.readIfSelected(bitmap, union) ?: columns
             else columns
-            BubbleGroup(cluster, union, text, vertical)
+            val unit = clusterUnit(cluster)
+            val extra = faint.filter { f ->
+                val sharedY = min(union.bottom, f.box.bottom) - max(union.top, f.box.top)
+                sharedY > 0 && sharedY >= f.box.height() * 0.5f &&
+                    horizontalGap(union, f.box) <= unit * 2.2f
+            }.map { Rect(it.box) }
+            if (extra.isNotEmpty()) {
+                android.util.Log.d("Translate", "TR faint erase=${extra.size} text=$text")
+            }
+            BubbleGroup(cluster, union, text, vertical, extra)
         }.sortedWith(groupOrder(language))
             .also { list ->
                 // Grouping decides whether one sentence reaches the model as one piece or as two
@@ -478,6 +502,48 @@ object TranslationEngine {
                     )
                 }
             }
+    }
+
+    /**
+     * Joins groups whose footprints actually overlap in both directions.
+     *
+     * This is not another "how far apart are two columns" rule — those were tried and broke
+     * other books. It only fires when two groups would be given overlapping patches, which is a
+     * certainty of drawing one translation on top of another. The detector slices a tall column
+     * of lettering into stacked boxes whose ends overlap by 10-20% of their height, while two
+     * separate bubbles have their own outlines and do not overlap at all.
+     */
+    private fun mergeOverlapping(
+        groups: List<MutableList<TextRegion>>
+    ): List<MutableList<TextRegion>> {
+        val out = groups.map { ArrayList(it) }.toMutableList()
+        var changed = true
+        while (changed) {
+            changed = false
+            outer@ for (i in out.indices) {
+                for (j in i + 1 until out.size) {
+                    val a = unionOf(out[i])
+                    val b = unionOf(out[j])
+                    val overlapX = min(a.right, b.right) - max(a.left, b.left)
+                    val overlapY = min(a.bottom, b.bottom) - max(a.top, b.top)
+                    if (overlapX <= 0 || overlapY <= 0) continue
+                    val ratioX = overlapX.toFloat() / min(a.width(), b.width())
+                    val ratioY = overlapY.toFloat() / min(a.height(), b.height())
+                    if (ratioX < 0.70f || ratioY < 0.10f) continue
+                    android.util.Log.i(
+                        "Translate",
+                        "TR stack merge x=${"%.2f".format(ratioX)} y=${"%.2f".format(ratioY)} " +
+                            "a=${a.left},${a.top},${a.right},${a.bottom} " +
+                            "b=${b.left},${b.top},${b.right},${b.bottom}"
+                    )
+                    out[i].addAll(out[j])
+                    out.removeAt(j)
+                    changed = true
+                    break@outer
+                }
+            }
+        }
+        return out
     }
 
     /**
@@ -1164,7 +1230,9 @@ object TranslationEngine {
         val background: Int,
         val vertical: Boolean,
         /** Font size the page was typeset at, measured from the source pixels. */
-        val target: Float
+        val target: Float,
+        /** Near-miss columns that were not translated but whose ink still has to go. */
+        val extra: List<Rect> = emptyList()
     )
 
     /**
@@ -1230,7 +1298,10 @@ object TranslationEngine {
             // at this point (patches are collected first, erased afterwards).
             val target = sourceGlyphSize(group, out, background)
             patches.add(
-                Patch(value, area, Rect(group.bubble), background, verticalText, target)
+                Patch(
+                    value, area, Rect(group.bubble), background, verticalText, target,
+                    group.eraseExtra
+                )
             )
             android.util.Log.d(
                 "Translate",
@@ -1241,7 +1312,10 @@ object TranslationEngine {
         }
         // Erase every patch before drawing any text: a later patch overlapping an earlier one
         // must not wipe the already-drawn Chinese off the page.
-        patches.forEach { eraseLettering(out, it.area, it.background) }
+        patches.forEach {
+            eraseLettering(out, it.area, it.background, it.anchor)
+            it.extra.forEach { rect -> eraseColouredInk(out, rect, it.background) }
+        }
         patches.forEach { patch ->
             paint.color = if (luminance(patch.background) > 140) {
                 Color.rgb(18, 18, 18)
@@ -1447,7 +1521,7 @@ object TranslationEngine {
      * its dark fringe. Screen tones and light grey artwork must survive: erasing them produced
      * a conspicuous white rectangle inside halftone bubbles.
      */
-    private fun eraseLettering(bitmap: Bitmap, box: Rect, background: Int) {
+    private fun eraseLettering(bitmap: Bitmap, box: Rect, background: Int, anchor: Rect? = null) {
         val w = box.width()
         val h = box.height()
         if (w < 2 || h < 2) return
@@ -1463,13 +1537,39 @@ object TranslationEngine {
         for (i in pixels.indices) {
             if (luminance(pixels[i]) < coreThreshold) core[i] = true
         }
+        // Coloured dialogue (green shouts, blue narration, purple captions) is not dark enough
+        // for a luminance rule. It is strongly saturated and much darker than the pale paper it
+        // sits on, while skin, highlights and screen tones are either brighter or nearly grey.
+        // Restrict this to the detector's own text footprint: outside it, the same saturated
+        // colour may be a bubble outline or a piece of artwork that must survive.
+        val colour = BooleanArray(w * h)
+        if (anchor != null) {
+            for (y in 0 until h) {
+                val gy = box.top + y
+                if (gy < anchor.top || gy >= anchor.bottom) continue
+                for (x in 0 until w) {
+                    val gx = box.left + x
+                    if (gx < anchor.left || gx >= anchor.right) continue
+                    val index = y * w + x
+                    val p = pixels[index]
+                    val r = Color.red(p)
+                    val g = Color.green(p)
+                    val b = Color.blue(p)
+                    val saturation = maxOf(r, g, b) - minOf(r, g, b)
+                    val lum = luminance(p)
+                    if (saturation >= 55 && lum < backgroundLum * 0.72f && lum < 175) {
+                        colour[index] = true
+                    }
+                }
+            }
+        }
         val reach = 1
         var changed = false
         for (y in 0 until h) {
             for (x in 0 until w) {
                 val index = y * w + x
-                if (luminance(pixels[index]) >= haloThreshold) continue
-                var nearInk = core[index]
+                if (!colour[index] && luminance(pixels[index]) >= haloThreshold) continue
+                var nearInk = core[index] || colour[index]
                 if (!nearInk) {
                     for (dy in -reach..reach) {
                         if (nearInk) break
@@ -1478,11 +1578,69 @@ object TranslationEngine {
                         for (dx in -reach..reach) {
                             val nx = x + dx
                             if (nx < 0 || nx >= w) continue
-                            if (core[ny * w + nx]) { nearInk = true; break }
+                            val k = ny * w + nx
+                            if (core[k] || colour[k]) { nearInk = true; break }
                         }
                     }
                 }
                 if (nearInk) {
+                    pixels[index] = background
+                    changed = true
+                }
+            }
+        }
+        if (changed) bitmap.setPixels(pixels, 0, w, box.left, box.top, w, h)
+    }
+
+    /**
+     * Clears a rejected low-confidence column of coloured lettering. It never reaches the
+     * translator, so it is not part of any patch, but leaving it on the page prints the Chinese
+     * straight over the Japanese. Only saturated ink on a pale rectangle is replaced; a dark or
+     * coloured piece of artwork fails the luminance gate and is left alone.
+     */
+    private fun eraseColouredInk(bitmap: Bitmap, rect: Rect, background: Int) {
+        val box = Rect(rect)
+        if (!box.intersect(0, 0, bitmap.width, bitmap.height)) return
+        val w = box.width()
+        val h = box.height()
+        if (w < 6 || h < 6) return
+        if (medianLuminance(bitmap, box) < 150) return
+        val bgLum = luminance(background)
+        if (bgLum < 90) return
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, box.left, box.top, w, h)
+        val core = BooleanArray(w * h)
+        for (y in 2 until h - 2) {
+            for (x in 2 until w - 2) {
+                val index = y * w + x
+                val p = pixels[index]
+                val r = Color.red(p)
+                val g = Color.green(p)
+                val b = Color.blue(p)
+                val saturation = maxOf(r, g, b) - minOf(r, g, b)
+                val lum = luminance(p)
+                if (saturation >= 55 && lum < bgLum * 0.72f && lum < 175) {
+                    core[index] = true
+                }
+            }
+        }
+        // The anti-aliased edge of a coloured glyph is lighter and less saturated than its
+        // centre. Clearing only the core left bright-green square outlines where the Japanese
+        // had been, so take the one-pixel fringe with it.
+        var changed = false
+        for (y in 2 until h - 2) {
+            for (x in 2 until w - 2) {
+                val index = y * w + x
+                var nearInk = core[index]
+                if (!nearInk) {
+                    for (dy in -1..1) {
+                        if (nearInk) break
+                        for (dx in -1..1) {
+                            if (core[(y + dy) * w + x + dx]) { nearInk = true; break }
+                        }
+                    }
+                }
+                if (nearInk && luminance(pixels[index]) < 235) {
                     pixels[index] = background
                     changed = true
                 }
@@ -1761,11 +1919,30 @@ object TranslationEngine {
             ink <= geometric * 1.9f &&
             ink >= unit * 0.6f &&
             ink <= unit * 2.2f
-        val target = if (plausible) ink!! / VERTICAL_ADVANCE
-        else geometric.coerceIn(unit * 0.6f, unit * 1.05f)
+        // Round 41 only handled "the ink says the geometric estimate is too small". Pages with
+        // big, loosely set coloured lettering hit the other failure: the estimate is right, but
+        // the 1.05 x column-width ceiling then throws a third of it away, and the ink agrees
+        // with the estimate so the round-41 gate says there is nothing to fix. When both
+        // independent measurements agree, the ceiling is the thing that is wrong. On a halftone
+        // page the ink reading is far larger than the geometric one, so this branch cannot fire
+        // there and the old size stays intact.
+        val ceiling = unit * 1.05f
+        val clipped = geometric > ceiling
+        val corroborated = ink != null &&
+            ink >= geometric * 0.75f &&
+            ink <= geometric * 1.35f &&
+            ink >= unit * 0.6f &&
+            ink <= unit * 2.2f
+        val target = when {
+            plausible -> ink!! / VERTICAL_ADVANCE
+            clipped && corroborated ->
+                min(geometric, ink!! / VERTICAL_ADVANCE).coerceIn(unit * 0.6f, unit * 2.2f)
+            else -> geometric.coerceIn(unit * 0.6f, ceiling)
+        }
         android.util.Log.d(
             "Translate",
-            "TR glyph unit=$unit geo=$geometric ink=${ink ?: 0f} plausible=$plausible target=$target"
+            "TR glyph unit=$unit geo=$geometric ink=${ink ?: 0f} " +
+                "plausible=$plausible clipped=$clipped corroborated=$corroborated target=$target"
         )
         return target.coerceIn(7f, MAX_GLYPH)
     }
