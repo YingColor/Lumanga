@@ -251,6 +251,13 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
     private val DET_BOX_THRESHOLD = 0.45f
     private val DET_UNCLIP = 1.4f
 
+    /**
+     * Share of the page a balloon must cover before it gets its own detection pass. Small
+     * balloons carry one short column that the page pass already reads correctly; re-detecting
+     * them only repeats work and, on a page with a dozen of them, overruns the OCR budget.
+     */
+    private val BALLOON_REDETECT_SHARE = 0.03f
+
     /** Below this confidence the column is read again with the wider margin. */
     private val WIDE_RETRY_CONF = 0.85f
     private val detFile = File(dir, model.det)
@@ -329,13 +336,30 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
     fun recognize(bitmap: Bitmap): List<TextRegion> {
         val started = android.os.SystemClock.elapsedRealtime()
         val balloons = BubbleSegmenter.detect(bitmap)
-        if (balloons.isEmpty() || bitmap.width < 200 || bitmap.height < 200) {
-            return recognizePage(bitmap, started)
+        // One page-wide pass, shared by both paths. Re-running the detector inside *every*
+        // balloon cost a full detector run each: a 14-balloon page spent 21 s on detection alone,
+        // blew the OCR budget and the page kept its Japanese. The local pass is therefore kept
+        // for the balloons where the page pass demonstrably fails, i.e. the big ones whose
+        // columns get merged into one box.
+        val page = recognizePage(bitmap, started)
+        if (balloons.isEmpty() || bitmap.width < 200 || bitmap.height < 200) return page
+
+        val pageArea = bitmap.width.toFloat() * bitmap.height
+        val refill = balloons.filter { balloon ->
+            val box = balloon.box
+            box.width() >= 40 && box.height() >= 40 &&
+                box.width().toFloat() * box.height() / pageArea >= BALLOON_REDETECT_SHARE
+        }
+        if (refill.isEmpty()) {
+            android.util.Log.i(
+                "Ocr", "OCR balloons=${balloons.size} all small, page pass only " +
+                    "ms=${android.os.SystemClock.elapsedRealtime() - started}"
+            )
+            return page
         }
         val inside = ArrayList<TextRegion>()
-        for (balloon in balloons) {
+        for (balloon in refill) {
             val box = balloon.box
-            if (box.width() < 40 || box.height() < 40) continue
             val pad = (minOf(box.width(), box.height()) * 0.06f).toInt().coerceIn(4, 24)
             val left = (box.left - pad).coerceAtLeast(0)
             val top = (box.top - pad).coerceAtLeast(0)
@@ -366,16 +390,16 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
                 crop.recycle()
             }
         }
-        // Everything the balloons did not claim still has to be read from the page.
-        val page = recognizePage(bitmap, started)
+        // Everything outside the re-detected balloons keeps the page result, small balloons
+        // included: their columns are short enough that the page pass never merged them.
         val outside = page.filter { region ->
-            balloons.none { it.box.contains(region.box.centerX(), region.box.centerY()) }
+            refill.none { it.box.contains(region.box.centerX(), region.box.centerY()) }
         }
         val result = inside + outside
         android.util.Log.i(
             "Ocr",
-            "OCR balloons=${balloons.size} inside=${inside.size} outside=${outside.size} " +
-                "ms=${android.os.SystemClock.elapsedRealtime() - started}"
+            "OCR balloons=${balloons.size} refill=${refill.size} inside=${inside.size} " +
+                "outside=${outside.size} ms=${android.os.SystemClock.elapsedRealtime() - started}"
         )
         return result
     }

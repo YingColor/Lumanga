@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.gpu.GpuDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -47,6 +48,10 @@ object BubbleSegmenter {
 
     @Volatile
     private var interpreter: Interpreter? = null
+
+    /** Kept alive for as long as [interpreter] is: closing it would invalidate the graph. */
+    @Volatile
+    private var gpuDelegate: GpuDelegate? = null
 
     @Volatile
     private var disabled = false
@@ -102,10 +107,24 @@ object BubbleSegmenter {
             )
         }
         modelBuffer = mapped
-        val net = Interpreter(
-            mapped,
-            Interpreter.Options().setNumThreads(4).setUseXNNPACK(false)
-        )
+        // The fp16 model needs about 2 GB of CPU arena — on an 8 GB phone that leaves the process
+        // a few megabytes of native headroom, so it gets killed at random. The GPU delegate keeps
+        // the intermediates in GPU memory (the image itself is a handful of megabytes). If the
+        // delegate cannot be built the plain CPU interpreter is still tried, but the balloon
+        // outline is then not worth that price: disabled is set by the caller's failure path.
+        val options = Interpreter.Options().setNumThreads(4).setUseXNNPACK(false)
+        val net = runCatching {
+            val delegate = GpuDelegate()
+            gpuDelegate = delegate
+            Interpreter(mapped, options.addDelegate(delegate))
+        }.getOrElse { failure ->
+            android.util.Log.w(
+                "BubbleSeg", "GPU delegate unavailable (${failure.message}); using CPU"
+            )
+            gpuDelegate?.close()
+            gpuDelegate = null
+            Interpreter(mapped, Interpreter.Options().setNumThreads(2).setUseXNNPACK(false))
+        }
         var det = -1
         var proto = -1
         for (index in 0 until net.outputTensorCount) {

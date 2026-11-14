@@ -23,7 +23,7 @@ android {
         // "版本 <name>（构建 <code>）". Version *name* stays 1.5.0 on purpose — only this counter
         // moves. The release notes must repeat the same number on their first line, or the
         // in-app update check either misses a build or offers one that is already installed.
-        versionCode = 59
+        versionCode = 65
         versionName = "1.5.0"
         vectorDrawables { useSupportLibrary = true }
         // Both OCR backends ship native libs for four ABIs. Only real phones matter here;
@@ -90,6 +90,14 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    // The 21 MB fp16 balloon-segmentation model needs ~2 GB of CPU arena, which left the
+    // process 4 MB of native headroom and made it trivially killable. The GPU delegate keeps
+    // the working set in GPU memory instead; BubbleSegmenter falls back to plain CPU if the
+    // delegate cannot be created.
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
+    // GpuDelegateFactory.Options lives in the -api artifact; R8 refuses to shrink without it.
+    implementation("org.tensorflow:tensorflow-lite-api:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.16.1")
     // ONNX Runtime runs the bundled PP-OCRv6_medium FP16 models; the small model stays on LiteRT.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     
@@ -116,3 +124,6 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
+
+// LiteRT pulled androidx.fragment 1.1.0 whose AAR is not in the offline cache. Not used any
+// more, kept out of the dependency graph now that the GPU delegate replaced it.

@@ -1387,6 +1387,13 @@ object TranslationEngine {
      */
     private const val COVER_ORIGINAL = true
 
+    /**
+     * Opacity of the cover, 0-255. The original ink is erased before the cover is drawn, so this
+     * only has to tint the cleared area rather than hide readable text; 80% lets the artwork show
+     * through instead of reading as a hole punched in the drawing.
+     */
+    private const val COVER_ALPHA = 204
+
     private class Patch(
         val text: String,
         /** Area covered by the translation (and, with [COVER_ORIGINAL], by its background). */
@@ -1488,12 +1495,27 @@ object TranslationEngine {
         // one bubble interior — covering it whole hides the original lettering without painting
         // over unrelated artwork.
         if (COVER_ORIGINAL) {
+            // Clear the ink first, then lay the translucent cover over it. A translucent cover on
+            // its own let the original lettering read through — on page 8 the green shout stayed
+            // legible behind the Chinese. Whatever the eraser misses is hidden by the cover, and
+            // anything the eraser gets wrong is hidden by it too, so this is far less risky than
+            // erasing alone was.
+            patches.forEach { patch ->
+                eraseLettering(out, patch.area, patch.background, patch.anchor)
+                patch.extra.forEach { rect -> eraseColouredInk(out, rect, patch.background) }
+            }
             val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.FILL
                 isAntiAlias = true
             }
             patches.forEach { patch ->
-                coverPaint.color = patch.background
+                // Not fully opaque: a solid slab reads as a hole punched in the artwork. At 86%
+                // the original lettering is no longer legible but the drawing still shows
+                // through, which is what a printed white-out would look like on paper.
+                val base = patch.background
+                coverPaint.color = Color.argb(
+                    COVER_ALPHA, Color.red(base), Color.green(base), Color.blue(base)
+                )
                 val contour = patch.contour
                 if (contour != null && contour.size >= 6) {
                     // Follow the balloon outline instead of covering a rectangle: the shape is

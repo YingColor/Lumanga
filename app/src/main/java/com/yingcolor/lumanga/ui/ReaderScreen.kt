@@ -203,7 +203,7 @@ private const val GROUP_PAGE_BUDGET_MS = 150_000L
  * neighbour that may already hold the slot — pages further away are cancelled while they wait.
  * At 25 s a 20 s neighbour plus a 20 s page was a false failure on every fast turn.
  */
-private const val OCR_BUDGET_MS = 40_000L
+private const val OCR_BUDGET_MS = 60_000L
 private const val MEDIUM_OCR_BUDGET_MS = 70_000L
 
 /** A vision model reads the whole page in one request; that round trip can take a minute. */
@@ -240,6 +240,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val rawCacheLimit = (heapKb / 12).coerceIn(16 * 1024, 40 * 1024)
 
     
+    // NOTE: do not recycle bitmaps in entryRemoved(). Tried that to stop the native heap from
+    // growing, and the reader crashed with "Canvas: trying to use a recycled bitmap": an entry
+    // can be evicted while the current frame still draws it. The growth is handled by capping
+    // the caches, not by freeing behind the UI's back.
     private val pageCache = object : LruCache<String, Bitmap>(pageCacheLimit) {
         override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
@@ -669,6 +673,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
 
 
+    // Deliberately not recycled on eviction: this cache holds the bitmap the reader is drawing
+    // right now, and clearTranslations() runs while that frame is still on screen. It is capped
+    // at 32 MB, so leaving it to the GC is the safe trade.
     private val translatedCache = object : LruCache<String, Bitmap>(32 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
