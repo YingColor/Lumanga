@@ -405,10 +405,18 @@ object TranslationEngine {
         val mergeGap = columnMergeGap(plausible)
         android.util.Log.d("Translate", "TR mergeGap=$mergeGap")
         val clusters = ArrayList<MutableList<TextRegion>>()
+        val clusterOwnerOf = ArrayList<Int>()
         for (region in ordered) {
+            // Columns are only allowed to join a cluster that belongs to the same balloon. On
+            // CG p.9 a small bubble, the bubble next to it and the free lettering at the page
+            // edge were close enough to merge into one sentence, which then had no single place
+            // to be drawn. The segmentation model already says which balloon is which.
+            val owner = balloonOwner(region.box, balloons)
             var target: MutableList<TextRegion>? = null
             var bestGap = Float.MAX_VALUE
-            for (cluster in clusters) {
+            for (index in clusters.indices) {
+                if (clusterOwnerOf[index] != owner) continue
+                val cluster = clusters[index]
                 for (member in cluster) {
                     // columns of one bubble sit side by side and share the same vertical span;
                     // they often overlap slightly, so a negative gap counts as touching
@@ -421,7 +429,12 @@ object TranslationEngine {
                     }
                 }
             }
-            if (target != null) target.add(region) else clusters.add(mutableListOf(region))
+            if (target != null) {
+                target.add(region)
+            } else {
+                clusters.add(mutableListOf(region))
+                clusterOwnerOf.add(owner)
+            }
         }
         // When the detector drops a column between two others, the surviving columns end up too
         // far apart for the pass above and are translated as two bubbles. Both translations then
@@ -430,7 +443,10 @@ object TranslationEngine {
         val groups = if (bitmap == null) {
             clusters
         } else {
-            val merged = mergeNeighbours(clusters, bitmap)
+            if (clusterOwnerOf.distinct().size > 1) {
+                android.util.Log.i("Translate", "TR owners=${clusterOwnerOf.joinToString(",")}")
+            }
+            val merged = mergeNeighbours(clusters, bitmap, clusterOwnerOf.toMutableList())
             if (merged.size != clusters.size) {
                 android.util.Log.i("Translate", "TR merge ${clusters.size}->${merged.size}")
             }
@@ -730,8 +746,10 @@ object TranslationEngine {
 
     private fun mergeNeighbours(
         clusters: List<MutableList<TextRegion>>,
-        source: Bitmap
+        source: Bitmap,
+        owners: MutableList<Int> = MutableList(clusters.size) { -1 }
     ): List<MutableList<TextRegion>> {
+        val groupOwners = owners.toMutableList()
         val groups = clusters.map { ArrayList(it) }.toMutableList()
         // The patch each cluster would get on its own, exactly as render() computes it. Two
         // halves of one bubble grow into the same white interior and therefore overlap; two
@@ -749,6 +767,9 @@ object TranslationEngine {
                 while (j < groups.size) {
                     val b = patches[j]
                     if (b == null) { j++; continue }
+                    // Different balloons stay separate even when their patches grow into each
+                    // other; only text that shares a balloon (or has none) may be joined.
+                    if (groupOwners[i] != groupOwners[j]) { j++; continue }
                     val union = unionOf(groups[i])
                     val other = unionOf(groups[j])
                     if (!sideBySide(union, other)) { j++; continue }
@@ -768,6 +789,7 @@ object TranslationEngine {
                         patches[i] = patchOf(source, groups[i], neighboursOf(groups, groups[i]))
                         groups.removeAt(j)
                         patches.removeAt(j)
+                        groupOwners.removeAt(j)
                         merged = true
                         break
                     }
@@ -849,6 +871,20 @@ object TranslationEngine {
         val shared = bottom - top
         val shorter = minOf(a.height(), b.height()).coerceAtLeast(1)
         return (shared.toFloat() / shorter).coerceAtLeast(0f)
+    }
+
+    /** Index of the balloon this text sits in, or -1 when it is lettering on the artwork. */
+    private fun balloonOwner(union: Rect, balloons: List<BubbleRegion>): Int {
+        var best = -1
+        var score = 0f
+        balloons.forEachIndexed { index, balloon ->
+            val share = areaOverlap(balloon.box, union)
+            if (share > score) {
+                score = share
+                best = index
+            }
+        }
+        return if (score >= 0.5f) best else -1
     }
 
     /** True when the outline's bounding box covers at least half of the text footprint. */
