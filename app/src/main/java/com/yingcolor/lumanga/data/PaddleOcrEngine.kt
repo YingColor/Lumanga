@@ -313,12 +313,84 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         recWorkers.shutdownNow()
     }
 
+    /**
+     * Recognises a page the way the reference implementation does: find the balloons first, then
+     * re-run detection *inside each balloon* and read it line by line. A page-wide pass alone
+     * merges a shout bubble's four columns into one box, which is what produced 「CNO的」.
+     *
+     * Balloon-free pages (and pages where the segmentation model is unavailable) fall back to
+     * the previous page-wide pass.
+     */
     fun recognize(bitmap: Bitmap): List<TextRegion> {
         val started = android.os.SystemClock.elapsedRealtime()
-        val boxes = detectColumns(bitmap)
+        val balloons = BubbleSegmenter.detect(bitmap)
+        if (balloons.isEmpty() || bitmap.width < 200 || bitmap.height < 200) {
+            return recognizePage(bitmap, started)
+        }
+        val inside = ArrayList<TextRegion>()
+        for (balloon in balloons) {
+            val box = balloon.box
+            if (box.width() < 40 || box.height() < 40) continue
+            val pad = (minOf(box.width(), box.height()) * 0.06f).toInt().coerceIn(4, 24)
+            val left = (box.left - pad).coerceAtLeast(0)
+            val top = (box.top - pad).coerceAtLeast(0)
+            val right = (box.right + pad).coerceAtMost(bitmap.width)
+            val bottom = (box.bottom + pad).coerceAtMost(bitmap.height)
+            val crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+            try {
+                val boxes = splitWideColumns(crop, detectColumns(crop))
+                recognizeBoxes(crop, boxes).forEach { region ->
+                    inside.add(
+                        TextRegion(
+                            region.text,
+                            Rect(
+                                region.box.left + left, region.box.top + top,
+                                region.box.right + left, region.box.bottom + top
+                            ),
+                            region.confidence,
+                            region.vertical
+                        )
+                    )
+                }
+            } finally {
+                crop.recycle()
+            }
+        }
+        // Everything the balloons did not claim still has to be read from the page.
+        val page = recognizePage(bitmap, started)
+        val outside = page.filter { region ->
+            balloons.none { it.box.contains(region.box.centerX(), region.box.centerY()) }
+        }
+        val result = inside + outside
+        android.util.Log.i(
+            "Ocr",
+            "OCR balloons=${balloons.size} inside=${inside.size} outside=${outside.size} " +
+                "ms=${android.os.SystemClock.elapsedRealtime() - started}"
+        )
+        return result
+    }
+
+    private fun recognizePage(bitmap: Bitmap, started: Long): List<TextRegion> {
+        val detected = detectColumns(bitmap)
+        // A big shout bubble is often returned as one box spanning all of its vertical columns.
+        // Recognition then reads the columns as a single horizontal run — the CG page produced
+        // 「CNO的」out of 「もう来てるのか」that way. Split such a box into one box per column
+        // before recognising, exactly as the reference implementation re-runs line detection
+        // inside each balloon.
+        val boxes = splitWideColumns(bitmap, detected)
+        if (boxes.size != detected.size) {
+            android.util.Log.i("Ocr", "OCR split boxes ${detected.size}->${boxes.size}")
+        }
         val detectMs = android.os.SystemClock.elapsedRealtime() - started
         if (boxes.isEmpty()) return emptyList()
+        val regions = recognizeBoxes(bitmap, boxes)
+        val recogniseMs = android.os.SystemClock.elapsedRealtime() - started - detectMs
+        android.util.Log.i("Ocr", "OCR det=${detectMs}ms rec=${recogniseMs}ms boxes=${boxes.size}")
+        return regions
+    }
 
+    /** Recognises the given boxes on one bitmap. Shared by the page pass and the per-balloon pass. */
+    private fun recognizeBoxes(bitmap: Bitmap, boxes: List<Rect>): List<TextRegion> {
         val texts = arrayOfNulls<Pair<String, Float>>(boxes.size)
         val rects = arrayOfNulls<Rect>(boxes.size)
         val verticals = BooleanArray(boxes.size)
@@ -359,8 +431,6 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         } else {
             recWorkers.invokeAll(tasks).forEach { it.get() }
         }
-        val recogniseMs = android.os.SystemClock.elapsedRealtime() - started - detectMs
-        android.util.Log.i("Ocr", "OCR det=${detectMs}ms rec=${recogniseMs}ms boxes=${boxes.size}")
 
         val regions = ArrayList<TextRegion>(boxes.size)
         boxes.forEachIndexed { index, column ->
@@ -379,6 +449,77 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
      * A 1240x1754 page squeezed into 640 leaves columns ~18 px wide, which the recognizer then
      * has to blow up again; tiling keeps them around 25-35 px and lifts confidence a lot.
      */
+    /**
+     * Splits boxes that swallowed several vertical columns into one box per column.
+     *
+     * The detector sometimes returns a wide box whose four columns are read as one line. A
+     * column is a band of ink along x with a quiet gap between neighbours, so a vertical
+     * projection finds the boundaries without any model. Horizontal lines are left alone.
+     */
+    private fun splitWideColumns(bitmap: Bitmap, boxes: List<Rect>): List<Rect> {
+        if (boxes.isEmpty()) return boxes
+        val widths = boxes.map { it.width() }.sorted()
+        val unit = widths[widths.size / 2].coerceIn(10, 96)
+        val out = ArrayList<Rect>(boxes.size + 4)
+        for (box in boxes) {
+            val vertical = box.height() >= box.width() * 1.2f
+            if (!vertical || box.width() <= unit * 2.2f) {
+                out.add(box)
+                continue
+            }
+            val columns = columnRuns(bitmap, box, unit)
+            if (columns.size >= 2) out.addAll(columns) else out.add(box)
+        }
+        return out
+    }
+
+    private fun columnRuns(bitmap: Bitmap, box: Rect, unit: Int): List<Rect> {
+        val w = box.width()
+        val h = box.height()
+        if (w < 8 || h < 8) return emptyList()
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, box.left, box.top, w, h)
+        val ink = IntArray(w)
+        for (y in 0 until h) {
+            val row = y * w
+            for (x in 0 until w) {
+                val pixel = pixels[row + x]
+                val r = (pixel shr 16) and 0xFF
+                val g = (pixel shr 8) and 0xFF
+                val b = pixel and 0xFF
+                val saturation = maxOf(r, g, b) - minOf(r, g, b)
+                val lum = (r * 299 + g * 587 + b * 114) / 1000
+                if (lum < 200 || saturation > 45) ink[x]++
+            }
+        }
+        val minInk = (h * 0.03f).toInt().coerceAtLeast(2)
+        val runs = ArrayList<IntArray>()
+        var start = -1
+        for (x in 0..w) {
+            val on = x < w && ink[x] >= minInk
+            if (on && start < 0) {
+                start = x
+            } else if (!on && start >= 0) {
+                runs.add(intArrayOf(start, x))
+                start = -1
+            }
+        }
+        if (runs.size < 2) return emptyList()
+        val merged = ArrayList<IntArray>()
+        for (run in runs) {
+            val last = merged.lastOrNull()
+            if (last != null && run[0] - last[1] < unit * 0.35f) {
+                last[1] = run[1]
+            } else {
+                merged.add(intArrayOf(run[0], run[1]))
+            }
+        }
+        if (merged.size < 2) return emptyList()
+        return merged
+            .map { Rect(box.left + it[0], box.top, box.left + it[1], box.bottom) }
+            .filter { it.width() >= 6 }
+    }
+
     private fun detectColumns(bitmap: Bitmap): List<Rect> {
         val w = bitmap.width
         val h = bitmap.height

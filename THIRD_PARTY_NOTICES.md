@@ -52,7 +52,7 @@ https://www.apache.org/licenses/LICENSE-2.0 . The library is resolved at build t
   Note on licence mixing: the unRAR licence is not an OSI licence, and its extra
   restriction — the code must not be used to build a RAR-compatible archiver —
   counts as an additional term when combined with a copyleft licence such as
-  GPL-3.0. Lumanga only reads RAR archives, and this project is not a RAR
+  AGPL-3.0. Lumanga only reads RAR archives, and this project is not a RAR
   archiver, but downstream users who need strict licence purity can build
   without RAR support by removing `app/libs/junrar-8.1.2.jar` and the
   `RarReader` branch in `PageSource`.

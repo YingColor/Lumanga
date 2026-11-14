@@ -1485,7 +1485,11 @@ object TranslationEngine {
                     canvas.drawPath(path, coverPaint)
                 } else {
                     val rect = RectF(patch.area)
-                    rect.inset(-3f, -3f)
+                    // Four percent of the short edge, not a fixed three pixels: the detector
+                    // box stops at the glyph centres, so a fixed margin left the first and last
+                    // column's outer strokes visible beside the cover on a long narration strip.
+                    val pad = min(rect.width(), rect.height()) * 0.04f
+                    rect.inset(-pad, -pad)
                     val radius = min(rect.width(), rect.height()) * 0.12f
                     canvas.drawRoundRect(rect, radius, radius, coverPaint)
                 }
