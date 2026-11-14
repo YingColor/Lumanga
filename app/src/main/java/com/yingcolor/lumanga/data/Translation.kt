@@ -15,6 +15,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -1225,7 +1226,9 @@ object TranslationEngine {
             // The erasing area is the bubble, but the translation has to sit where the Japanese
             // sat and be about as large as the Japanese was. Both come from the source, not from
             // whatever room the bubble happens to offer.
-            val target = sourceGlyphSize(group)
+            // Measure the lettering before anything is erased; out is still a copy of the page
+            // at this point (patches are collected first, erased afterwards).
+            val target = sourceGlyphSize(group, out, background)
             patches.add(
                 Patch(value, area, Rect(group.bubble), background, verticalText, target)
             )
@@ -1519,7 +1522,7 @@ object TranslationEngine {
         box.inset(-margin, -margin)
         if (!box.intersect(bounds)) box.set(anchor)
 
-        val sizeCap = target.coerceIn(7f, 96f)
+        val sizeCap = target.coerceIn(7f, MAX_GLYPH)
         var fit = layoutIn(text, paint, box, sizeCap, vertical)
         // Borrow empty bubble before shrinking the text: a long line in a big bubble should use
         // the room that is there, not turn into tiny text floating in the middle of it. Growth is
@@ -1624,34 +1627,147 @@ object TranslationEngine {
         return changed
     }
 
+    /** Ceiling for a glyph size; large enough for shout lettering, small enough to stay sane. */
+    private const val MAX_GLYPH = 120f
+
+    /** The drawing uses size * 1.04 as its vertical character advance. */
+    private const val VERTICAL_ADVANCE = 1.04f
+
     /**
-     * Font size the original lettering was set in, measured from the page.
+     * Distance between the centres of consecutive characters, read straight off the page ink.
      *
-     * The detector box is not the answer: it carries slack from the unclip step and from columns
-     * detected a little wide, and the old code then multiplied that width by 1.45, which is why a
-     * short translation came out much larger than the Japanese it replaced.
+     * This is deliberately independent of the OCR boxes and of the character count. Both go
+     * wrong on loosely typeset or coloured lettering: the detector returns a narrow box, OCR
+     * reads a different number of glyphs, and height / count then understates the type size by
+     * a third. A column has a strong vertical rhythm, so the *spacing between glyph blocks*
+     * survives all of that. Only the y projection is needed, which also makes it cheap.
      *
-     * Japanese is set solid, so one character occupies one em along the column: dividing a
-     * column's height by the number of characters the OCR read from it gives the size directly,
-     * and the median over the group ignores a column the detector padded or clipped. Ink
-     * measurements were tried first and were unreliable — thin strokes under-measure, halftone
-     * over-measures — so the result is only clamped to stay near the column width.
+     * Pixels are compared with the sampled bubble colour rather than a brightness cut, so
+     * coloured lettering (the purple dialogue in the CG books) is ink just like black text.
      */
-    private fun sourceGlyphSize(group: BubbleGroup): Float {
+    private fun inkCharacterPitch(
+        group: BubbleGroup,
+        source: Bitmap,
+        background: Int,
+        unit: Float
+    ): Float? {
+        if (!group.vertical) return null
+        val bgR = Color.red(background)
+        val bgG = Color.green(background)
+        val bgB = Color.blue(background)
+        val bgLum = luminance(background)
+        val gaps = ArrayList<Float>()
+        for (region in group.regions) {
+            if (!region.vertical) continue
+            val l = (region.box.left - 2).coerceAtLeast(0)
+            val r = (region.box.right + 2).coerceAtMost(source.width)
+            val t = region.box.top.coerceAtLeast(0)
+            val b = region.box.bottom.coerceAtMost(source.height)
+            val w = r - l
+            val h = b - t
+            if (w < 6 || h < 24) continue
+            val pixels = IntArray(w * h)
+            source.getPixels(pixels, 0, w, l, t, w, h)
+            // A row counts as ink when a meaningful part of the column width is covered.
+            val minInk = maxOf(1, w / 10)
+            val ink = BooleanArray(h)
+            for (y in 0 until h) {
+                var count = 0
+                val row = y * w
+                for (x in 0 until w) {
+                    val p = pixels[row + x]
+                    val diff = abs(Color.red(p) - bgR) +
+                        abs(Color.green(p) - bgG) + abs(Color.blue(p) - bgB)
+                    if (luminance(p) < bgLum * 0.72f || diff > 90) count++
+                }
+                ink[y] = count >= minInk
+            }
+            // Join the strokes of one glyph (a vertical morphological closing), otherwise a
+            // thin kana splits into two runs. A real gap between glyphs is wider than this.
+            val join = maxOf(2, (w * 0.10f).toInt())
+            var blank = 0
+            var fillFrom = -1
+            for (y in 0 until h) {
+                if (ink[y]) {
+                    if (blank in 1..join && fillFrom >= 0) {
+                        for (k in fillFrom until y) ink[k] = true
+                    }
+                    blank = 0
+                    fillFrom = -1
+                } else {
+                    if (blank == 0) fillFrom = y
+                    blank++
+                }
+            }
+            val centres = ArrayList<Float>()
+            val minGlyph = maxOf(6, (w * 0.30f).toInt())
+            // Screen tones, panel borders and speed lines merge into very tall ink blocks.
+            // They are not glyphs, and letting them in is what blew the type size up on
+            // black-and-white pages.
+            val maxGlyph = (unit * 2.2f).toInt().coerceAtLeast(minGlyph + 1)
+            var start = -1
+            for (y in 0..h) {
+                val on = y < h && ink[y]
+                if (on && start < 0) start = y
+                else if (!on && start >= 0) {
+                    val height = y - start
+                    if (height >= minGlyph && height <= maxGlyph) centres.add((start + y) / 2f)
+                    start = -1
+                }
+            }
+            for (i in 1 until centres.size) {
+                val gap = centres[i] - centres[i - 1]
+                if (gap >= unit * 0.5f && gap <= unit * 2.6f) gaps.add(gap)
+            }
+        }
+        if (gaps.size < 2) return null
+        gaps.sort()
+        val median = gaps[gaps.size / 2]
+        // One missed glyph doubles a single gap; keep the values that agree with the rhythm.
+        val near = gaps.filter { it >= median * 0.75f && it <= median * 1.35f }
+        return if (near.isEmpty()) median else (near.sum() / near.size)
+    }
+
+    /**
+     * Font size the original lettering was set in.
+     *
+     * The old estimate (column height / OCR character count, clamped to 1.05 × column width)
+     * is right on tightly set black-and-white pages and is left completely alone there. It
+     * under-measures loose, coloured lettering by about a third, because the detector box is
+     * narrower than the glyphs. Ink pitch fixes that case, but only when it plausibly says the
+     * old estimate was *too small*: a black-and-white page full of screen tones produces bogus
+     * large ink blocks, and trusting them made the translation cover the artwork. Anything
+     * outside that narrow window falls back to the old behaviour.
+     */
+    private fun sourceGlyphSize(group: BubbleGroup, source: Bitmap, background: Int): Float {
         val unit = columnWidth(group).toFloat()
-        val pitches = ArrayList<Float>()
+        val estimates = ArrayList<Float>()
         for (region in group.regions) {
             val chars = region.text.count { !it.isWhitespace() }
             if (chars < 1) continue
-            pitches.add(if (region.vertical) region.box.height().toFloat() / chars
-            else region.box.height().toFloat())
+            estimates.add(
+                if (region.vertical) region.box.height().toFloat() / chars
+                else region.box.height().toFloat()
+            )
         }
-        if (pitches.isEmpty()) return unit
-        pitches.sort()
-        val median = pitches[pitches.size / 2]
-        // A single-character column is all padding, and a merged two-column box reads as two
-        // characters per line; both are kept within reach of the column width.
-        return median.coerceIn(unit * 0.6f, unit * 1.05f)
+        estimates.sort()
+        val geometric = if (estimates.isEmpty()) unit else estimates[estimates.size / 2]
+        val ink = inkCharacterPitch(group, source, background, unit)
+        // Only step in when the ink says the geometric estimate is too small by a meaningful
+        // amount, and never by more than roughly double. Everything else keeps the older,
+        // well-tested size — including any page where the ink measurement is noise.
+        val plausible = ink != null &&
+            ink >= geometric * 1.12f &&
+            ink <= geometric * 1.9f &&
+            ink >= unit * 0.6f &&
+            ink <= unit * 2.2f
+        val target = if (plausible) ink!! / VERTICAL_ADVANCE
+        else geometric.coerceIn(unit * 0.6f, unit * 1.05f)
+        android.util.Log.d(
+            "Translate",
+            "TR glyph unit=$unit geo=$geometric ink=${ink ?: 0f} plausible=$plausible target=$target"
+        )
+        return target.coerceIn(7f, MAX_GLYPH)
     }
 
     private fun layout(
