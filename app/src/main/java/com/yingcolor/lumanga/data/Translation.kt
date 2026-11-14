@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -45,7 +46,9 @@ data class BubbleGroup(
     val source: String,
     val vertical: Boolean,
     /** Rejected low-confidence columns whose original lettering still has to be erased. */
-    val eraseExtra: List<Rect> = emptyList()
+    val eraseExtra: List<Rect> = emptyList(),
+    /** Balloon outline from the segmentation model, in page pixels; null when none matched. */
+    val contour: FloatArray? = null
 )
 
 object TranslationEngine {
@@ -316,6 +319,18 @@ object TranslationEngine {
         bitmap: Bitmap? = null,
         lang: SourceLanguage = source
     ): List<BubbleGroup> {
+        // Balloon outlines come from the segmentation model. They are only used for drawing the
+        // cover: grouping still follows the OCR boxes, so a failed or slow model cannot change
+        // which text reaches the translator.
+        val balloons = if (bitmap != null) {
+            BubbleSegmenter.detect(bitmap).also { found ->
+                if (found.isNotEmpty()) {
+                    android.util.Log.i("Translate", "TR balloons=${found.size}")
+                }
+            }
+        } else {
+            emptyList()
+        }
         // An "auto" setting is settled once, here, so every rule below agrees with the prompt
         // and with the cache key that the caller derived from the same page.
         val language = if (lang.detected) detectSource(regions) else lang
@@ -508,7 +523,35 @@ object TranslationEngine {
             if (extra.isNotEmpty()) {
                 android.util.Log.d("Translate", "TR faint erase=${extra.size} text=$text")
             }
-            BubbleGroup(cluster, union, text, vertical, extra)
+            val balloon = balloons.maxByOrNull { areaOverlap(it.box, union) }
+            val contour = balloon
+                ?.takeIf { areaOverlap(it.box, union) >= 0.5f }
+                ?.contour
+                // A balloon next to a block of free lettering can overlap it just enough to be
+                // picked, and its outline then covers the wrong part of the page. Only trust an
+                // outline that actually spans the text it is supposed to hide.
+                ?.takeIf { contourCovers(it, union) }
+            if (contour != null) {
+                var minX = Float.MAX_VALUE
+                var minY = Float.MAX_VALUE
+                var maxX = -Float.MAX_VALUE
+                var maxY = -Float.MAX_VALUE
+                var at = 0
+                while (at + 1 < contour.size) {
+                    minX = minOf(minX, contour[at])
+                    maxX = maxOf(maxX, contour[at])
+                    minY = minOf(minY, contour[at + 1])
+                    maxY = maxOf(maxY, contour[at + 1])
+                    at += 2
+                }
+                android.util.Log.d(
+                    "Translate",
+                    "TR contour points=${contour.size / 2} " +
+                        "box=${minX.toInt()},${minY.toInt()},${maxX.toInt()},${maxY.toInt()} " +
+                        "union=${union.left},${union.top},${union.right},${union.bottom}"
+                )
+            }
+            BubbleGroup(cluster, union, text, vertical, extra, contour)
         }.sortedWith(groupOrder(language))
             .also { list ->
                 // Grouping decides whether one sentence reaches the model as one piece or as two
@@ -806,6 +849,40 @@ object TranslationEngine {
         val shared = bottom - top
         val shorter = minOf(a.height(), b.height()).coerceAtLeast(1)
         return (shared.toFloat() / shorter).coerceAtLeast(0f)
+    }
+
+    /** True when the outline's bounding box covers at least half of the text footprint. */
+    private fun contourCovers(contour: FloatArray, union: Rect): Boolean {
+        if (contour.size < 6) return false
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        var at = 0
+        while (at + 1 < contour.size) {
+            minX = minOf(minX, contour[at])
+            maxX = maxOf(maxX, contour[at])
+            minY = minOf(minY, contour[at + 1])
+            maxY = maxOf(maxY, contour[at + 1])
+            at += 2
+        }
+        val left = maxOf(minX, union.left.toFloat())
+        val top = maxOf(minY, union.top.toFloat())
+        val right = minOf(maxX, union.right.toFloat())
+        val bottom = minOf(maxY, union.bottom.toFloat())
+        if (right <= left || bottom <= top) return false
+        val covered = (right - left) * (bottom - top)
+        val area = union.width().toFloat() * union.height()
+        return area > 0f && covered / area >= 0.5f
+    }
+
+    /** Two-dimensional intersection over the smaller area, used to match text to a balloon. */
+    private fun areaOverlap(a: Rect, b: Rect): Float {
+        val w = minOf(a.right, b.right) - maxOf(a.left, b.left)
+        val h = minOf(a.bottom, b.bottom) - maxOf(a.top, b.top)
+        if (w <= 0 || h <= 0) return 0f
+        val smaller = minOf(a.width() * a.height(), b.width() * b.height()).coerceAtLeast(1)
+        return (w.toFloat() * h / smaller).coerceAtLeast(0f)
     }
 
     suspend fun translate(
@@ -1261,7 +1338,9 @@ object TranslationEngine {
         /** Font size the page was typeset at, measured from the source pixels. */
         val target: Float,
         /** Near-miss columns that were not translated but whose ink still has to go. */
-        val extra: List<Rect> = emptyList()
+        val extra: List<Rect> = emptyList(),
+        /** Balloon outline in page pixels, when the segmentation model matched this group. */
+        val contour: FloatArray? = null
     )
 
     /**
@@ -1333,7 +1412,7 @@ object TranslationEngine {
             patches.add(
                 Patch(
                     value, area, Rect(group.bubble), background, verticalText, target,
-                    group.eraseExtra
+                    group.eraseExtra, group.contour
                 )
             )
             android.util.Log.d(
@@ -1349,13 +1428,31 @@ object TranslationEngine {
         // one bubble interior — covering it whole hides the original lettering without painting
         // over unrelated artwork.
         if (COVER_ORIGINAL) {
-            val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+            val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                isAntiAlias = true
+            }
             patches.forEach { patch ->
                 coverPaint.color = patch.background
-                val rect = RectF(patch.area)
-                rect.inset(-3f, -3f)
-                val radius = min(rect.width(), rect.height()) * 0.12f
-                canvas.drawRoundRect(rect, radius, radius, coverPaint)
+                val contour = patch.contour
+                if (contour != null && contour.size >= 6) {
+                    // Follow the balloon outline instead of covering a rectangle: the shape is
+                    // what keeps the cover off the artwork next to the bubble.
+                    val path = Path()
+                    path.moveTo(contour[0], contour[1])
+                    var index = 2
+                    while (index + 1 < contour.size) {
+                        path.lineTo(contour[index], contour[index + 1])
+                        index += 2
+                    }
+                    path.close()
+                    canvas.drawPath(path, coverPaint)
+                } else {
+                    val rect = RectF(patch.area)
+                    rect.inset(-3f, -3f)
+                    val radius = min(rect.width(), rect.height()) * 0.12f
+                    canvas.drawRoundRect(rect, radius, radius, coverPaint)
+                }
             }
         } else {
             patches.forEach { patch ->

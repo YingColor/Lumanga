@@ -1,8 +1,16 @@
 Lumanga
 Copyright (C) 2026 YingColor
 
-This product is licensed under the GNU General Public License, version 3
-(GPL-3.0). See LICENSE.
+This product is licensed under the GNU Affero General Public License, version 3
+(AGPL-3.0). See LICENSE.
+
+Bubble / free-text detection model:
+  app/src/main/assets/detect/mixed-dual-s-e5_float16.tflite
+  From manga-translator-android 3.8.5 by jedzqer
+  (https://github.com/jedzqer/manga-translator-android)
+  Copyright (C) 2026 jedzqer
+  Licensed under AGPL-3.0. Trained with Ultralytics YOLO26s-seg, which is
+  distributed under AGPL-3.0.
 
 Runtime libraries:
   Apache Commons Compress - https://commons.apache.org/proper/commons-compress/

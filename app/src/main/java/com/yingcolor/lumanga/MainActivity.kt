@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yingcolor.lumanga.data.BatchPreTranslate
 import com.yingcolor.lumanga.data.Book
+import com.yingcolor.lumanga.data.BubbleSegmenter
 import com.yingcolor.lumanga.data.MangaOcr
 import com.yingcolor.lumanga.data.RoutingOcrEngine
 import com.yingcolor.lumanga.data.Prefs
@@ -101,6 +102,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         TranslationEngine.ocr = RoutingOcrEngine(this)
         MangaOcr.init(this)
+        BubbleSegmenter.attach(this)
         BatchPreTranslate.attach(this)
         enableEdgeToEdge()
         setContent { ComicApp() }
