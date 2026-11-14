@@ -109,10 +109,12 @@ fun OcrModelRow(settings: UiSettings, enabled: Boolean) {
                     )
                 }
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    val host = S.ocrEndpointHost(settings.ocrApi)
                     DropdownMenuItem(
                         text = {
                             Text(
-                                text = S.ocrOnlineModel,
+                                text = if (host.isBlank()) S.ocrOnlineModel
+                                else "${S.ocrOnlineModel} · $host",
                                 color = if (settings.ocrOnline) scheme.primary else scheme.onSurface
                             )
                         },
@@ -143,7 +145,11 @@ fun OcrModelRow(settings: UiSettings, enabled: Boolean) {
         }
         Spacer(Modifier.height(2.dp))
         Text(
-            text = if (settings.ocrOnline) S.onlineOcrShortHint else S.ocrModelSharedHint,
+            text = if (settings.ocrOnline) {
+                S.onlineOcrRowHint(S.ocrEndpointHost(settings.ocrApi))
+            } else {
+                S.ocrModelSharedHint
+            },
             style = MaterialTheme.typography.labelSmall,
             color = scheme.onSurfaceVariant
         )

@@ -240,10 +240,33 @@ object S {
     const val ocrEngineTitle = "识别方式"
     const val ocrLocalModel = "本机模型"
     const val ocrOnlineModel = "在线 OCR"
+    const val ocrLocalModelDesc = "在手机里识别，不联网；四款模型随时换"
+    const val ocrOnlineModelDesc = "整页发给服务器识别，手机上不跑模型"
+    const val ocrInUseTitle = "当前使用"
+    const val ocrCurrentTag = "当前"
+    const val ocrOnlineTag = "在线"
+    const val ocrInUseLocalNote = "手机里跑，没网也能用；下面的模型立即生效"
+    const val ocrInUseOnlineNote = "手机上不跑模型；按这里填的地址和模型识别整页"
+    const val ocrInUseOnlineHostOff = "在线 OCR 已选，但还没填地址，现在用不了"
+    const val ocrNoEndpoint = "还没填地址"
+    const val ocrFillEndpoint = "在下面填上服务地址就能用"
+    fun ocrInUseLocal(model: String): String = "本机模型 · $model"
+    fun ocrInUseOnline(host: String): String = "在线 OCR · $host"
+    fun ocrOnlineModelLine(model: String): String =
+        if (model.isBlank()) "服务器上的模型：没填" else "服务器上的模型：$model"
+    /** 摘要只用 host:port，长路径会把一行撑爆。 */
+    fun ocrEndpointHost(api: String): String {
+        var text = api.trim()
+        if (text.startsWith("http://", true)) text = text.substring(7)
+        if (text.startsWith("https://", true)) text = text.substring(8)
+        return text.substringBefore('/')
+    }
     fun onlineOcrTestOk(count: Int): String = "连接成功，服务上有 $count 个模型"
     fun onlineOcrTestFail(reason: String): String = "连接失败：$reason"
     const val onlineOcrTip = "在线 OCR 把整页图片发给视觉模型，由它返回文字和位置，手机上不跑模型。需要模型支持图片输入，例如 GPT-4o、Qwen-VL、Gemini、llava；一张图一次请求，速度取决于服务。"
     const val onlineOcrShortHint = "在线 OCR · 地址和模型在「OCR 配置」里填"
+    fun onlineOcrRowHint(host: String): String =
+        if (host.isBlank()) "在线 OCR · 地址还没填，去「OCR 配置」里填" else "在线 OCR · 服务器 $host"
     const val ocrModelTitle = "文字识别模型"
     const val ocrModelTip = "四款都内置在手机里，不用下载。默认用 PP-OCRv6_small（速度最快、最省电）；切换后从下一页开始生效，预翻译整本和批量预翻译都跟着用这一款。"
     const val ocrModelDefault = "默认"

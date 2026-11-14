@@ -1,16 +1,21 @@
 package com.yingcolor.lumanga.ui
 
 import android.graphics.Rect
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,10 +26,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.ApiClient
 import com.yingcolor.lumanga.data.ApiProtocol
+import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.SourceLanguage
 import com.yingcolor.lumanga.data.TextLayout
 import com.yingcolor.lumanga.data.TextRegion
@@ -37,25 +45,128 @@ import kotlinx.coroutines.launch
 @Composable
 fun OcrSettingsPage(settings: UiSettings) {
     val scheme = MaterialTheme.colorScheme
+    val online = settings.ocrOnline
     Column {
+        // 先回答「我现在用的是哪个」——选择器本身做得再清楚，也要先有一句结论。
+        OcrInUseBanner(settings)
+        Spacer(Modifier.height(16.dp))
         Text(S.ocrEngineTitle, style = MaterialTheme.typography.titleSmall, color = scheme.primary)
-        Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = !settings.ocrOnline,
-                onClick = { settings.setOcrOnline(false) },
-                label = { Text(S.ocrLocalModel) }
-            )
-            FilterChip(
-                selected = settings.ocrOnline,
-                onClick = { settings.setOcrOnline(true) },
-                label = { Text(S.ocrOnlineModel) }
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        if (settings.ocrOnline) OnlineOcrSettings(settings) else OcrModelPicker(settings)
+        Spacer(Modifier.height(8.dp))
+        OcrModeCard(
+            title = S.ocrLocalModel,
+            desc = S.ocrLocalModelDesc,
+            selected = !online,
+            onClick = { settings.setOcrOnline(false) }
+        )
+        Spacer(Modifier.height(8.dp))
+        OcrModeCard(
+            title = S.ocrOnlineModel,
+            desc = S.ocrOnlineModelDesc,
+            selected = online,
+            onClick = { settings.setOcrOnline(true) }
+        )
+        Spacer(Modifier.height(16.dp))
+        if (online) OnlineOcrSettings(settings) else OcrModelPicker(settings)
         Spacer(Modifier.height(18.dp))
         SourceLanguagePicker(settings)
+    }
+}
+
+/** 「当前使用」：一眼看出是手机在跑还是服务器在跑，以及具体是哪个模型。 */
+@Composable
+private fun OcrInUseBanner(settings: UiSettings) {
+    val scheme = MaterialTheme.colorScheme
+    val online = settings.ocrOnline
+    val host = S.ocrEndpointHost(settings.ocrApi)
+    val model = settings.ocrApiModel.trim()
+    val background = if (online) scheme.tertiaryContainer else scheme.secondaryContainer
+    val onBackground = if (online) scheme.onTertiaryContainer else scheme.onSecondaryContainer
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(background)
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Text(
+            text = S.ocrInUseTitle,
+            style = MaterialTheme.typography.labelSmall,
+            color = onBackground.copy(alpha = 0.75f)
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = when {
+                !online -> S.ocrInUseLocal(OcrModel.from(settings.ocrModel).label)
+                host.isBlank() -> S.ocrInUseOnlineHostOff
+                else -> S.ocrInUseOnline(host)
+            },
+            style = MaterialTheme.typography.titleSmall,
+            color = onBackground
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = when {
+                !online -> S.ocrInUseLocalNote
+                host.isBlank() -> S.ocrFillEndpoint
+                else -> S.ocrOnlineModelLine(model)
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = onBackground.copy(alpha = 0.85f)
+        )
+    }
+}
+
+/** 一张可点的卡片顶替以前的两个 chip：单选圈 + 说明，选中的那行整块高亮并标「当前」。 */
+@Composable
+private fun OcrModeCard(
+    title: String,
+    desc: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) scheme.primaryContainer else scheme.surfaceContainerHighest)
+            .border(
+                width = 1.5.dp,
+                color = if (selected) scheme.primary else Color.Transparent,
+                shape = RoundedCornerShape(14.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (selected) scheme.onPrimaryContainer else scheme.onSurface
+                )
+                if (selected) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = S.ocrCurrentTag,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = scheme.onPrimary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(5.dp))
+                            .background(scheme.primary)
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    )
+                }
+            }
+            Text(
+                text = desc,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (selected) scheme.onPrimaryContainer.copy(alpha = 0.8f)
+                else scheme.onSurfaceVariant
+            )
+        }
     }
 }
 

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,6 +38,15 @@ fun TranslationSettings(
     onOpenOcr: () -> Unit,
     onOpenModel: () -> Unit
 ) {
+    val online = settings.ocrOnline
+    val host = S.ocrEndpointHost(settings.ocrApi)
+    // 摘要必须说清「现在到底谁在读图」，否则选了在线 OCR 却还写着本机模型名。
+    val ocrDetail = if (online) {
+        if (host.isBlank()) "${S.ocrOnlineModel} · ${S.ocrNoEndpoint}" else "${S.ocrOnlineModel} · $host"
+    } else {
+        OcrModel.from(settings.ocrModel).label + " · " +
+            SourceLanguage.from(settings.sourceLanguage).label
+    }
     Column {
         Text(
             text = S.translateSummary,
@@ -46,8 +56,8 @@ fun TranslationSettings(
         Spacer(Modifier.height(14.dp))
         SettingEntry(
             title = S.translateConfigOcr,
-            detail = OcrModel.from(settings.ocrModel).label + " · " +
-                SourceLanguage.from(settings.sourceLanguage).label,
+            detail = ocrDetail,
+            badge = if (online) S.ocrOnlineTag else null,
             onClick = onOpenOcr
         )
         Spacer(Modifier.height(10.dp))
@@ -68,7 +78,12 @@ fun TranslationSettings(
 
 /** One row of the front page: name, what is currently set, and a chevron that says "opens". */
 @Composable
-private fun SettingEntry(title: String, detail: String, onClick: () -> Unit) {
+private fun SettingEntry(
+    title: String,
+    detail: String,
+    onClick: () -> Unit,
+    badge: String? = null
+) {
     val scheme = MaterialTheme.colorScheme
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -80,7 +95,21 @@ private fun SettingEntry(title: String, detail: String, onClick: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = title, style = MaterialTheme.typography.bodyLarge)
+                if (badge != null) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = badge,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = scheme.onTertiaryContainer,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(5.dp))
+                            .background(scheme.tertiaryContainer)
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    )
+                }
+            }
             Spacer(Modifier.height(3.dp))
             Text(
                 text = detail,
