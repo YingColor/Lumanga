@@ -509,7 +509,13 @@ object TranslationEngine {
             } else listOf(cluster)
         }
         return split.map { cluster ->
-            cluster.sortWith(regionOrder(language))
+            // Sort by column first, then by position inside the column. A column that the
+            // detector split into an upper and a lower box has almost the same centre x, and a
+            // plain (x, y) sort interleaved the two columns so the sentence read
+            // 「俺と涼香さ 切り裂くよらに Cんの間の…」 instead of following each column down.
+            val orderedRegions = orderByColumns(cluster)
+            cluster.clear()
+            cluster.addAll(orderedRegions)
             val union = Rect(cluster[0].box)
             cluster.forEach { union.union(it.box) }
             val vertical = if (horizontalSource) false
@@ -885,6 +891,24 @@ object TranslationEngine {
             }
         }
         return if (score >= 0.5f) best else -1
+    }
+
+    /**
+     * Groups regions into columns (by horizontal overlap) and reads each column from the top
+     * down, columns from right to left. Keeps split chunks of one column in order.
+     */
+    private fun orderByColumns(regions: List<TextRegion>): List<TextRegion> {
+        val columns = ArrayList<MutableList<TextRegion>>()
+        for (region in regions.sortedByDescending { it.box.centerX() }) {
+            val column = columns.firstOrNull { members ->
+                val a = members[0].box
+                val shared = minOf(a.right, region.box.right) - maxOf(a.left, region.box.left)
+                val narrower = minOf(a.width(), region.box.width()).coerceAtLeast(1)
+                shared.toFloat() / narrower > 0.5f
+            }
+            if (column == null) columns.add(mutableListOf(region)) else column.add(region)
+        }
+        return columns.flatMap { members -> members.sortedBy { it.box.top } }
     }
 
     /** True when the outline's bounding box covers at least half of the text footprint. */

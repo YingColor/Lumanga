@@ -246,6 +246,11 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
     private val TIGHT_PAD = 3
     private val WIDE_PAD = 10
 
+    /** Thresholds used by the reference project's PaddleTextLineDetector. */
+    private val DET_PROB_THRESHOLD = 0.2f
+    private val DET_BOX_THRESHOLD = 0.45f
+    private val DET_UNCLIP = 1.4f
+
     /** Below this confidence the column is read again with the wider margin. */
     private val WIDE_RETRY_CONF = 0.85f
     private val detFile = File(dir, model.det)
@@ -338,7 +343,12 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
             val bottom = (box.bottom + pad).coerceAtMost(bitmap.height)
             val crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
             try {
-                val boxes = splitWideColumns(crop, detectColumns(crop))
+                // Whole-balloon detection, exactly like the reference implementation. Tiling a
+                // crop this small only cut its lettering at tile boundaries. The line detector
+                // can still return two columns as one box, so the projection split runs here too.
+                val boxes = mergeIntoColumns(
+                    splitWideColumns(crop, detectLinesWhole(crop))
+                )
                 recognizeBoxes(crop, boxes).forEach { region ->
                     inside.add(
                         TextRegion(
@@ -463,7 +473,10 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         val out = ArrayList<Rect>(boxes.size + 4)
         for (box in boxes) {
             val vertical = box.height() >= box.width() * 1.2f
-            if (!vertical || box.width() <= unit * 2.2f) {
+            // Any vertical box is projected: a width ratio cannot tell two columns apart,
+            // because the median width itself moves with the page. A single column produces one
+            // run and is left untouched.
+            if (!vertical || box.width() < 40) {
                 out.add(box)
                 continue
             }
@@ -508,7 +521,7 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         val merged = ArrayList<IntArray>()
         for (run in runs) {
             val last = merged.lastOrNull()
-            if (last != null && run[0] - last[1] < unit * 0.35f) {
+            if (last != null && run[0] - last[1] < unit * 0.12f) {
                 last[1] = run[1]
             } else {
                 merged.add(intArrayOf(run[0], run[1]))
@@ -518,6 +531,115 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         return merged
             .map { Rect(box.left + it[0], box.top, box.left + it[1], box.bottom) }
             .filter { it.width() >= 6 }
+    }
+
+    /**
+     * Line detection copied from manga-translator-android's PaddleTextLineDetector.
+     *
+     * Differences from [detectColumns], and the reason this exists: no tiling, black padding,
+     * eight-connected components, mean-probability gate 0.45, and an unclip margin proportional
+     * to the box. Its own balloon crops go through this path, so a shout bubble is detected
+     * whole instead of being cut by a tile boundary — the tiled path returned only fragments of
+     * CG p.8's green lettering.
+     */
+    private fun detectLinesWhole(bitmap: Bitmap): List<Rect> {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w < 32 || h < 32) return emptyList()
+        val side = 640
+        val scale = min(side.toFloat() / w, side.toFloat() / h).coerceAtLeast(1e-6f)
+        val drawW = max(1, (w * scale).toInt())
+        val drawH = max(1, (h * scale).toInt())
+        val padX = (side - drawW) / 2f
+        val padY = (side - drawH) / 2f
+        val square = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(square)
+        canvas.drawColor(Color.BLACK)
+        canvas.drawBitmap(
+            bitmap,
+            Rect(0, 0, w, h),
+            Rect(padX.toInt(), padY.toInt(), padX.toInt() + drawW, padY.toInt() + drawH),
+            Paint(Paint.FILTER_BITMAP_FLAG)
+        )
+        val plane = side * side
+        val worker = detLocal.get() ?: run {
+            square.recycle()
+            return emptyList()
+        }
+        val pixels = worker.pixels
+        square.getPixels(pixels, 0, side, 0, 0, side, side)
+        square.recycle()
+        val mean = floatArrayOf(0.485f * 255f, 0.456f * 255f, 0.406f * 255f)
+        val std = floatArrayOf(0.229f * 255f, 0.224f * 255f, 0.225f * 255f)
+        for (i in 0 until plane) {
+            val pixel = pixels[i]
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8) and 0xFF
+            val b = pixel and 0xFF
+            worker.input[2 * plane + i] = (r - mean[2]) / std[2]
+            worker.input[plane + i] = (g - mean[1]) / std[1]
+            worker.input[i] = (b - mean[0]) / std[0]
+        }
+        worker.session.run(worker.input, worker.output)
+        val probabilities = worker.output
+        val visited = BooleanArray(plane)
+        val stack = IntArray(plane)
+        val boxes = ArrayList<Rect>(32)
+        for (start in 0 until plane) {
+            if (visited[start] || probabilities[start] <= DET_PROB_THRESHOLD) continue
+            var minX = side
+            var minY = side
+            var maxX = 0
+            var maxY = 0
+            var count = 0
+            var sum = 0f
+            var top = 0
+            stack[top++] = start
+            visited[start] = true
+            while (top > 0) {
+                val index = stack[--top]
+                val x = index % side
+                val y = index / side
+                if (x < minX) minX = x
+                if (y < minY) minY = y
+                if (x > maxX) maxX = x
+                if (y > maxY) maxY = y
+                count++
+                sum += probabilities[index]
+                for (ny in y - 1..y + 1) {
+                    if (ny < 0 || ny >= side) continue
+                    val row = ny * side
+                    for (nx in x - 1..x + 1) {
+                        if (nx < 0 || nx >= side) continue
+                        val n = row + nx
+                        if (!visited[n] && probabilities[n] > DET_PROB_THRESHOLD) {
+                            visited[n] = true
+                            stack[top++] = n
+                        }
+                    }
+                }
+            }
+            if (count < 3) continue
+            if (sum / count < DET_BOX_THRESHOLD) continue
+            val boxW = maxX - minX + 1
+            val boxH = maxY - minY + 1
+            if (boxW < 3 || boxH < 3) continue
+            val distance = (boxW * boxH) / (2f * (boxW + boxH)) * DET_UNCLIP
+            val left = ((minX - distance - padX) / scale).coerceIn(0f, w.toFloat())
+            val topY = ((minY - distance - padY) / scale).coerceIn(0f, h.toFloat())
+            val right = ((maxX + 1 + distance - padX) / scale).coerceIn(0f, w.toFloat())
+            val bottom = ((maxY + 1 + distance - padY) / scale).coerceIn(0f, h.toFloat())
+            if (right - left <= 3f || bottom - topY <= 3f) continue
+            boxes.add(
+                Rect(
+                    left.toInt().coerceIn(0, w - 1),
+                    topY.toInt().coerceIn(0, h - 1),
+                    right.toInt().coerceIn(1, w),
+                    bottom.toInt().coerceIn(1, h)
+                )
+            )
+        }
+        return boxes.sortedWith(compareByDescending<Rect> { it.centerX() }.thenBy { it.top })
     }
 
     private fun detectColumns(bitmap: Bitmap): List<Rect> {
