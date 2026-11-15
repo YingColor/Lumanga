@@ -45,8 +45,6 @@ data class BubbleGroup(
     val bubble: Rect,
     val source: String,
     val vertical: Boolean,
-    /** Rejected low-confidence columns whose original lettering still has to be erased. */
-    val eraseExtra: List<Rect> = emptyList(),
     /** Balloon outline from the segmentation model, in page pixels; null when none matched. */
     val contour: FloatArray? = null
 )
@@ -335,7 +333,6 @@ object TranslationEngine {
         // and with the cache key that the caller derived from the same page.
         val language = if (lang.detected) detectSource(regions) else lang
         val usable = ArrayList<TextRegion>(regions.size)
-        val faint = ArrayList<TextRegion>()
         regions.forEach { region ->
             if (isUsable(region, language)) {
                 usable.add(region)
@@ -349,14 +346,6 @@ object TranslationEngine {
                         "box=${region.box.left},${region.box.top}," +
                         "${region.box.right},${region.box.bottom} text=${region.text}"
                 )
-                // A real column can miss the confidence floor by a hair (0.43 against 0.45).
-                // It must not be sent to the translator, but its ink is still on the page and
-                // has to be cleared, or the translation is drawn over the Japanese. Only a
-                // near-miss with letters of the source language counts — the artwork "C", "K"
-                // and "X" boxes on the same page must not become erase rectangles.
-                if (region.confidence >= 0.38f &&
-                    region.text.any { isSourceLetter(it, language) }
-                ) faint.add(region)
             }
         }
         if (usable.isEmpty()) return emptyList()
@@ -537,14 +526,6 @@ object TranslationEngine {
                 MangaOcr.readIfSelected(bitmap, union) ?: columns
             else columns
             val unit = clusterUnit(cluster)
-            val extra = faint.filter { f ->
-                val sharedY = min(union.bottom, f.box.bottom) - max(union.top, f.box.top)
-                sharedY > 0 && sharedY >= f.box.height() * 0.5f &&
-                    horizontalGap(union, f.box) <= unit * 2.2f
-            }.map { Rect(it.box) }
-            if (extra.isNotEmpty()) {
-                android.util.Log.d("Translate", "TR faint erase=${extra.size} text=$text")
-            }
             val balloon = balloons.maxByOrNull { areaOverlap(it.box, union) }
             val contour = balloon
                 ?.takeIf { areaOverlap(it.box, union) >= 0.5f }
@@ -573,7 +554,7 @@ object TranslationEngine {
                         "union=${union.left},${union.top},${union.right},${union.bottom}"
                 )
             }
-            BubbleGroup(cluster, union, text, vertical, extra, contour)
+            BubbleGroup(cluster, union, text, vertical, contour)
         }.sortedWith(groupOrder(language))
             .also { list ->
                 // Grouping decides whether one sentence reaches the model as one piece or as two
@@ -1378,25 +1359,21 @@ object TranslationEngine {
     }
 
     /**
-     * Cover each patch with its sampled background colour and write the translation on top,
-     * instead of erasing ink pixel by pixel. Coloured lettering, white outlines, halftone dots
-     * and anti-aliased fringes all survived that eraser in some form; a solid cover hides them
-     * at once. This only works because groupBubbles() now splits a full-width free-lettering
-     * block into one patch per column: covering the unsplit 1300x1400 box hid half the artwork.
-     * Set to false to restore the old erase path for A/B comparison.
+     * Opacity of the cover, 0-255.
+     *
+     * The ink eraser and the "cut the glyphs out and refill the hole" step that used to run before
+     * the cover are both gone. Nothing reads the page pixels any more: the eraser decided per
+     * pixel whether something was lettering, and around a bubble it kept deciding "lettering" for
+     * screen tone, the bubble outline and the artwork beside it, painting the sampled bubble
+     * colour over them. What that left was a ragged white halo eaten out of the drawing around
+     * every patch. Covering is deterministic instead - one flat fill, nothing outside the patch
+     * touched.
      */
-    private const val COVER_ORIGINAL = true
-
-    /**
-     * Opacity of the cover, 0-255. The original ink is erased before the cover is drawn, so this
-     * only has to tint the cleared area rather than hide readable text; 80% lets the artwork show
-     * through instead of reading as a hole punched in the drawing.
-     */
-    private const val COVER_ALPHA = 204
+    private const val COVER_ALPHA = 236
 
     private class Patch(
         val text: String,
-        /** Area covered by the translation (and, with [COVER_ORIGINAL], by its background). */
+        /** Area covered by the translation, and by its background. */
         val area: Rect,
         /** Where the original lettering sat. The translation is anchored here, not centred in [area]. */
         val anchor: Rect,
@@ -1404,15 +1381,13 @@ object TranslationEngine {
         val vertical: Boolean,
         /** Font size the page was typeset at, measured from the source pixels. */
         val target: Float,
-        /** Near-miss columns that were not translated but whose ink still has to go. */
-        val extra: List<Rect> = emptyList(),
         /** Balloon outline in page pixels, when the segmentation model matched this group. */
         val contour: FloatArray? = null
     )
 
     /**
-     * Draws [translated] over the original lettering, either by covering each patch with its
-     * sampled background colour or, with [COVER_ORIGINAL] off, by erasing the ink pixels.
+     * Draws [translated] over the original lettering: each patch is filled with its sampled
+     * background colour and the translation is written on top.
      *
      * [horizontal] forces ordinary left-to-right lines even when the source bubble was vertical.
      * Only the drawing direction changes: patch growth, covering and colour sampling all follow
@@ -1425,7 +1400,7 @@ object TranslationEngine {
         horizontal: Boolean = false
     ): Bitmap {
         // Latin words cannot be stacked in a vertical column, so English output always uses the
-        // existing horizontal branch. The geometry (erase, patch, sampling) is untouched.
+        // existing horizontal branch. The geometry (patch, sampling) is untouched.
         val forceHorizontal = horizontal || target.latin
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(out)
@@ -1440,12 +1415,6 @@ object TranslationEngine {
             // be drawn just because it was saved by an older build.
             val value = sanitize(tidy(translated.getOrNull(i).orEmpty(), group.source), group.source)
             if (value.isEmpty()) return@forEachIndexed
-            // Light lettering on dark artwork could not be *erased* without painting a bright
-            // patch over the drawing. With a cover we sample that dark background instead and
-            // write white text on it, so the block no longer has to be abandoned.
-            if (!COVER_ORIGINAL && medianLuminance(source, group.bubble) < 100) {
-                return@forEachIndexed
-            }
 
             // The detector returns one tight box per Japanese column. A bubble is drawn around
             // all of its columns, but short and low-confidence columns are dropped, so using
@@ -1467,19 +1436,19 @@ object TranslationEngine {
             }
             placed.add(area)
             // Sample from the patch itself: a halftone bubble needs its own grey as the fill,
-            // otherwise erased lettering turns into bright white glyph-shaped holes.
+            // otherwise the cover reads as a bright white hole punched in the drawing.
             val background = sampleBubbleColor(out, area)
             val verticalText = if (forceHorizontal) false else group.vertical
             // The erasing area is the bubble, but the translation has to sit where the Japanese
             // sat and be about as large as the Japanese was. Both come from the source, not from
             // whatever room the bubble happens to offer.
-            // Measure the lettering before anything is erased; out is still a copy of the page
-            // at this point (patches are collected first, erased afterwards).
+            // Measure the lettering from the untouched page: out is still a plain copy at this
+            // point (patches are collected first, painted afterwards).
             val target = sourceGlyphSize(group, out, background)
             patches.add(
                 Patch(
                     value, area, Rect(group.bubble), background, verticalText, target,
-                    group.eraseExtra, group.contour
+                    group.contour
                 )
             )
             android.util.Log.d(
@@ -1494,56 +1463,42 @@ object TranslationEngine {
         // one column per group before reaching render(), so each patch here is a narrow strip or
         // one bubble interior — covering it whole hides the original lettering without painting
         // over unrelated artwork.
-        if (COVER_ORIGINAL) {
-            // Clear the ink first, then lay the translucent cover over it. A translucent cover on
-            // its own let the original lettering read through — on page 8 the green shout stayed
-            // legible behind the Chinese. Whatever the eraser misses is hidden by the cover, and
-            // anything the eraser gets wrong is hidden by it too, so this is far less risky than
-            // erasing alone was.
-            patches.forEach { patch ->
-                eraseLettering(out, patch.area, patch.background, patch.anchor)
-                patch.extra.forEach { rect -> eraseColouredInk(out, rect, patch.background) }
-            }
-            val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                isAntiAlias = true
-            }
-            patches.forEach { patch ->
-                // Not fully opaque: a solid slab reads as a hole punched in the artwork. At 86%
-                // the original lettering is no longer legible but the drawing still shows
-                // through, which is what a printed white-out would look like on paper.
-                val base = patch.background
-                coverPaint.color = Color.argb(
-                    COVER_ALPHA, Color.red(base), Color.green(base), Color.blue(base)
-                )
-                val contour = patch.contour
-                if (contour != null && contour.size >= 6) {
-                    // Follow the balloon outline instead of covering a rectangle: the shape is
-                    // what keeps the cover off the artwork next to the bubble.
-                    val path = Path()
-                    path.moveTo(contour[0], contour[1])
-                    var index = 2
-                    while (index + 1 < contour.size) {
-                        path.lineTo(contour[index], contour[index + 1])
-                        index += 2
-                    }
-                    path.close()
-                    canvas.drawPath(path, coverPaint)
-                } else {
-                    val rect = RectF(patch.area)
-                    // Four percent of the short edge, not a fixed three pixels: the detector
-                    // box stops at the glyph centres, so a fixed margin left the first and last
-                    // column's outer strokes visible beside the cover on a long narration strip.
-                    val pad = min(rect.width(), rect.height()) * 0.04f
-                    rect.inset(-pad, -pad)
-                    val radius = min(rect.width(), rect.height()) * 0.12f
-                    canvas.drawRoundRect(rect, radius, radius, coverPaint)
+        // Nothing is cleared underneath: every patch is simply painted over flat. See COVER_ALPHA
+        // for why the pixel eraser was removed. All covers go down first and all translations
+        // afterwards, so a later patch overlapping an earlier one cannot wipe text already drawn.
+        val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        patches.forEach { patch ->
+            val base = patch.background
+            coverPaint.color = Color.argb(
+                COVER_ALPHA, Color.red(base), Color.green(base), Color.blue(base)
+            )
+            val contour = patch.contour
+            if (contour != null && contour.size >= 6) {
+                // Follow the balloon outline instead of covering a rectangle: the shape is
+                // what keeps the cover off the artwork next to the bubble.
+                val path = Path()
+                path.moveTo(contour[0], contour[1])
+                var index = 2
+                while (index + 1 < contour.size) {
+                    path.lineTo(contour[index], contour[index + 1])
+                    index += 2
                 }
-            }
-        } else {
-            patches.forEach { patch ->
-                eraseLettering(out, patch.area, patch.background, patch.anchor)
-                patch.extra.forEach { eraseColouredInk(out, it, patch.background) }
+                path.close()
+                canvas.drawPath(path, coverPaint)
+            } else {
+                val rect = RectF(patch.area)
+                // Two percent of the short edge, not a fixed three pixels: the detector box
+                // stops at the glyph centres, so a fixed margin left the first and last column's
+                // outer strokes visible beside the cover on a long narration strip. Kept small
+                // because the cover is opaque now - every pixel of margin is a pixel of artwork
+                // that disappears.
+                val pad = min(rect.width(), rect.height()) * 0.02f
+                rect.inset(-pad, -pad)
+                val radius = min(rect.width(), rect.height()) * 0.12f
+                canvas.drawRoundRect(rect, radius, radius, coverPaint)
             }
         }
         patches.forEach { patch ->
@@ -1744,139 +1699,6 @@ object TranslationEngine {
         val sorted = pool.sortedBy { luminance(it) }
         val picked = sorted[sorted.size / 2]
         return Color.rgb(Color.red(picked), Color.green(picked), Color.blue(picked))
-    }
-
-    /**
-     * Clears every ink pixel inside the patch (not only the columns the detector found) plus
-     * its dark fringe. Screen tones and light grey artwork must survive: erasing them produced
-     * a conspicuous white rectangle inside halftone bubbles.
-     */
-    private fun eraseLettering(bitmap: Bitmap, box: Rect, background: Int, anchor: Rect? = null) {
-        val w = box.width()
-        val h = box.height()
-        if (w < 2 || h < 2) return
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, box.left, box.top, w, h)
-        val backgroundLum = luminance(background)
-        if (backgroundLum < 90) return
-        // Halftone dots sit around luminance 200. Only genuinely black lettering and its dark
-        // fringe may be cleared, otherwise the whole patch turns into a white rectangle.
-        val coreThreshold = (backgroundLum * 0.46f).toInt()
-        val haloThreshold = min(170, backgroundLum - 60)
-        val core = BooleanArray(w * h)
-        for (i in pixels.indices) {
-            if (luminance(pixels[i]) < coreThreshold) core[i] = true
-        }
-        // Coloured dialogue (green shouts, blue narration, purple captions) is not dark enough
-        // for a luminance rule. It is strongly saturated and much darker than the pale paper it
-        // sits on, while skin, highlights and screen tones are either brighter or nearly grey.
-        // Restrict this to the detector's own text footprint: outside it, the same saturated
-        // colour may be a bubble outline or a piece of artwork that must survive.
-        val colour = BooleanArray(w * h)
-        if (anchor != null) {
-            for (y in 0 until h) {
-                val gy = box.top + y
-                if (gy < anchor.top || gy >= anchor.bottom) continue
-                for (x in 0 until w) {
-                    val gx = box.left + x
-                    if (gx < anchor.left || gx >= anchor.right) continue
-                    val index = y * w + x
-                    val p = pixels[index]
-                    val r = Color.red(p)
-                    val g = Color.green(p)
-                    val b = Color.blue(p)
-                    val saturation = maxOf(r, g, b) - minOf(r, g, b)
-                    val lum = luminance(p)
-                    if (saturation >= 55 && lum < backgroundLum * 0.72f && lum < 175) {
-                        colour[index] = true
-                    }
-                }
-            }
-        }
-        val reach = 1
-        var changed = false
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                val index = y * w + x
-                if (!colour[index] && luminance(pixels[index]) >= haloThreshold) continue
-                var nearInk = core[index] || colour[index]
-                if (!nearInk) {
-                    for (dy in -reach..reach) {
-                        if (nearInk) break
-                        val ny = y + dy
-                        if (ny < 0 || ny >= h) continue
-                        for (dx in -reach..reach) {
-                            val nx = x + dx
-                            if (nx < 0 || nx >= w) continue
-                            val k = ny * w + nx
-                            if (core[k] || colour[k]) { nearInk = true; break }
-                        }
-                    }
-                }
-                if (nearInk) {
-                    pixels[index] = background
-                    changed = true
-                }
-            }
-        }
-        if (changed) bitmap.setPixels(pixels, 0, w, box.left, box.top, w, h)
-    }
-
-    /**
-     * Clears a rejected low-confidence column of coloured lettering. It never reaches the
-     * translator, so it is not part of any patch, but leaving it on the page prints the Chinese
-     * straight over the Japanese. Only saturated ink on a pale rectangle is replaced; a dark or
-     * coloured piece of artwork fails the luminance gate and is left alone.
-     */
-    private fun eraseColouredInk(bitmap: Bitmap, rect: Rect, background: Int) {
-        val box = Rect(rect)
-        if (!box.intersect(0, 0, bitmap.width, bitmap.height)) return
-        val w = box.width()
-        val h = box.height()
-        if (w < 6 || h < 6) return
-        if (medianLuminance(bitmap, box) < 150) return
-        val bgLum = luminance(background)
-        if (bgLum < 90) return
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, box.left, box.top, w, h)
-        val core = BooleanArray(w * h)
-        for (y in 2 until h - 2) {
-            for (x in 2 until w - 2) {
-                val index = y * w + x
-                val p = pixels[index]
-                val r = Color.red(p)
-                val g = Color.green(p)
-                val b = Color.blue(p)
-                val saturation = maxOf(r, g, b) - minOf(r, g, b)
-                val lum = luminance(p)
-                if (saturation >= 55 && lum < bgLum * 0.72f && lum < 175) {
-                    core[index] = true
-                }
-            }
-        }
-        // The anti-aliased edge of a coloured glyph is lighter and less saturated than its
-        // centre. Clearing only the core left bright-green square outlines where the Japanese
-        // had been, so take the one-pixel fringe with it.
-        var changed = false
-        for (y in 2 until h - 2) {
-            for (x in 2 until w - 2) {
-                val index = y * w + x
-                var nearInk = core[index]
-                if (!nearInk) {
-                    for (dy in -1..1) {
-                        if (nearInk) break
-                        for (dx in -1..1) {
-                            if (core[(y + dy) * w + x + dx]) { nearInk = true; break }
-                        }
-                    }
-                }
-                if (nearInk && luminance(pixels[index]) < 235) {
-                    pixels[index] = background
-                    changed = true
-                }
-            }
-        }
-        if (changed) bitmap.setPixels(pixels, 0, w, box.left, box.top, w, h)
     }
 
     private class Fit(

@@ -252,11 +252,17 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
     private val DET_UNCLIP = 1.4f
 
     /**
-     * Share of the page a balloon must cover before it gets its own detection pass. Small
-     * balloons carry one short column that the page pass already reads correctly; re-detecting
-     * them only repeats work and, on a page with a dozen of them, overruns the OCR budget.
+     * Share of the page a balloon must cover before it gets its own detection pass.
+     *
+     * This used to be 3%, on the assumption that a small balloon holds one short column the page
+     * pass already reads. That is wrong for a two-glyph horizontal line in a small balloon: the
+     * page-wide detector boxed only 「は」 of 「はい」 on CG p.6, the recogniser returned the single
+     * kana, and the translator turned that orphan into 「哈」 while the reference project read the
+     * whole word. Re-detecting inside the balloon is what the reference project does for every
+     * balloon, so the floor is lowered until only thumbnails are skipped. Cost is small: the
+     * detector runs on a tight crop instead of the whole page.
      */
-    private val BALLOON_REDETECT_SHARE = 0.03f
+    private val BALLOON_REDETECT_SHARE = 0.006f
 
 
     /** Below this confidence the column is read again with the wider margin. */
@@ -423,16 +429,34 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
                 crop.recycle()
             }
         }
+        // Two kinds of duplicate appear here and both of them poison the translation:
+        //  * inside itself. The balloon detector still boxes a short line twice - on CG p.6 it
+        //    returned 「はい」 and a separate 「は」 for the same line, and the group reached the
+        //    translator as 「はい。 は」.
+        //  * a page region the balloon pass already re-read, which came back as
+        //    「凉香 涼香さんが…喜んでくれるかなって…」 on the same page.
+        // Keep the richer reading: a region mostly covered by one that already won is dropped.
+        val deduped = ArrayList<TextRegion>()
+        for (region in inside.sortedWith(
+            compareByDescending<TextRegion> { it.text.count { c -> !c.isWhitespace() } }
+                .thenByDescending { it.confidence }
+        )) {
+            if (deduped.none { coveredBy(it.box, region.box) }) deduped.add(region)
+        }
         // Everything outside the re-detected balloons keeps the page result, small balloons
         // included: their columns are short enough that the page pass never merged them.
         val outside = page.filter { region ->
-            refill.none { it.box.contains(region.box.centerX(), region.box.centerY()) }
+            val area = region.box.width().toFloat() * region.box.height()
+            refill.none { balloon ->
+                area > 0f && overlapArea(balloon.box, region.box) / area >= 0.5f
+            }
         }
-        val result = inside + outside
+        val result = deduped + outside
         android.util.Log.i(
             "Ocr",
             "OCR balloons=${balloons.size} refill=${refill.size} inside=${inside.size} " +
-                "outside=${outside.size} ms=${android.os.SystemClock.elapsedRealtime() - started}"
+                "dedup=${deduped.size} outside=${outside.size} " +
+                "ms=${android.os.SystemClock.elapsedRealtime() - started}"
         )
         return result
     }
@@ -937,6 +961,20 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
      * columns that happen to share the same x range in two different bubbles (or two panels)
      * were fused into one tall box, which then swallowed the artwork between them.
      */
+    /** Area two boxes share, 0 when they do not intersect. */
+    private fun overlapArea(a: Rect, b: Rect): Float {
+        val w = min(a.right, b.right) - max(a.left, b.left)
+        val h = min(a.bottom, b.bottom) - max(a.top, b.top)
+        return if (w <= 0 || h <= 0) 0f else w.toFloat() * h.toFloat()
+    }
+
+    /** True when [outer] covers most of [inner], i.e. [inner] is the same lettering read twice. */
+    private fun coveredBy(outer: Rect, inner: Rect): Boolean {
+        val own = inner.width().toFloat() * inner.height()
+        if (own <= 0f) return false
+        return overlapArea(outer, inner) / own >= 0.6f
+    }
+
     private fun mergeIntoColumns(components: List<Rect>): List<Rect> {
         val columns = ArrayList<Rect>()
         for (component in components.sortedBy { it.centerX() }) {
