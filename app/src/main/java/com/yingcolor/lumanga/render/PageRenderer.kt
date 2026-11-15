@@ -32,6 +32,14 @@ class PageJob(
 object PageRenderer {
     private const val DARK_TEXT = 0xFF1B1B1B.toInt()
 
+    /** A cover and its lettering, kept apart until every cover has been painted. */
+    private class Lettering(
+        val text: String,
+        val rect: RectF,
+        val color: Int,
+        val vertical: Boolean
+    )
+
     fun draw(canvas: Canvas, jobs: List<PageJob>, pageWidth: Int, pageHeight: Int) {
         val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = android.graphics.Typeface.create(
@@ -41,6 +49,9 @@ object PageRenderer {
         val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
         val path = Path()
         val shape = RectF()
+        val lettering = ArrayList<Lettering>(jobs.size)
+        // Balloons can overlap. Painting each cover and its text together would let a later
+        // cover wipe text already drawn, so all covers go down first and all text afterwards.
         for (job in jobs) {
             val text = BubbleTextScaling.prepareTextForLayout(job.text)
             if (text.isBlank()) continue
@@ -65,8 +76,17 @@ object PageRenderer {
             canvas.drawPath(path, fillPaint)
             val textRect = BubbleTextScaling.resolveTextRect(path)
             if (textRect.width() <= 0f || textRect.height() <= 0f) continue
-            textPaint.color = if (luminance(job.fill) > 140) DARK_TEXT else Color.WHITE
-            drawText(canvas, text, textRect, textPaint, job.vertical)
+            lettering.add(
+                Lettering(
+                    text, RectF(textRect),
+                    if (luminance(job.fill) > 140) DARK_TEXT else Color.WHITE,
+                    job.vertical
+                )
+            )
+        }
+        for (item in lettering) {
+            textPaint.color = item.color
+            drawText(canvas, item.text, item.rect, textPaint, item.vertical)
         }
     }
 

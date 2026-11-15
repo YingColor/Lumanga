@@ -283,6 +283,16 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_TEXT_LAYOUT, TextLayout.VERTICAL)
         set(value) = sp.edit().putInt(KEY_TEXT_LAYOUT, TextLayout.coerce(value)).apply()
 
+    /**
+     * Which painting pipeline draws the translated page. Off uses the in-house renderer that
+     * anchors text where the Japanese sat and measures its size from the original glyphs; on
+     * uses the rendering code ported from manga-translator-android, fitted to the balloon.
+     * Purely a drawing choice: OCR, grouping and stored translations are unaffected.
+     */
+    var referenceRenderer: Boolean
+        get() = sp.getBoolean(KEY_REFERENCE_RENDERER, false)
+        set(value) = sp.edit().putBoolean(KEY_REFERENCE_RENDERER, value).apply()
+
     var readMode: Int
         get() = sp.getInt(KEY_READ_MODE, 0).coerceIn(0, 2)
         set(value) = sp.edit().putInt(KEY_READ_MODE, value.coerceIn(0, 2)).apply()
@@ -441,6 +451,7 @@ class Prefs(context: Context) {
         const val KEY_OCR_API_MODEL = "ocr_api_model"
         const val KEY_OCR_PROTOCOL = "ocr_protocol"
         const val KEY_TEXT_LAYOUT = "text_layout"
+        const val KEY_REFERENCE_RENDERER = "reference_renderer"
         const val KEY_SOURCE_LANGUAGE = "source_language"
         const val KEY_TARGET_LANGUAGE = "target_language"
         const val KEY_PRE_API = "pretranslate_api"

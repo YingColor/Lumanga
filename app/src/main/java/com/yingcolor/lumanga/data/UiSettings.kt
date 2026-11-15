@@ -200,6 +200,14 @@ class UiSettings(private val prefs: Prefs) {
         prefs.textLayout = safe
     }
 
+    private var stateReferenceRenderer by mutableStateOf(prefs.referenceRenderer)
+    val referenceRenderer: Boolean get() = stateReferenceRenderer
+
+    fun setReferenceRenderer(value: Boolean) {
+        stateReferenceRenderer = value
+        prefs.referenceRenderer = value
+    }
+
     fun setTranslateEnabled(value: Boolean) {
         stateTranslateEnabled = value
         prefs.translateEnabled = value
