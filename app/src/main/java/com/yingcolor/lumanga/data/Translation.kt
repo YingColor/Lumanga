@@ -1909,18 +1909,25 @@ object TranslationEngine {
         target: Float
     ): Pair<Rect, Fit>? {
         if (bounds.width() < 10 || bounds.height() < 10) return null
+        // A short line fits almost anywhere, so a target clamped to MAX_GLYPH was kept verbatim:
+        // one or two glyphs in a small balloon came out at the ceiling and the plate grew around
+        // them. Derive those from the lettering box; longer text keeps its measured size.
+        var sizeCap = target.coerceIn(7f, MAX_GLYPH)
+        if (text.count { !it.isWhitespace() } <= 4) {
+            val plate = Rect(anchor)
+            val pad = (min(anchor.width(), anchor.height()) * 0.04f).toInt().coerceIn(4, 12)
+            plate.inset(-pad, -pad)
+            while (sizeCap > 7f && layoutIn(text, paint, plate, sizeCap, vertical) == null) {
+                sizeCap -= 1f
+            }
+            sizeCap = sizeCap.coerceAtLeast(7f)
+        }
         // A little slack, so a descender or a heavy last stroke is not clipped by the box edge.
-        val margin = (target * 0.22f).toInt().coerceAtLeast(2)
+        val margin = (sizeCap * 0.22f).toInt().coerceAtLeast(2)
         val box = Rect(anchor)
         box.inset(-margin, -margin)
         if (!box.intersect(bounds)) box.set(anchor)
-
-        val sizeCap = target.coerceIn(7f, MAX_GLYPH)
         var fit = layoutIn(text, paint, box, sizeCap, vertical)
-        // Borrow empty bubble before shrinking the text: a long line in a big bubble should use
-        // the room that is there, not turn into tiny text floating in the middle of it. Growth is
-        // stepped a quarter of a glyph at a time so the block stays tight around where the
-        // original lettering was instead of being spread across the whole bubble.
         while (fit == null && growWithin(box, bounds, sizeCap * 0.25f)) {
             fit = layoutIn(text, paint, box, sizeCap, vertical)
         }
