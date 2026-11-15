@@ -1921,7 +1921,8 @@ object TranslationEngine {
             "Translate",
             "TR fit size=${chosen.size} target=$target box=${box.width()}x${box.height()} " +
                 "anchor=${anchor.width()}x${anchor.height()} " +
-                "chars=${chosen.columns.sumOf { it.length } + chosen.lines.sumOf { it.length }}"
+                "chars=${chosen.columns.sumOf { it.length } + chosen.lines.sumOf { it.length }} " +
+                "cols=${chosen.columns.joinToString(",") { it.length.toString() }}"
         )
         return box to chosen
     }
@@ -2217,13 +2218,36 @@ object TranslationEngine {
 
     private fun isPunctuation(ch: Char): Boolean = ch in PUNCTUATION
 
+    /**
+     * Splits [text] into the fewest columns that respect [per], spreading the characters evenly.
+     *
+     * Filling every column to [per] and letting the remainder stand on its own turned thirteen
+     * characters in a twelve-row box into twelve plus one stranded glyph at the far left, which
+     * reads as a mistake. Balanced columns need the same width and give seven and six instead.
+     * A boundary that would open a column with a closing mark is pushed back one character, and
+     * a column left holding nothing but a mark folds into its neighbour.
+     */
     private fun chunk(text: String, per: Int): List<String> {
-        val columns = ArrayList<String>(4)
-        var i = 0
-        while (i < text.length) {
-            val end = min(i + per, text.length)
-            columns.add(text.substring(i, end))
-            i = end
+        if (text.isEmpty() || per < 1) return emptyList()
+        val count = (text.length + per - 1) / per
+        if (count <= 1) return listOf(text)
+        val columns = ArrayList<String>(count)
+        var start = 0
+        for (index in 0 until count) {
+            val left = count - index
+            var end = if (index == count - 1) {
+                text.length
+            } else {
+                start + ((text.length - start) + left - 1) / left
+            }
+            // 「。」「、」「」」 belong to the line they close, not to the top of the next column.
+            if (index < count - 1 && end < text.length - 1 &&
+                isPunctuation(text[end]) && end - start < per
+            ) {
+                end++
+            }
+            columns.add(text.substring(start, end))
+            start = end
         }
         if (columns.size > 1) {
             val last = columns.last()
