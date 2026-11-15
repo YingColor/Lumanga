@@ -1518,18 +1518,14 @@ object TranslationEngine {
 
     private class Patch(
         val text: String,
-        /** Area covered by the translation, and by its background. */
-        val area: Rect,
-        /** Where the original lettering sat. The translation is anchored here, not centred in [area]. */
-        val anchor: Rect,
+        /** The plate actually painted: original lettering plus the box the translation used. */
+        val fill: Rect,
         val background: Int,
         val vertical: Boolean,
-        /** Font size the page was typeset at, measured from the source pixels. */
-        val target: Float,
+        /** Cached typesetting result, so the cover is sized from the very box we draw in. */
+        val fitted: Pair<Rect, Fit>,
         /** Balloon outline in page pixels, when the segmentation model matched this group. */
-        val contour: FloatArray? = null,
-        /** Extra area the cover has to reach: columns dropped by the confidence floor. */
-        val cover: Rect? = null
+        val contour: FloatArray? = null
     )
 
     /**
@@ -1581,12 +1577,11 @@ object TranslationEngine {
             } else {
                 conservativeArea(source, group.bubble, unit)
             }
-            // A narration strip regularly loses one of its columns to the confidence floor, and
-            // that column then stays readable right beside the Chinese - the "the background does
-            // not cover the original" report. With no balloon outline there is nothing that says
-            // where the block ends, so widen by one column on each side. Dialogue inside a
-            // balloon is untouched: its contour already bounds the cover.
+            // Typesetting may borrow the blank interior of the bubble; see conservativeArea().
+            // The painted plate is computed separately below and never uses this full area.
             if (group.contour == null) area.inset(-unit, 0)
+            // Columns that missed the confidence floor still carry ink on the page, so their
+            // footprints have to be inside the cover as well as inside the typesetting bounds.
             group.cover?.let { area.union(it) }
             placed.add(area)
             // Sample from the patch itself: a halftone bubble needs its own grey as the fill,
@@ -1599,16 +1594,23 @@ object TranslationEngine {
             // Measure the lettering from the untouched page: out is still a plain copy at this
             // point (patches are collected first, painted afterwards).
             val target = sourceGlyphSize(group, out, background)
+            val fitted = fittedBox(
+                value, paint, Rect(group.bubble), area, verticalText, target
+            ) ?: return@forEachIndexed
+            // The plate is NOT the typesetting bounds. It covers exactly the original lettering,
+            // any column the confidence floor dropped, and the box the Chinese actually occupies.
+            // That is what makes it follow the layout instead of filling the whole bubble.
+            val fill = Rect(group.bubble)
+            group.cover?.let { fill.union(it) }
+            fill.union(fitted.first)
             patches.add(
-                Patch(
-                    value, area, Rect(group.bubble), background, verticalText, target,
-                    group.contour, group.cover
-                )
+                Patch(value, fill, background, verticalText, fitted, group.contour)
             )
             android.util.Log.d(
                 "Translate",
                 "TR patch i=$i clean=$clean vertical=$verticalText " +
                     "seed=${group.bubble.width()}x${group.bubble.height()} " +
+                    "fill=${fill.width()}x${fill.height()} " +
                     "area=${area.width()}x${area.height()} unit=$unit target=$target"
             )
         }
@@ -1647,7 +1649,7 @@ object TranslationEngine {
                 path.close()
                 canvas.drawPath(path, coverPaint)
             } else {
-                val rect = RectF(patch.area)
+                val rect = RectF(patch.fill)
                 // Two percent of the short edge, not a fixed three pixels: the detector box
                 // stops at the glyph centres, so a fixed margin left the first and last column's
                 // outer strokes visible beside the cover on a long narration strip. Kept small
@@ -1665,9 +1667,7 @@ object TranslationEngine {
             } else {
                 Color.WHITE
             }
-            drawFittedText(
-                canvas, paint, patch.text, patch.anchor, patch.area, patch.vertical, patch.target
-            )
+            drawFittedText(canvas, paint, patch.text, patch.fitted, patch.vertical)
         }
         return out
     }
@@ -1720,16 +1720,15 @@ object TranslationEngine {
         return total > 0 && dark.toFloat() / total < 0.12f
     }
 
-    /** Just enough room to clear the anti-aliased fringe when the text sits on artwork. */
+    /**
+     * Room the typesetting is allowed to borrow. This is NOT the cover: [render] paints only
+     * the union of the original lettering and the box the translation actually used, so this
+     * can stay generous without making the plate bigger. A narration strip regularly loses one
+     * of its columns to the confidence floor, and a long translation needs a second column;
+     * both need space here or the font gets squeezed down.
+     */
     private fun conservativeArea(source: Bitmap, seed: Rect, unit: Int): Rect {
         val area = Rect(seed)
-        // Two things push the cover past the OCR box here. The detector boxes stop at the glyph
-        // centres, and recognition regularly drops one of the columns of a narration strip (the
-        // low-confidence one), which then stayed readable right beside the Chinese. Padding by a
-        // fraction of the short edge could never reach a whole missing column, so the margin is
-        // measured in column widths instead: about four fifths of one column sideways covers the
-        // neighbour's glyph bodies without reaching the next block, a third above and below takes
-        // the last row's descenders.
         val side = maxOf(8, (unit * 0.8f).toInt())
         val edge = maxOf(6, (unit * 0.35f).toInt())
         area.inset(-side, -edge)
@@ -1875,24 +1874,19 @@ object TranslationEngine {
     )
 
     /**
-     * Draws [text] at the size the page was typeset at, centred on the spot the original
-     * lettering occupied.
-     *
-     * [anchor] is the footprint of the original text, [bounds] the erased bubble interior. The
-     * drawing box starts at [anchor] and grows symmetrically inside [bounds] only as far as the
-     * translation needs, so the block stays centred where the Japanese was instead of drifting to
-     * the middle of the bubble. The font shrinks only when the whole bubble is too small.
+     * Works out the exact box the translation will occupy, centred on the spot the original
+     * lettering sat. [bounds] is only the room typesetting may borrow; the painted plate is
+     * sized from the returned box instead, so a generous bounds no longer makes a huge cover.
      */
-    private fun drawFittedText(
-        canvas: Canvas,
-        paint: Paint,
+    private fun fittedBox(
         text: String,
+        paint: Paint,
         anchor: Rect,
         bounds: Rect,
         vertical: Boolean,
         target: Float
-    ) {
-        if (bounds.width() < 10 || bounds.height() < 10) return
+    ): Pair<Rect, Fit>? {
+        if (bounds.width() < 10 || bounds.height() < 10) return null
         // A little slack, so a descender or a heavy last stroke is not clipped by the box edge.
         val margin = (target * 0.22f).toInt().coerceAtLeast(2)
         val box = Rect(anchor)
@@ -1922,15 +1916,27 @@ object TranslationEngine {
                 if (fit != null) break
             }
         }
-        val chosen = fit ?: return
-        paint.textSize = chosen.size
+        val chosen = fit ?: return null
         android.util.Log.d(
             "Translate",
             "TR fit size=${chosen.size} target=$target box=${box.width()}x${box.height()} " +
                 "anchor=${anchor.width()}x${anchor.height()} " +
                 "chars=${chosen.columns.sumOf { it.length } + chosen.lines.sumOf { it.length }}"
         )
+        return box to chosen
+    }
 
+    /** Draws a layout already produced by [fittedBox], clipped to its own box. */
+    private fun drawFittedText(
+        canvas: Canvas,
+        paint: Paint,
+        text: String,
+        fitted: Pair<Rect, Fit>,
+        vertical: Boolean
+    ) {
+        val box = fitted.first
+        val chosen = fitted.second
+        paint.textSize = chosen.size
         canvas.save()
         canvas.clipRect(box)
         val metrics = paint.fontMetrics
