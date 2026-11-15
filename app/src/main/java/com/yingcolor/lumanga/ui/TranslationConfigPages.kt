@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.ApiClient
 import com.yingcolor.lumanga.data.ApiProtocol
+import com.yingcolor.lumanga.data.CoverStyle
 import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.SourceLanguage
 import com.yingcolor.lumanga.data.TextLayout
@@ -420,6 +421,26 @@ fun ModelSettingsPage(settings: UiSettings) {
                 checked = settings.textLayout == TextLayout.HORIZONTAL,
                 onCheckedChange = {
                     settings.setTextLayout(if (it) TextLayout.HORIZONTAL else TextLayout.VERTICAL)
+                }
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        // Same kind of preference: the stored page keeps groups and text only, so switching this
+        // redraws immediately. Off keeps the balloon outline intact, on hides stray kana with it.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = S.coverWholeBalloon, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    text = S.coverWholeBalloonTip,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = settings.coverStyle == CoverStyle.BALLOON,
+                onCheckedChange = {
+                    settings.setCoverStyle(if (it) CoverStyle.BALLOON else CoverStyle.LETTERING)
                 }
             )
         }

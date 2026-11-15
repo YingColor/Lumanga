@@ -108,6 +108,7 @@ import com.yingcolor.lumanga.data.ApiClient
 import com.yingcolor.lumanga.data.ApiProtocol
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BubbleGroup
+import com.yingcolor.lumanga.data.CoverStyle
 import com.yingcolor.lumanga.data.LetteringFont
 import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.PageAnimation
@@ -780,6 +781,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         protocol: ApiProtocol,
         groupMode: Boolean,
         horizontal: Boolean,
+        coverBalloon: Boolean,
         onPartial: (suspend (Bitmap) -> Unit)? = null
     ): Bitmap? {
         // The layout is part of the key: flipping the switch must redraw instead of returning
@@ -787,7 +789,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         // join it for the same reason — the same address gives a different answer per wire
         // format, and the two modes produce different text.
         val key = "$index-${source.width}x${source.height}-${protocol.id}-$groupMode-" +
-            "${(api + model).hashCode()}-$horizontal-${TranslationEngine.languageKey}"
+            "${(api + model).hashCode()}-$horizontal-$coverBalloon-" +
+            TranslationEngine.languageKey
         translatedCache.get(key)?.let {
             publish(index, TranslateState())
             return it
@@ -812,7 +815,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 viewModelScope.async(Dispatchers.IO) {
                     runTranslate(
                         index, key, source, api, apiKey, model, protocol, groupMode, horizontal,
-                        streaming, token
+                        coverBalloon, streaming, token
                     )
                 }.also { job ->
                     // The job can outlive the awaiter (it caches its own result), so the handle
@@ -912,13 +915,14 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         protocol: ApiProtocol,
         groupMode: Boolean,
         horizontal: Boolean,
+        coverBalloon: Boolean,
         onPartial: (suspend (Bitmap) -> Unit)?,
         token: ApiClient.CancelToken? = null
     ): TranslateOutcome {
         val rk = resultKey(index, protocol, groupMode, api, model)
         pageResults.get(rk)?.let { cached ->
             android.util.Log.i("Translate", "TR reuse index=$index")
-            return TranslateOutcome.Done(renderScaled(source, cached, horizontal))
+            return TranslateOutcome.Done(renderScaled(source, cached, horizontal, coverBalloon))
         }
         // A page translated ahead of time (long-press → 预翻译) needs neither OCR nor network.
         val stored = TranslationStore.page(getApplication(), bookId, index)
@@ -931,7 +935,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             android.util.Log.i("Translate", "TR stored index=$index")
             val cached = PageResult(stored.width, stored.height, stored.groups, stored.lines)
             pageResults.put(rk, cached)
-            return TranslateOutcome.Done(renderScaled(source, cached, horizontal))
+            return TranslateOutcome.Done(renderScaled(source, cached, horizontal, coverBalloon))
         }
         if (api.isBlank()) return TranslateOutcome.Failed("no endpoint")
         // The page on screen must never queue behind its neighbours: OCR is serialised, so a
@@ -1019,7 +1023,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 onPartial?.invoke(
                     TranslationEngine.render(
-                        source, groups, collected.map { it ?: "" }, horizontal, lettering
+                        source, groups, collected.map { it ?: "" }, horizontal, lettering,
+                        coverBalloon
                     )
                 )
             }
@@ -1055,7 +1060,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             }
             pageResults.put(rk, PageResult(source.width, source.height, groups, lines))
         }
-        val rendered = TranslationEngine.render(source, groups, lines, horizontal, lettering)
+        val rendered = TranslationEngine.render(
+            source, groups, lines, horizontal, lettering, coverBalloon
+        )
         // Store the result here rather than in the caller: if the user scrolled away while the
         // request was in flight the awaiter is already cancelled, and the finished page would
         // otherwise be dropped and re-translated from scratch on the next visit.
@@ -1074,9 +1081,16 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         "|${TranslationEngine.languageKey}"
 
     /** Re-draws a cached page at a different decode size instead of running OCR again. */
-    private fun renderScaled(source: Bitmap, cached: PageResult, horizontal: Boolean): Bitmap {
+    private fun renderScaled(
+        source: Bitmap,
+        cached: PageResult,
+        horizontal: Boolean,
+        coverBalloon: Boolean
+    ): Bitmap {
         if (cached.width == source.width && cached.height == source.height) {
-            return TranslationEngine.render(source, cached.groups, cached.lines, horizontal, lettering)
+            return TranslationEngine.render(
+                source, cached.groups, cached.lines, horizontal, lettering, coverBalloon
+            )
         }
         val sx = source.width.toFloat() / cached.width
         val sy = source.height.toFloat() / cached.height
@@ -1088,7 +1102,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 bubble = scaleRect(group.bubble, sx, sy)
             )
         }
-        return TranslationEngine.render(source, scaled, cached.lines, horizontal, lettering)
+        return TranslationEngine.render(
+            source, scaled, cached.lines, horizontal, lettering, coverBalloon
+        )
     }
 
     private fun scaleRect(rect: Rect, sx: Float, sy: Float): Rect = Rect(
@@ -2466,6 +2482,7 @@ private fun PageRow(
         protocol = ApiProtocol.from(settings.translateProtocol),
         groupMode = settings.translateMode == TranslateMode.GROUP,
         layout = settings.textLayout,
+        coverBalloon = settings.coverStyle == CoverStyle.BALLOON,
         languageKey = settings.languageKey,
         modifier = modifier
     )
@@ -2488,6 +2505,7 @@ private fun rememberPageBitmap(
     protocol: ApiProtocol,
     groupMode: Boolean,
     layout: Int,
+    coverBalloon: Boolean,
     languageKey: String
 ): Bitmap? {
     
@@ -2520,7 +2538,7 @@ private fun rememberPageBitmap(
         key1 = index,
         key2 = quality,
         key3 = "$decodeW-$decodeH-$translate-$api-$model-${protocol.id}-$groupMode-$layout-" +
-            "$languageKey-${vm.translationRetry}"
+            "$coverBalloon-$languageKey-${vm.translationRetry}"
     ) {
         
         
@@ -2535,7 +2553,7 @@ private fun rememberPageBitmap(
         if (translate && full != null) {
             val rendered = vm.translate(
                 index, full, api, apiKey, model, protocol, groupMode,
-                layout == TextLayout.HORIZONTAL
+                layout == TextLayout.HORIZONTAL, coverBalloon
             ) { partial ->
                 // Per-group mode: show the bubbles that already have an answer instead of
                 // leaving the page untranslated until the last one lands.
@@ -2573,6 +2591,7 @@ private fun PageSpread(
     protocol: ApiProtocol,
     groupMode: Boolean,
     layout: Int,
+    coverBalloon: Boolean,
     languageKey: String,
     modifier: Modifier = Modifier
 ) {
@@ -2593,7 +2612,8 @@ private fun PageSpread(
         for (i in indices) {
             loaded += rememberPageBitmap(
                 vm, i, targetW, targetH, quality, zoomMode, zoomPercent,
-                translate, api, apiKey, model, protocol, groupMode, layout, languageKey
+                translate, api, apiKey, model, protocol, groupMode, layout, coverBalloon,
+                languageKey
             )
         }
 

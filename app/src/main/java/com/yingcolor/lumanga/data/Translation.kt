@@ -1541,7 +1541,8 @@ object TranslationEngine {
         groups: List<BubbleGroup>,
         translated: List<String>,
         horizontal: Boolean = false,
-        lettering: Typeface? = null
+        lettering: Typeface? = null,
+        coverBalloon: Boolean = false
     ): Bitmap {
         // Latin words cannot be stacked in a vertical column, so English output always uses the
         // existing horizontal branch. The geometry (patch, sampling) is untouched.
@@ -1633,22 +1634,17 @@ object TranslationEngine {
                 COVER_ALPHA, Color.red(base), Color.green(base), Color.blue(base)
             )
             val contour = patch.contour
+            val outline = balloonPath(contour)
+            val whole = coverBalloon && outline != null
             android.util.Log.d(
                 "Translate",
-                "TR cover i=${patches.indexOf(patch)} shape=${if (contour != null && contour.size >= 6) "balloon" else "rect"}"
+                "TR cover i=${patches.indexOf(patch)} " +
+                    "shape=${if (whole) "balloon" else if (outline != null) "lettering" else "rect"}"
             )
-            if (contour != null && contour.size >= 6) {
-                // Follow the balloon outline instead of covering a rectangle: the shape is
-                // what keeps the cover off the artwork next to the bubble.
-                val path = Path()
-                path.moveTo(contour[0], contour[1])
-                var index = 2
-                while (index + 1 < contour.size) {
-                    path.lineTo(contour[index], contour[index + 1])
-                    index += 2
-                }
-                path.close()
-                canvas.drawPath(path, coverPaint)
+            if (whole && outline != null) {
+                // The user's choice: follow the balloon outline. It also hides kana the detector
+                // missed, at the cost of painting over the outline itself.
+                canvas.drawPath(outline, coverPaint)
             } else {
                 val rect = RectF(patch.fill)
                 // Two percent of the short edge, not a fixed three pixels: the detector box
@@ -1659,7 +1655,18 @@ object TranslationEngine {
                 val pad = min(rect.width(), rect.height()) * 0.02f
                 rect.inset(-pad, -pad)
                 val radius = min(rect.width(), rect.height()) * 0.12f
-                canvas.drawRoundRect(rect, radius, radius, coverPaint)
+                if (outline != null) {
+                    // The default: cover the original lettering and the translation only, so the
+                    // balloon's outline, tail and shading survive. The outline is still used, but
+                    // as a clip: a rounded rectangle can stick out of a slanted or jagged balloon
+                    // and paint over the drawing beside it.
+                    canvas.save()
+                    canvas.clipPath(outline)
+                    canvas.drawRoundRect(rect, radius, radius, coverPaint)
+                    canvas.restore()
+                } else {
+                    canvas.drawRoundRect(rect, radius, radius, coverPaint)
+                }
             }
         }
         patches.forEach { patch ->
@@ -1671,6 +1678,20 @@ object TranslationEngine {
             drawFittedText(canvas, paint, patch.text, patch.fitted, patch.vertical, lettering)
         }
         return out
+    }
+
+    /** Balloon outline as a closed path, or null when the model gave no usable shape. */
+    private fun balloonPath(contour: FloatArray?): Path? {
+        if (contour == null || contour.size < 6) return null
+        val path = Path()
+        path.moveTo(contour[0], contour[1])
+        var index = 2
+        while (index + 1 < contour.size) {
+            path.lineTo(contour[index], contour[index + 1])
+            index += 2
+        }
+        path.close()
+        return path
     }
 
     /** Typical width of one Japanese column, used as the yardstick for growing the patch. */

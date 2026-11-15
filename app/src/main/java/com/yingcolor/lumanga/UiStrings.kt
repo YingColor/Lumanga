@@ -208,6 +208,8 @@ object S {
     const val translateLayoutHorizontalShort = "横排（从左到右）"
     const val preTranslateLayout = "译文排版"
     const val translateLayoutHorizontalTip = "打开后译文像普通中文书一样横着排、从左往右读；关掉是竖排（默认）。已译好的页和预翻译的页都按这个显示，改了立刻生效，不用重译。"
+    const val coverWholeBalloon = "气球内整圈涂白"
+    const val coverWholeBalloonTip = "关掉（默认）：只盖住原文和译文附近，气球的黑描边、尾巴、网点都留着。打开：沿整个气球轮廓涂白，能把漏识别的日文一起盖掉，但描边也会被压住、看起来像断线。"
     const val translateWorking = "正在翻译…"
     const val translateReading = "正在识别文字…"
     const val translateNoText = "这一页没认出文字"

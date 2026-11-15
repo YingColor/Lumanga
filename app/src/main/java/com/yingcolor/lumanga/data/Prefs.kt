@@ -283,6 +283,11 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_TEXT_LAYOUT, TextLayout.VERTICAL)
         set(value) = sp.edit().putInt(KEY_TEXT_LAYOUT, TextLayout.coerce(value)).apply()
 
+    /** How far the plate behind a translated bubble reaches; see [CoverStyle]. */
+    var coverStyle: Int
+        get() = sp.getInt(KEY_COVER_STYLE, CoverStyle.LETTERING)
+        set(value) = sp.edit().putInt(KEY_COVER_STYLE, CoverStyle.coerce(value)).apply()
+
     var readMode: Int
         get() = sp.getInt(KEY_READ_MODE, 0).coerceIn(0, 2)
         set(value) = sp.edit().putInt(KEY_READ_MODE, value.coerceIn(0, 2)).apply()
@@ -441,6 +446,7 @@ class Prefs(context: Context) {
         const val KEY_OCR_API_MODEL = "ocr_api_model"
         const val KEY_OCR_PROTOCOL = "ocr_protocol"
         const val KEY_TEXT_LAYOUT = "text_layout"
+        const val KEY_COVER_STYLE = "cover_style"
         const val KEY_SOURCE_LANGUAGE = "source_language"
         const val KEY_TARGET_LANGUAGE = "target_language"
         const val KEY_PRE_API = "pretranslate_api"

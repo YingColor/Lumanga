@@ -200,6 +200,15 @@ class UiSettings(private val prefs: Prefs) {
         prefs.textLayout = safe
     }
 
+    private var stateCoverStyle by mutableIntStateOf(CoverStyle.coerce(prefs.coverStyle))
+    val coverStyle: Int get() = stateCoverStyle
+
+    fun setCoverStyle(value: Int) {
+        val safe = CoverStyle.coerce(value)
+        stateCoverStyle = safe
+        prefs.coverStyle = safe
+    }
+
     fun setTranslateEnabled(value: Boolean) {
         stateTranslateEnabled = value
         prefs.translateEnabled = value
