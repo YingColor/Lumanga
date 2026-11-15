@@ -425,25 +425,6 @@ fun ModelSettingsPage(settings: UiSettings) {
         }
 
         Spacer(Modifier.height(16.dp))
-        // A/B switch for the transplanted rendering pipeline. It is a drawing choice only:
-        // stored translations, OCR and grouping are identical, so flipping it redraws the page
-        // without another recognition or network pass.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = S.translateRendererReference, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    text = S.translateRendererReferenceTip,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant
-                )
-            }
-            Switch(
-                checked = settings.referenceRenderer,
-                onCheckedChange = settings::setReferenceRenderer
-            )
-        }
-
-        Spacer(Modifier.height(16.dp))
         // A request strategy rather than a service setting: it changes how many calls a page
         // costs, so it belongs to this page but not next to the endpoint fields.
         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -22,8 +22,6 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
-import com.yingcolor.lumanga.render.PageJob
-import com.yingcolor.lumanga.render.PageRenderer
 
 object TranslationConfig {
     /**
@@ -1490,9 +1488,7 @@ object TranslationEngine {
         source: Bitmap,
         groups: List<BubbleGroup>,
         translated: List<String>,
-        horizontal: Boolean = false,
-        /** Draw with the ported manga-translator-android pipeline instead of the in-house one. */
-        referenceRenderer: Boolean = false
+        horizontal: Boolean = false
     ): Bitmap {
         // Latin words cannot be stacked in a vertical column, so English output always uses the
         // existing horizontal branch. The geometry (patch, sampling) is untouched.
@@ -1559,28 +1555,6 @@ object TranslationEngine {
                     "seed=${group.bubble.width()}x${group.bubble.height()} " +
                     "area=${area.width()}x${area.height()} unit=$unit target=$target"
             )
-        }
-        // Alternative painting pipeline ported from manga-translator-android. It consumes the
-        // very same patches, so OCR, balloon matching, grouping and the stored translations are
-        // untouched; only the code that turns a patch into pixels differs. Its shape paths follow
-        // the balloon contour and its text size is fitted to the shape rather than measured from
-        // the original glyphs. Kept behind a switch so the two can be compared on one page.
-        if (referenceRenderer) {
-            val jobs = patches.map { patch ->
-                PageJob(
-                    // Our translation joins the source columns with a space so the model can see
-                    // the boundaries. The reference renderer reflows a continuous paragraph into
-                    // columns itself and treats a space as a printable character, so feeding it
-                    // our column breaks produces a second (wrong) wrap on top of the first.
-                    text = WHITESPACE.replace(patch.text, ""),
-                    rect = RectF(patch.area),
-                    contour = patch.contour,
-                    vertical = patch.vertical,
-                    fill = patch.background
-                )
-            }
-            PageRenderer.draw(canvas, jobs, out.width, out.height)
-            return out
         }
         // All backgrounds first, all text afterwards: a later patch overlapping an earlier one
         // must not wipe Chinese that was already drawn. A wide free-lettering block is split into

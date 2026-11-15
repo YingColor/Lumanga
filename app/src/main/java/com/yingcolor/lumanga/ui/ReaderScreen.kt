@@ -217,8 +217,6 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = Prefs(app)
     private val mediumOcr: Boolean get() = prefs.ocrModel == OcrModel.MEDIUM.id
     private val onlineOcr: Boolean get() = prefs.ocrOnline
-    /** Drawing choice only; read at render time so flipping the switch repaints cached pages. */
-    private val referenceRenderer: Boolean get() = prefs.referenceRenderer
 
     @Volatile
     private var reader: PageSource? = null
@@ -789,8 +787,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         // join it for the same reason — the same address gives a different answer per wire
         // format, and the two modes produce different text.
         val key = "$index-${source.width}x${source.height}-${protocol.id}-$groupMode-" +
-            "${(api + model).hashCode()}-$horizontal-${TranslationEngine.languageKey}-" +
-            "$referenceRenderer"
+            "${(api + model).hashCode()}-$horizontal-${TranslationEngine.languageKey}"
         translatedCache.get(key)?.let {
             publish(index, TranslateState())
             return it
@@ -1021,10 +1018,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                     TranslateState(TranslateKind.WORKING, STAGE_API, "$answered/${groups.size}")
                 )
                 onPartial?.invoke(
-                    TranslationEngine.render(
-                        source, groups, collected.map { it ?: "" }, horizontal,
-                        referenceRenderer
-                    )
+                    TranslationEngine.render(source, groups, collected.map { it ?: "" }, horizontal)
                 )
             }
         } else {
@@ -1059,7 +1053,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             }
             pageResults.put(rk, PageResult(source.width, source.height, groups, lines))
         }
-        val rendered = TranslationEngine.render(source, groups, lines, horizontal, referenceRenderer)
+        val rendered = TranslationEngine.render(source, groups, lines, horizontal)
         // Store the result here rather than in the caller: if the user scrolled away while the
         // request was in flight the awaiter is already cancelled, and the finished page would
         // otherwise be dropped and re-translated from scratch on the next visit.
@@ -1080,9 +1074,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     /** Re-draws a cached page at a different decode size instead of running OCR again. */
     private fun renderScaled(source: Bitmap, cached: PageResult, horizontal: Boolean): Bitmap {
         if (cached.width == source.width && cached.height == source.height) {
-            return TranslationEngine.render(
-                source, cached.groups, cached.lines, horizontal, referenceRenderer
-            )
+            return TranslationEngine.render(source, cached.groups, cached.lines, horizontal)
         }
         val sx = source.width.toFloat() / cached.width
         val sy = source.height.toFloat() / cached.height
@@ -1094,7 +1086,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 bubble = scaleRect(group.bubble, sx, sy)
             )
         }
-        return TranslationEngine.render(source, scaled, cached.lines, horizontal, referenceRenderer)
+        return TranslationEngine.render(source, scaled, cached.lines, horizontal)
     }
 
     private fun scaleRect(rect: Rect, sx: Float, sy: Float): Rect = Rect(
@@ -2473,7 +2465,6 @@ private fun PageRow(
         groupMode = settings.translateMode == TranslateMode.GROUP,
         layout = settings.textLayout,
         languageKey = settings.languageKey,
-        referenceRenderer = settings.referenceRenderer,
         modifier = modifier
     )
 }
@@ -2495,8 +2486,7 @@ private fun rememberPageBitmap(
     protocol: ApiProtocol,
     groupMode: Boolean,
     layout: Int,
-    languageKey: String,
-    referenceRenderer: Boolean
+    languageKey: String
 ): Bitmap? {
     
     
@@ -2528,7 +2518,7 @@ private fun rememberPageBitmap(
         key1 = index,
         key2 = quality,
         key3 = "$decodeW-$decodeH-$translate-$api-$model-${protocol.id}-$groupMode-$layout-" +
-            "$languageKey-$referenceRenderer-${vm.translationRetry}"
+            "$languageKey-${vm.translationRetry}"
     ) {
         
         
@@ -2582,7 +2572,6 @@ private fun PageSpread(
     groupMode: Boolean,
     layout: Int,
     languageKey: String,
-    referenceRenderer: Boolean,
     modifier: Modifier = Modifier
 ) {
     var panX by remember(indices, zoomMode, zoomPercent) { mutableStateOf(0f) }
@@ -2602,8 +2591,7 @@ private fun PageSpread(
         for (i in indices) {
             loaded += rememberPageBitmap(
                 vm, i, targetW, targetH, quality, zoomMode, zoomPercent,
-                translate, api, apiKey, model, protocol, groupMode, layout, languageKey,
-                referenceRenderer
+                translate, api, apiKey, model, protocol, groupMode, layout, languageKey
             )
         }
 

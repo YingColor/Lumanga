@@ -219,8 +219,6 @@ object S {
     const val translateLayoutHorizontalShort = "横排（从左到右）"
     const val preTranslateLayout = "译文排版"
     const val translateLayoutHorizontalTip = "打开后译文像普通中文书一样横着排、从左往右读；关掉是竖排（默认）。已译好的页和预翻译的页都按这个显示，改了立刻生效，不用重译。"
-    const val translateRendererReference = "参考排版引擎（实验）"
-    const val translateRendererReferenceTip = "打开后用 manga-translator-android 的绘制方式：底板贴合气泡轮廓、文字自动填满气泡。关掉用本软件的排版（默认）：文字对齐原文位置、字号匹配原文字号。只影响画面，改了立刻重画，不用重译。"
     const val translateWorking = "正在翻译…"
     const val translateReading = "正在识别文字…"
     const val translateNoText = "这一页没认出文字"
