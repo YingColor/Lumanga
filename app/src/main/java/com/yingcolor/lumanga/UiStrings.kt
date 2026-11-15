@@ -2,6 +2,12 @@ package com.yingcolor.lumanga
 
 
 object S {
+    const val modePage = "翻页"
+    const val modeScroll = "卷轴"
+    const val modeScrollH = "横向卷轴"
+    const val gb = "GB"
+    const val mb = "MB"
+    const val unknownSize = "未知大小"
     const val appName = "光漫堂"
     const val shelf = "书架"
     const val shelfSubtitle = "享受看漫画的时光吧~"
@@ -13,7 +19,6 @@ object S {
     const val search = "搜索漫画"
     const val searchClose = "收起搜索"
     const val chooseFolder = "选择漫画文件夹"
-    const val changeFolder = "更换文件夹"
     const val manageFolders = "管理文件夹"
     const val emptyTitle = "还没有漫画"
     const val emptyBody = "选中存放漫画的文件夹，点一下就能看。压缩包（zip / cbz）和已经解压出来的图片文件夹都能读，混在一起也没关系。"
@@ -50,9 +55,7 @@ object S {
     const val tapToTurn = "点击屏幕两侧翻页"
     const val tapToTurnTip = "关掉后只能靠滑动翻页，点两侧不再翻页"
     const val gridColumns = "书架列数"
-    const val gridTitle = "每排显示几本"
     const val sort = "排序"
-    const val sortTitle = "排序方式"
     const val clearProgress = "清除所有阅读进度"
     const val cleared = "阅读进度已清除"
     const val clearProgressHint = "防误触：需连续点 3 次，弹出警告后再看完 3 秒才能确认"
@@ -73,7 +76,6 @@ object S {
     const val retry = "重试"
     const val booksUnit = "本"
     const val resume = "继续阅读"
-    const val startRead = "开始阅读"
     const val aboutTitle = "关于这个应用"
     const val aboutRepo = "GitHub 仓库 · github.com/YingColor/Lumanga"
     const val about = "关于软件"
@@ -98,9 +100,6 @@ object S {
     const val scrollHint = "上下滑动连续阅读 · 点中间显示/收起工具条 · 点左右侧滚动一屏"
     const val scrollHintH = "左右滑动连续阅读 · 点中间显示/收起工具条 · 点左右侧滚动一屏"
     const val readMode = "阅读模式"
-    const val modePage = "翻页"
-    const val modeScroll = "卷轴"
-    const val modeScrollH = "横向卷轴"
     const val readModeTip = "卷轴：上下连续滚动，适合超长条漫。横向卷轴：所有页接成一条横向长卷，左右自由拖动、不按页吸附。翻页：一页一页翻，可双页摊开。"
     const val fitMode = "缩放方式"
     const val alignMode = "原点设置（卷轴模式）"
@@ -115,7 +114,6 @@ object S {
     const val brightness = "背光控制"
     const val brightnessSystem = "跟随系统亮度"
     const val webtoonLoading = "正在准备长图…"
-    const val webtoonNoImage = "这一页暂时无法显示"
     val fitOptions = listOf("原始尺寸", "符合屏幕", "符合宽度", "符合高度", "固定缩放", "伸展", "覆盖")
     val alignOptions = listOf("水平置中", "靠左", "靠右")
     
@@ -128,11 +126,6 @@ object S {
     const val noImages = "这里没有找到图片"
     const val done = "完成"
     const val cancel = "取消"
-    const val coverLoading = "封面加载中"
-    const val tipFirst = "首次使用：选择存放漫画包的文件夹"
-    const val gb = "GB"
-    const val mb = "MB"
-    const val unknownSize = "未知大小"
     const val folderType = "文件夹"
     const val category = "分类"
     const val categoryAll = "全部分类"
@@ -141,8 +134,6 @@ object S {
     const val removeFolder = "移除"
     const val lastFolderTip = "至少要保留一个文件夹"
     const val librariesHint = "可以添加多个文件夹：不同作者、不同类型、机身存储和 SD 卡分开放的漫画都会出现在同一个书架上。分类自动取每个文件夹下的第一层目录名。"
-    const val folderRemoved = "已移除这个文件夹"
-    const val rarTip = "支持 zip / cbz / rar / 7z 和已解压的图片文件夹"
 
     const val personalize = "个性化"
     const val personalizeSummary = "主题颜色、明暗模式"
@@ -169,7 +160,6 @@ object S {
 
     fun foldersCount(count: Int) = "$count 个文件夹"
 
-    fun pageOf(cur: Int, total: Int) = "$cur / $total"
     fun pageProgress(page: Int, total: Int): String {
         if (total <= 0) return "已读过"
         return "第 ${(page + 1).coerceIn(1, total)} / $total 页"
@@ -211,7 +201,6 @@ object S {
     const val fetchModelsReason = "获取失败："
     const val fetchModelsEmpty = "接口没有返回任何模型"
     const val modelPickerTitle = "选择模型"
-    const val modelPickerPick = "点一个填入"
     const val translateApiTip = "填你自建或购买的翻译服务地址。只填 IP 和端口也行（会自动当成 http:// 并补 /v1），例如 192.168.1.10:8080。应用不内置任何翻译服务，不填就无法翻译。"
     const val translateOnlyText = "只发送识别出的文字，不上传图片"
     const val translateLayoutHorizontal = "译文横排（从左到右）"
@@ -246,7 +235,6 @@ object S {
     const val ocrCurrentTag = "当前"
     const val ocrOnlineTag = "在线"
     const val ocrInUseLocalNote = "手机里跑，没网也能用；下面的模型立即生效"
-    const val ocrInUseOnlineNote = "手机上不跑模型；按这里填的地址和模型识别整页"
     const val ocrInUseOnlineHostOff = "在线 OCR 已选，但还没填地址，现在用不了"
     const val ocrNoEndpoint = "还没填地址"
     const val ocrFillEndpoint = "在下面填上服务地址就能用"
@@ -264,7 +252,6 @@ object S {
     fun onlineOcrTestOk(count: Int): String = "连接成功，服务上有 $count 个模型"
     fun onlineOcrTestFail(reason: String): String = "连接失败：$reason"
     const val onlineOcrTip = "在线 OCR 把整页图片发给视觉模型，由它返回文字和位置，手机上不跑模型。需要模型支持图片输入，例如 GPT-4o、Qwen-VL、Gemini、llava；一张图一次请求，速度取决于服务。"
-    const val onlineOcrShortHint = "在线 OCR · 地址和模型在「OCR 配置」里填"
     fun onlineOcrRowHint(host: String): String =
         if (host.isBlank()) "在线 OCR · 地址还没填，去「OCR 配置」里填" else "在线 OCR · 服务器 $host"
     const val ocrModelTitle = "文字识别模型"
@@ -274,7 +261,6 @@ object S {
     const val ocrModelMediumTip = "逐列识别、小字更稳，但明显更慢更耗电，只建议整本预翻译时用"
     const val ocrModelHybridTip = "用 medium 的检测器找气泡（能补上 small 整块漏掉的），配上 small 的快速识别；单页大约慢 2–3 倍，仍比完整 medium 快"
     const val ocrModelMangaTip = "漫画专用：整个气泡一次读出一句，语序自然，但个别字和速度不如 small 稳"
-    const val ocrModelSwitching = "正在加载模型…"
     fun preTranslateOcrValue(name: String): String = "$name · 在「翻译配置」里可切换"
     const val preTranslatePages = "要翻译的页 · 点缩略图勾选"
     const val preTranslateSelectAll = "全选"

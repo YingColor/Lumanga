@@ -83,7 +83,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -96,7 +95,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -116,7 +114,6 @@ import com.yingcolor.lumanga.data.PageDecoder
 import com.yingcolor.lumanga.data.PageSource
 import com.yingcolor.lumanga.data.Prefs
 import com.yingcolor.lumanga.data.TextLayout
-import com.yingcolor.lumanga.data.TextRegion
 import com.yingcolor.lumanga.data.TranslateMode
 import com.yingcolor.lumanga.data.TranslationEngine
 import com.yingcolor.lumanga.data.TranslationStore
