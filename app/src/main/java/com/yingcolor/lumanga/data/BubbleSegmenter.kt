@@ -23,7 +23,12 @@ class BubbleRegion(
     val box: Rect,
     /** Closed polygon as x0,y0,x1,y1..., page pixels. Null when the mask gave nothing. */
     val contour: FloatArray?,
-    val confidence: Float
+    val confidence: Float,
+    /**
+     * True for the model's second class: a block of lettering printed on the artwork rather than
+     * a balloon. It is not a shape to draw around dialogue; it is the region narration occupies.
+     */
+    val isText: Boolean = false
 )
 
 /**
@@ -83,7 +88,7 @@ object BubbleSegmenter {
         val coefficients: FloatArray
     )
 
-    fun detect(bitmap: Bitmap): List<BubbleRegion> {
+    fun detect(bitmap: Bitmap, includeText: Boolean = false): List<BubbleRegion> {
         val context = appContext ?: return emptyList()
         if (disabled || bitmap.width < 32 || bitmap.height < 32) return emptyList()
         val net = interpreter ?: synchronized(lock) {
@@ -93,7 +98,7 @@ object BubbleSegmenter {
                 null
             }
         } ?: return emptyList()
-        return runCatching { infer(net, bitmap) }.getOrElse {
+        return runCatching { infer(net, bitmap, includeText) }.getOrElse {
             android.util.Log.w("BubbleSeg", "inference failed: ${it.message}")
             emptyList()
         }
@@ -147,7 +152,7 @@ object BubbleSegmenter {
     private fun direct(bytes: Int): ByteBuffer =
         ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
 
-    private fun infer(net: Interpreter, bitmap: Bitmap): List<BubbleRegion> {
+    private fun infer(net: Interpreter, bitmap: Bitmap, includeText: Boolean): List<BubbleRegion> {
         val gain = min(INPUT.toFloat() / bitmap.width, INPUT.toFloat() / bitmap.height)
         val drawW = (bitmap.width * gain).toInt().coerceAtLeast(1)
         val drawH = (bitmap.height * gain).toInt().coerceAtLeast(1)
@@ -203,7 +208,7 @@ object BubbleSegmenter {
             val width = feature(2) * INPUT
             val height = feature(3) * INPUT
             if (width <= 1f || height <= 1f) continue
-            if (classId != CLASS_BALLOON) continue
+            if (classId != CLASS_BALLOON && !includeText) continue
             candidates.add(
                 Raw(
                     feature(0) * INPUT, feature(1) * INPUT, width, height, confidence, classId,
@@ -223,7 +228,7 @@ object BubbleSegmenter {
             val box = pageRect(raw, gain, padX, padY, bitmap.width, bitmap.height)
             if (box.width() < 8 || box.height() < 8) return@mapNotNull null
             val contour = contourOf(raw, prototypes, gain, padX, padY, bitmap.width, bitmap.height)
-            BubbleRegion(box, contour, raw.confidence)
+            BubbleRegion(box, contour, raw.confidence, raw.classId == CLASS_TEXT)
         }
     }
 

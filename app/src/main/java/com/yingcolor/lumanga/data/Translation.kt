@@ -46,7 +46,9 @@ data class BubbleGroup(
     val source: String,
     val vertical: Boolean,
     /** Balloon outline from the segmentation model, in page pixels; null when none matched. */
-    val contour: FloatArray? = null
+    val contour: FloatArray? = null,
+    /** Extra area the cover has to reach: columns dropped by the confidence floor. */
+    val cover: Rect? = null
 )
 
 object TranslationEngine {
@@ -333,6 +335,7 @@ object TranslationEngine {
         // and with the cache key that the caller derived from the same page.
         val language = if (lang.detected) detectSource(regions) else lang
         val usable = ArrayList<TextRegion>(regions.size)
+        val nearMiss = ArrayList<TextRegion>()
         regions.forEach { region ->
             if (isUsable(region, language)) {
                 usable.add(region)
@@ -346,6 +349,14 @@ object TranslationEngine {
                         "box=${region.box.left},${region.box.top}," +
                         "${region.box.right},${region.box.bottom} text=${region.text}"
                 )
+                // A column that only just missed the confidence floor is still ink on the page.
+                // It is not sent to the translator, but the cover has to reach it, or a strip of
+                // Japanese stays readable beside the Chinese.
+                if (region.confidence >= 0.30f &&
+                    region.text.any { isSourceLetter(it, language) }
+                ) {
+                    nearMiss.add(region)
+                }
             }
         }
         if (usable.isEmpty()) return emptyList()
@@ -479,25 +490,15 @@ object TranslationEngine {
         // Their patches overlap, so each one would erase and repaint the same strip of page and
         // the translations end up printed on top of one another.
         val joined = mergeOverlapping(separated)
-        // A full-width block of free lettering (a whole page of narration) is detected as one
-        // very wide group. Keeping it whole produces a single translation which only fills a few
-        // columns in the middle, so the rest of the Japanese stays visible next to the Chinese.
-        // Such a block has no bubble outline and is made of many independent columns; each one
-        // is its own reading unit, just like a separate speech balloon. The size and column
-        // count gates keep ordinary multi-column dialogue bubbles intact.
-        val split = joined.flatMap { cluster ->
-            val union = unionOf(cluster)
-            val unit = clusterUnit(cluster)
-            if (cluster.size >= 5 && union.width() > unit * 6f &&
-                bitmap != null && !insideWhiteBubble(bitmap, union)
-            ) {
-                android.util.Log.i(
-                    "Translate", "TR split columns n=${cluster.size} w=${union.width()}"
-                )
-                cluster.map { mutableListOf(it) }
-            } else listOf(cluster)
-        }
-        return split.map { cluster ->
+        // A block of narration is kept whole. It used to be split into one translation unit per
+        // column, because covering the unsplit block painted one large rectangle over the page;
+        // covering is per patch now and the patch is the text footprint, so that no longer holds.
+        // Splitting did visible damage: the columns were then drawn centred in their own narrow
+        // strips, which left ragged holes between the characters, and each strip's cover only
+        // reached its own column, so the Japanese in the next one stayed readable - exactly what
+        // a reader notices first. splitAtWidestGap above still separates two genuinely different
+        // sentences that the clustering joined.
+        return joined.map { cluster ->
             // Sort by column first, then by position inside the column. A column that the
             // detector split into an upper and a lower box has almost the same centre x, and a
             // plain (x, y) sort interleaved the two columns so the sentence read
@@ -527,6 +528,7 @@ object TranslationEngine {
             else columns
             val unit = clusterUnit(cluster)
             val contour = pickContour(balloons, union)
+            val cover = coverAround(union, nearMiss, clusterUnit(cluster))
             if (contour != null) {
                 var minX = Float.MAX_VALUE
                 var minY = Float.MAX_VALUE
@@ -547,7 +549,7 @@ object TranslationEngine {
                         "union=${union.left},${union.top},${union.right},${union.bottom}"
                 )
             }
-            BubbleGroup(cluster, union, text, vertical, contour)
+            BubbleGroup(cluster, union, text, vertical, contour, cover)
         }.sortedWith(groupOrder(language))
             .also { list ->
                 // Grouping decides whether one sentence reaches the model as one piece or as two
@@ -865,8 +867,9 @@ object TranslationEngine {
         val cx = union.exactCenterX()
         val cy = union.exactCenterY()
         val containing = balloons.indices.filter { index ->
-            val outline = balloons[index].contour
-            outline != null && containsPoint(outline, cx, cy)
+            val region = balloons[index]
+            val outline = region.contour
+            !region.isText && outline != null && containsPoint(outline, cx, cy)
         }
         if (containing.isNotEmpty()) {
             return containing.minByOrNull { index ->
@@ -905,6 +908,28 @@ object TranslationEngine {
     }
 
     /**
+     * Bounding box of [union] plus every dropped column close enough to belong to it.
+     *
+     * The cover used to be the recognised text footprint, so a column that failed the confidence
+     * floor - common on narration set over artwork, where contrast is poor - stayed visible right
+     * next to the Chinese. Those columns are known here even though they are not translated.
+     */
+    private fun coverAround(union: Rect, nearMiss: List<TextRegion>, unit: Int): Rect? {
+        if (nearMiss.isEmpty()) return null
+        val reach = unit * 1.6f
+        var box: Rect? = null
+        nearMiss.forEach { region ->
+            val other = region.box
+            val gapX = maxOf(0, maxOf(union.left, other.left) - minOf(union.right, other.right))
+            val gapY = maxOf(0, maxOf(union.top, other.top) - minOf(union.bottom, other.bottom))
+            if (gapX <= reach && gapY <= reach) {
+                box = (box ?: Rect(union)).also { it.union(other) }
+            }
+        }
+        return box
+    }
+
+    /**
      * Picks the balloon outline that belongs to [union].
      *
      * The old rule required the outline's bounding box to cover half of the text box, and a
@@ -920,16 +945,19 @@ object TranslationEngine {
     private fun pickContour(balloons: List<BubbleRegion>, union: Rect): FloatArray? {
         val cx = union.exactCenterX()
         val cy = union.exactCenterY()
-        val containing = balloons.filter { region ->
+        fun area(region: BubbleRegion) = region.box.width().toLong() * region.box.height()
+        fun containing(text: Boolean) = balloons.filter { region ->
             val outline = region.contour
-            outline != null && containsPoint(outline, cx, cy)
+            region.isText == text && outline != null && containsPoint(outline, cx, cy)
         }
-        if (containing.isNotEmpty()) {
-            return containing.minByOrNull { it.box.width().toLong() * it.box.height() }?.contour
-        }
+        val inBalloon = containing(false)
+        if (inBalloon.isNotEmpty()) return inBalloon.minByOrNull { area(it) }?.contour
+        // Narration printed on the artwork is handled separately (see textBlockFor): its mask
+        // outline follows every glyph, so using it as a fill left the page untouched.
         // No outline claims the centre: keep the old overlapping check, which also rejects a
-        // balloon that merely brushes against a block of free lettering.
-        return balloons.maxByOrNull { areaOverlap(it.box, union) }
+        // balloon that merely brushes against a block of free lettering. Text blocks are excluded
+        // here - their mask follows individual glyphs and filling it leaves the page untouched.
+        return balloons.filter { !it.isText }.maxByOrNull { areaOverlap(it.box, union) }
             ?.takeIf { areaOverlap(it.box, union) >= 0.5f }
             ?.contour
             ?.takeIf { contourCovers(it, union) }
@@ -1430,7 +1458,7 @@ object TranslationEngine {
      * every patch. Covering is deterministic instead - one flat fill, nothing outside the patch
      * touched.
      */
-    private const val COVER_ALPHA = 236
+    private const val COVER_ALPHA = 255
 
     private class Patch(
         val text: String,
@@ -1443,7 +1471,9 @@ object TranslationEngine {
         /** Font size the page was typeset at, measured from the source pixels. */
         val target: Float,
         /** Balloon outline in page pixels, when the segmentation model matched this group. */
-        val contour: FloatArray? = null
+        val contour: FloatArray? = null,
+        /** Extra area the cover has to reach: columns dropped by the confidence floor. */
+        val cover: Rect? = null
     )
 
     /**
@@ -1493,8 +1523,15 @@ object TranslationEngine {
                     seeds.filterIndexed { j, _ -> j != i } + placed
                 )
             } else {
-                conservativeArea(source, group.bubble)
+                conservativeArea(source, group.bubble, unit)
             }
+            // A narration strip regularly loses one of its columns to the confidence floor, and
+            // that column then stays readable right beside the Chinese - the "the background does
+            // not cover the original" report. With no balloon outline there is nothing that says
+            // where the block ends, so widen by one column on each side. Dialogue inside a
+            // balloon is untouched: its contour already bounds the cover.
+            if (group.contour == null) area.inset(-unit, 0)
+            group.cover?.let { area.union(it) }
             placed.add(area)
             // Sample from the patch itself: a halftone bubble needs its own grey as the fill,
             // otherwise the cover reads as a bright white hole punched in the drawing.
@@ -1509,7 +1546,7 @@ object TranslationEngine {
             patches.add(
                 Patch(
                     value, area, Rect(group.bubble), background, verticalText, target,
-                    group.contour
+                    group.contour, group.cover
                 )
             )
             android.util.Log.d(
@@ -1628,9 +1665,18 @@ object TranslationEngine {
     }
 
     /** Just enough room to clear the anti-aliased fringe when the text sits on artwork. */
-    private fun conservativeArea(source: Bitmap, seed: Rect): Rect {
+    private fun conservativeArea(source: Bitmap, seed: Rect, unit: Int): Rect {
         val area = Rect(seed)
-        area.inset(-2, -2)
+        // Two things push the cover past the OCR box here. The detector boxes stop at the glyph
+        // centres, and recognition regularly drops one of the columns of a narration strip (the
+        // low-confidence one), which then stayed readable right beside the Chinese. Padding by a
+        // fraction of the short edge could never reach a whole missing column, so the margin is
+        // measured in column widths instead: about four fifths of one column sideways covers the
+        // neighbour's glyph bodies without reaching the next block, a third above and below takes
+        // the last row's descenders.
+        val side = maxOf(8, (unit * 0.8f).toInt())
+        val edge = maxOf(6, (unit * 0.35f).toInt())
+        area.inset(-side, -edge)
         area.left = area.left.coerceAtLeast(0)
         area.top = area.top.coerceAtLeast(0)
         area.right = area.right.coerceAtMost(source.width)
@@ -1837,10 +1883,14 @@ object TranslationEngine {
             val colW = chosen.size * 1.10f
             val lineH = chosen.size * 1.04f
             val totalW = chosen.columns.size * colW
+            // Every column starts at the same height, the way Japanese vertical text is set.
+            // Centring each column on its own made short columns float down beside long ones,
+            // which read as gaps inside one sentence.
+            val tallest = chosen.columns.maxOfOrNull { it.length * lineH } ?: 0f
+            val columnTop = box.top + (box.height() - tallest) / 2f
             var x = box.left + (box.width() - totalW) / 2f + totalW - colW
             for (column in chosen.columns) {
-                val blockH = column.length * lineH
-                var y = box.top + (box.height() - blockH) / 2f
+                var y = columnTop
                 for (ch in column) {
                     val gx = x + (colW - chosen.size) / 2f
                     val gy = y + (lineH - glyphH) / 2f - metrics.ascent
