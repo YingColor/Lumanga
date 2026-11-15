@@ -34,7 +34,7 @@ data class PageTranslation(
  * keeps a killed process from losing more than the page in flight.
  */
 object TranslationStore {
-    private const val VERSION = 30
+    private const val VERSION = 35
     private const val DIR = "translations"
     private const val STATUS_FILE = "completed.json"
 

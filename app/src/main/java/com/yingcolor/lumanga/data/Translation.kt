@@ -21,6 +21,7 @@ import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 object TranslationConfig {
     /**
@@ -275,6 +276,56 @@ object TranslationEngine {
     }
 
     /**
+     * Hand-lettered sound effects are drawn onto the artwork, not printed inside a speech
+     * balloon. They are not dialogue, and painting a plate over them is worse than leaving the
+     * Japanese alone. The one stable difference is the size of a single glyph: body lettering
+     * is about one character cell, a drawn effect is far larger. Spreading the box over the
+     * characters it holds and taking the square root estimates that size without mistaking a
+     * wide but normally set column for a huge letter - on a large colour page a 146 px wide
+     * column of 「さんだった」 is still ordinary text. Only one- or two-character boxes are
+     * judged at all; a longer line is always dialogue or narration. Short kana like 「ああッ」
+     * are left alone too: they are normally speech, and the balloon model does not find the
+     * same outlines on every run, so judging them made a page lose a line only sometimes.
+     * When the model finds no balloon there is no evidence, and nothing is dropped.
+     */
+    private fun isDecorativeLettering(
+        region: TextRegion,
+        balloons: List<BubbleRegion>,
+        unit: Int
+    ): Boolean {
+        if (balloons.isEmpty() || isEllipsisOnly(region)) return false
+        val cx = region.box.exactCenterX()
+        val cy = region.box.exactCenterY()
+        if (balloons.any { balloon ->
+                !balloon.isText && balloon.contour != null &&
+                    containsPoint(balloon.contour, cx, cy)
+            }
+        ) return false
+        val chars = region.text.count { !it.isWhitespace() }.coerceAtLeast(1)
+        if (chars > 2) return false
+        val glyph = sqrt(region.box.width().toDouble() * region.box.height() / chars)
+        val drop = glyph >= unit * 1.8
+        if (drop) {
+            android.util.Log.d(
+                "Translate",
+                "TR sfx glyph=${"%.0f".format(glyph)} unit=$unit " +
+                    "box=${region.box.left},${region.box.top}," +
+                    "${region.box.right},${region.box.bottom} text=${region.text}"
+            )
+        }
+        return drop
+    }
+
+    /** Median glyph size of a page; effects are a minority, so this stays the body text size. */
+    private fun bodyThickness(regions: List<TextRegion>): Int {
+        val sizes = regions.map {
+            if (it.vertical) it.box.width() else it.box.height()
+        }.filter { it >= 10 }.sorted()
+        if (sizes.isEmpty()) return 24
+        return sizes[sizes.size / 2].coerceIn(10, 200)
+    }
+
+    /**
      * For the default Japanese source this also keeps pages that are already Chinese or English
      * out of the translator. When the user has named the printed language themselves that
      * heuristic no longer applies, and the only question is whether there is lettering at all.
@@ -333,9 +384,15 @@ object TranslationEngine {
         // An "auto" setting is settled once, here, so every rule below agrees with the prompt
         // and with the cache key that the caller derived from the same page.
         val language = if (lang.detected) detectSource(regions) else lang
+        val bodyUnit = bodyThickness(regions)
         val usable = ArrayList<TextRegion>(regions.size)
         val nearMiss = ArrayList<TextRegion>()
         regions.forEach { region ->
+            if (bitmap != null && isDecorativeLettering(region, balloons, bodyUnit)) {
+                // Not dialogue: leave the artwork exactly as it was. Dropping it here keeps it
+                // out of the translator AND out of nearMiss, so no cover reaches it either.
+                return@forEach
+            }
             if (isUsable(region, language)) {
                 usable.add(region)
             } else {
