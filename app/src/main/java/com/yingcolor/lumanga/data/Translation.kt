@@ -526,14 +526,7 @@ object TranslationEngine {
                 MangaOcr.readIfSelected(bitmap, union) ?: columns
             else columns
             val unit = clusterUnit(cluster)
-            val balloon = balloons.maxByOrNull { areaOverlap(it.box, union) }
-            val contour = balloon
-                ?.takeIf { areaOverlap(it.box, union) >= 0.5f }
-                ?.contour
-                // A balloon next to a block of free lettering can overlap it just enough to be
-                // picked, and its outline then covers the wrong part of the page. Only trust an
-                // outline that actually spans the text it is supposed to hide.
-                ?.takeIf { contourCovers(it, union) }
+            val contour = pickContour(balloons, union)
             if (contour != null) {
                 var minX = Float.MAX_VALUE
                 var minY = Float.MAX_VALUE
@@ -860,8 +853,27 @@ object TranslationEngine {
         return (shared.toFloat() / shorter).coerceAtLeast(0f)
     }
 
-    /** Index of the balloon this text sits in, or -1 when it is lettering on the artwork. */
+    /**
+     * Index of the balloon this text sits in, or -1 when it is lettering on the artwork.
+     *
+     * Same reasoning as [pickContour]: the outline is the honest test, and asking whether the
+     * text centre falls inside it does not depend on how much padding the text box got. Two
+     * pieces of one sentence in the same balloon therefore stay one group even on runs where the
+     * overlapping-area test used to return -1 for both.
+     */
     private fun balloonOwner(union: Rect, balloons: List<BubbleRegion>): Int {
+        val cx = union.exactCenterX()
+        val cy = union.exactCenterY()
+        val containing = balloons.indices.filter { index ->
+            val outline = balloons[index].contour
+            outline != null && containsPoint(outline, cx, cy)
+        }
+        if (containing.isNotEmpty()) {
+            return containing.minByOrNull { index ->
+                val box = balloons[index].box
+                box.width().toLong() * box.height()
+            } ?: -1
+        }
         var best = -1
         var score = 0f
         balloons.forEachIndexed { index, balloon ->
@@ -890,6 +902,55 @@ object TranslationEngine {
             if (column == null) columns.add(mutableListOf(region)) else column.add(region)
         }
         return columns.flatMap { members -> members.sortedBy { it.box.top } }
+    }
+
+    /**
+     * Picks the balloon outline that belongs to [union].
+     *
+     * The old rule required the outline's bounding box to cover half of the text box, and a
+     * detected text box is routinely wider than the balloon it sits in - the detector pads its
+     * boxes. Whenever that happened the group fell back to a rounded rectangle, which is why the
+     * same page sometimes showed a balloon-shaped cover and sometimes a square: it depended on
+     * how generously the OCR box had been drawn that run.
+     *
+     * Asking instead whether the *centre* of the text lies inside the outline is independent of
+     * box size. Among the balloons that contain it, the smallest is the tightest fit (a small
+     * balloon inside a big one must not take over its neighbour's text).
+     */
+    private fun pickContour(balloons: List<BubbleRegion>, union: Rect): FloatArray? {
+        val cx = union.exactCenterX()
+        val cy = union.exactCenterY()
+        val containing = balloons.filter { region ->
+            val outline = region.contour
+            outline != null && containsPoint(outline, cx, cy)
+        }
+        if (containing.isNotEmpty()) {
+            return containing.minByOrNull { it.box.width().toLong() * it.box.height() }?.contour
+        }
+        // No outline claims the centre: keep the old overlapping check, which also rejects a
+        // balloon that merely brushes against a block of free lettering.
+        return balloons.maxByOrNull { areaOverlap(it.box, union) }
+            ?.takeIf { areaOverlap(it.box, union) >= 0.5f }
+            ?.contour
+            ?.takeIf { contourCovers(it, union) }
+    }
+
+    /** Ray casting: true when (x, y) falls inside the closed polygon given as x0,y0,x1,y1.... */
+    private fun containsPoint(outline: FloatArray, x: Float, y: Float): Boolean {
+        if (outline.size < 6) return false
+        var inside = false
+        var j = outline.size - 2
+        var i = 0
+        while (i < outline.size) {
+            val xi = outline[i]
+            val yi = outline[i + 1]
+            val xj = outline[j]
+            val yj = outline[j + 1]
+            if (yi > y != yj > y && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside
+            j = i
+            i += 2
+        }
+        return inside
     }
 
     /** True when the outline's bounding box covers at least half of the text footprint. */
@@ -1476,6 +1537,10 @@ object TranslationEngine {
                 COVER_ALPHA, Color.red(base), Color.green(base), Color.blue(base)
             )
             val contour = patch.contour
+            android.util.Log.d(
+                "Translate",
+                "TR cover i=${patches.indexOf(patch)} shape=${if (contour != null && contour.size >= 6) "balloon" else "rect"}"
+            )
             if (contour != null && contour.size >= 6) {
                 // Follow the balloon outline instead of covering a rectangle: the shape is
                 // what keeps the cover off the artwork next to the bubble.
