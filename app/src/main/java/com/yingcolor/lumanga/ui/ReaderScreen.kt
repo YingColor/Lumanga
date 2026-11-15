@@ -108,6 +108,7 @@ import com.yingcolor.lumanga.data.ApiClient
 import com.yingcolor.lumanga.data.ApiProtocol
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BubbleGroup
+import com.yingcolor.lumanga.data.LetteringFont
 import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.PageAnimation
 import com.yingcolor.lumanga.data.PageDecoder
@@ -212,6 +213,8 @@ private const val YIELD_BUDGET_MS = 3_000L
 
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = Prefs(app)
+    /** Bundled comic face for the translation; null falls back to the system one. */
+    private val lettering = LetteringFont.of(app)
     private val mediumOcr: Boolean get() = prefs.ocrModel == OcrModel.MEDIUM.id
     private val onlineOcr: Boolean get() = prefs.ocrOnline
 
@@ -1015,7 +1018,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                     TranslateState(TranslateKind.WORKING, STAGE_API, "$answered/${groups.size}")
                 )
                 onPartial?.invoke(
-                    TranslationEngine.render(source, groups, collected.map { it ?: "" }, horizontal)
+                    TranslationEngine.render(
+                        source, groups, collected.map { it ?: "" }, horizontal, lettering
+                    )
                 )
             }
         } else {
@@ -1050,7 +1055,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             }
             pageResults.put(rk, PageResult(source.width, source.height, groups, lines))
         }
-        val rendered = TranslationEngine.render(source, groups, lines, horizontal)
+        val rendered = TranslationEngine.render(source, groups, lines, horizontal, lettering)
         // Store the result here rather than in the caller: if the user scrolled away while the
         // request was in flight the awaiter is already cancelled, and the finished page would
         // otherwise be dropped and re-translated from scratch on the next visit.
@@ -1071,7 +1076,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     /** Re-draws a cached page at a different decode size instead of running OCR again. */
     private fun renderScaled(source: Bitmap, cached: PageResult, horizontal: Boolean): Bitmap {
         if (cached.width == source.width && cached.height == source.height) {
-            return TranslationEngine.render(source, cached.groups, cached.lines, horizontal)
+            return TranslationEngine.render(source, cached.groups, cached.lines, horizontal, lettering)
         }
         val sx = source.width.toFloat() / cached.width
         val sy = source.height.toFloat() / cached.height
@@ -1083,7 +1088,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 bubble = scaleRect(group.bubble, sx, sy)
             )
         }
-        return TranslationEngine.render(source, scaled, cached.lines, horizontal)
+        return TranslationEngine.render(source, scaled, cached.lines, horizontal, lettering)
     }
 
     private fun scaleRect(rect: Rect, sx: Float, sy: Float): Rect = Rect(

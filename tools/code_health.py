@@ -29,9 +29,11 @@ UISTRINGS = SRC / "com" / "yingcolor" / "lumanga" / "UiStrings.kt"
 BASELINE = {
     # 2026-11-15 第 57 轮清理后的真实值，只留极小余量。
     # 上调必须当轮说明「新增了什么功能」，并同步改 .workbuddy/memory/MEMORY.md。
-    "kt_files": 54,          # app/src/main/java 下的 Kotlin 文件数
-    "kt_lines": 18500,      # 总行数（当前 18389）
-    "max_file_lines": 2850, # 单文件行数（ReaderScreen.kt 2801，已知最大块，不许再长）
+    # 第 61 轮上调：+1 文件 / +100 行 = 译文改用内置漫画字体
+    #   （data/LetteringFont.kt 负责懒加载 + 逐字覆盖判断，drawFittedText 支持混排）。
+    "kt_files": 55,          # app/src/main/java 下的 Kotlin 文件数
+    "kt_lines": 18650,      # 总行数（当前 18617）
+    "max_file_lines": 2850, # 单文件行数（ReaderScreen.kt 2806，已知最大块，不许再长）
     "dead_strings": 0,       # UiStrings 里零引用的文案常量
     "unused_imports": 0,      # 确认无用的 import
     "experiment_marks": 0,   # 代码里的实验/兜底/TODO 标记

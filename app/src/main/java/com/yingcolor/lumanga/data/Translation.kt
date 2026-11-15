@@ -1540,7 +1540,8 @@ object TranslationEngine {
         source: Bitmap,
         groups: List<BubbleGroup>,
         translated: List<String>,
-        horizontal: Boolean = false
+        horizontal: Boolean = false,
+        lettering: Typeface? = null
     ): Bitmap {
         // Latin words cannot be stacked in a vertical column, so English output always uses the
         // existing horizontal branch. The geometry (patch, sampling) is untouched.
@@ -1548,7 +1549,7 @@ object TranslationEngine {
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(out)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            typeface = lettering ?: SYSTEM_FACE
         }
         val patches = ArrayList<Patch>()
         val seeds = groups.map { it.bubble }
@@ -1667,7 +1668,7 @@ object TranslationEngine {
             } else {
                 Color.WHITE
             }
-            drawFittedText(canvas, paint, patch.text, patch.fitted, patch.vertical)
+            drawFittedText(canvas, paint, patch.text, patch.fitted, patch.vertical, lettering)
         }
         return out
     }
@@ -1933,13 +1934,20 @@ object TranslationEngine {
         paint: Paint,
         text: String,
         fitted: Pair<Rect, Fit>,
-        vertical: Boolean
+        vertical: Boolean,
+        lettering: Typeface?
     ) {
         val box = fitted.first
         val chosen = fitted.second
         paint.textSize = chosen.size
         canvas.save()
-        canvas.clipRect(box)
+        // The fake bold grows every stroke by half its width outside the glyph, so the clip has to
+        // give that back or the first and last column lose their outer edge.
+        val overshoot = if (lettering != null) chosen.size * INK_WEIGHT * 0.5f else 0f
+        canvas.clipRect(
+            box.left - overshoot, box.top - overshoot,
+            box.right + overshoot, box.bottom + overshoot
+        )
         val metrics = paint.fontMetrics
         val glyphH = metrics.descent - metrics.ascent
         if (vertical) {
@@ -1957,6 +1965,9 @@ object TranslationEngine {
                 for (ch in column) {
                     val gx = x + (colW - chosen.size) / 2f
                     val gy = y + (lineH - glyphH) / 2f - metrics.ascent
+                    // One character at a time, so a mark the comic face lacks (♡, ★) is simply
+                    // drawn with the system face instead of turning into an empty box.
+                    setFace(paint, ch, lettering, chosen.size)
                     canvas.drawText(ch.toString(), gx, gy, paint)
                     y += lineH
                 }
@@ -1967,14 +1978,70 @@ object TranslationEngine {
             val blockH = chosen.lines.size * lineH
             var y = box.top + (box.height() - blockH) / 2f
             for (line in chosen.lines) {
-                val width = paint.measureText(line)
-                val gx = box.left + (box.width() - width) / 2f
+                val runs = runsOf(line, lettering)
+                var width = 0f
+                for ((part, face) in runs) {
+                    setFace(paint, face, chosen.size)
+                    width += paint.measureText(part)
+                }
+                var gx = box.left + (box.width() - width) / 2f
                 val gy = y + (lineH - glyphH) / 2f - metrics.ascent
-                canvas.drawText(line, gx, gy, paint)
+                for ((part, face) in runs) {
+                    setFace(paint, face, chosen.size)
+                    canvas.drawText(part, gx, gy, paint)
+                    gx += paint.measureText(part)
+                }
                 y += lineH
             }
         }
         canvas.restore()
+    }
+
+    /**
+     * The face one character is drawn with: the bundled comic lettering where it has the glyph,
+     * the system bold sans everywhere else. A custom typeface gets no fallback chain of its own,
+     * so this check is what keeps `♡ ・ ★` from printing as boxes.
+     */
+    private fun faceFor(ch: Char, lettering: Typeface?): Typeface =
+        if (lettering != null && LetteringFont.covers(lettering, ch)) lettering else SYSTEM_FACE
+
+    /** Splits [line] wherever the face changes, so mixed text can be drawn in one pass. */
+    private fun runsOf(line: String, lettering: Typeface?): List<Pair<String, Typeface>> {
+        if (line.isEmpty()) return emptyList()
+        if (lettering == null) return listOf(line to SYSTEM_FACE)
+        val runs = ArrayList<Pair<String, Typeface>>(2)
+        var start = 0
+        var current = faceFor(line[0], lettering)
+        for (index in 1 until line.length) {
+            val face = faceFor(line[index], lettering)
+            if (face !== current) {
+                runs.add(line.substring(start, index) to current)
+                start = index
+                current = face
+            }
+        }
+        runs.add(line.substring(start) to current)
+        return runs
+    }
+
+    /** Picks the face for one character and thickens it if it is the comic one. */
+    private fun setFace(paint: Paint, ch: Char, lettering: Typeface?, size: Float) =
+        setFace(paint, faceFor(ch, lettering), size)
+
+    /**
+     * Comic lettering has the right shape but a light stroke next to the bold gothic it replaces,
+     * so a hair of fake bold puts the ink weight back. Only the bundled face is stroked: the
+     * system bold is already heavy, and stroking it again reads as a smudge at small sizes.
+     */
+    private fun setFace(paint: Paint, face: Typeface, size: Float) {
+        paint.typeface = face
+        if (face === SYSTEM_FACE) {
+            paint.style = Paint.Style.FILL
+            return
+        }
+        paint.style = Paint.Style.FILL_AND_STROKE
+        paint.strokeJoin = Paint.Join.ROUND
+        paint.strokeWidth = size * INK_WEIGHT
     }
 
     /** Lays out inside [box] after the same small padding the drawing uses. */
@@ -2017,6 +2084,17 @@ object TranslationEngine {
 
     /** Ceiling for a glyph size; large enough for shout lettering, small enough to stay sane. */
     private const val MAX_GLYPH = 120f
+
+    /** Used for everything the bundled lettering face cannot draw, and when it is unavailable. */
+    private val SYSTEM_FACE: Typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+
+    /**
+     * Extra stroke on the comic face, as a fraction of the glyph size. Android centres the stroke
+     * on the outline, so half of it lands outside: 0.06 of the size is about one pixel at the
+     * 30 px bodies these pages are set at, which matches printed lettering without closing up the
+     * counters of small text.
+     */
+    private const val INK_WEIGHT = 0.06f
 
     /** The drawing uses size * 1.04 as its vertical character advance. */
     private const val VERTICAL_ADVANCE = 1.04f
