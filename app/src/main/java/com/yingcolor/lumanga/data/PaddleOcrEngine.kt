@@ -498,10 +498,15 @@ private class OnnxSession(
         // The width therefore comes from the buffer size, and the buffer is limited to it —
         // ONNX rejects a buffer larger than the shape it is told to expect.
         val width = if (dynamicWidth) values.size / (3 * 48) else shape[3].toInt()
+        // The recogniser is fed exactly the content width; the detector takes the whole tile.
+        // Both used to go through the 3*48 formula, which left the 640x640 detector writing
+        // 1,228,800 floats into a buffer limited to 92,160 and threw BufferOverflowException —
+        // that is why 精确检测 and medium never produced a single box.
+        val elements = if (dynamicWidth) 3 * 48 * width else values.size
         val inputBuffer = inputBuffers.get()!!
         inputBuffer.clear()
-        inputBuffer.limit(values.size.coerceAtMost(3 * 48 * width))
-        inputBuffer.put(values)
+        inputBuffer.limit(elements)
+        inputBuffer.put(values, 0, elements)
         inputBuffer.rewind()
         val actual = if (dynamicWidth) longArrayOf(1, 3, 48, width.toLong()) else shape
         val tensor = OnnxTensor.createTensor(env, inputBuffer, actual)
