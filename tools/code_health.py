@@ -41,9 +41,14 @@ BASELINE = {
     # 第 67 轮上调：+50 行 = 「读得含糊的列用 medium 复核」
     #   （recheckGarbled：置信度 <0.75 且 ≥3 字的竖列重读，要求置信度 +0.12 且不更短才替换，
     #   每页最多 3 列；复用同一台 recOnly 识别器与同一个用户开关）。
-    "kt_files": 56,          # app/src/main/java 下的 Kotlin 文件数
-    "kt_lines": 18970,      # 总行数（当前 18969）
-    "max_file_lines": 2850, # 单文件行数（ReaderScreen.kt 2826，已知最大块，不许再长）
+    # 第 68 轮上调：+2 文件 / +100 行 = 修「阅读页连点卡死」的内存根因
+    #   （data/CacheBudget.kt 把 7 个缓存上限收成一份按堆算的预算；data/MemoryPressure.kt
+    #   把系统内存压力回调接成一次清理。原先缓存配额合计 213MB / 256MB 堆，翻页时分配
+    #   17MB 整页位图必失败 → 全量 GC → OutOfMemoryError → 输入 5 秒没人处理（ANR）。
+    #   ReaderScreen.kt 本身只留引用，单文件行数反而没超。）
+    "kt_files": 58,          # app/src/main/java 下的 Kotlin 文件数
+    "kt_lines": 19100,      # 总行数（当前 19062）
+    "max_file_lines": 2850, # 单文件行数（ReaderScreen.kt 2844，已知最大块，不许再长）
     "dead_strings": 0,       # UiStrings 里零引用的文案常量
     "unused_imports": 0,      # 确认无用的 import
     "experiment_marks": 0,   # 代码里的实验/兜底/TODO 标记

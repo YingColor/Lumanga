@@ -2,6 +2,7 @@ package com.yingcolor.lumanga.ui
 
 import android.app.Activity
 import android.app.Application
+import android.content.ComponentCallbacks2
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.SystemClock
@@ -108,8 +109,10 @@ import com.yingcolor.lumanga.data.ApiClient
 import com.yingcolor.lumanga.data.ApiProtocol
 import com.yingcolor.lumanga.data.Book
 import com.yingcolor.lumanga.data.BubbleGroup
+import com.yingcolor.lumanga.data.CacheBudget
 import com.yingcolor.lumanga.data.CoverStyle
 import com.yingcolor.lumanga.data.LetteringFont
+import com.yingcolor.lumanga.data.MemoryPressure
 import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.PageAnimation
 import com.yingcolor.lumanga.data.PageDecoder
@@ -236,21 +239,19 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     
     
     
-    private val heapKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
-    private val pageCacheLimit = (heapKb / 4).coerceIn(48 * 1024, 128 * 1024)
-    private val rawCacheLimit = (heapKb / 12).coerceIn(16 * 1024, 40 * 1024)
+    private val cacheBudget = CacheBudget.of(Runtime.getRuntime().maxMemory())
 
     
     // NOTE: do not recycle bitmaps in entryRemoved(). Tried that to stop the native heap from
     // growing, and the reader crashed with "Canvas: trying to use a recycled bitmap": an entry
     // can be evicted while the current frame still draws it. The growth is handled by capping
     // the caches, not by freeing behind the UI's back.
-    private val pageCache = object : LruCache<String, Bitmap>(pageCacheLimit) {
+    private val pageCache = object : LruCache<String, Bitmap>(cacheBudget.pageKb) {
         override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
 
     
-    private val thumbCache = object : LruCache<String, Bitmap>(8 * 1024) {
+    private val thumbCache = object : LruCache<String, Bitmap>(cacheBudget.thumbKb) {
         override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
 
@@ -259,7 +260,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
 
 
-    private val placeholderCache = object : LruCache<Int, Bitmap>(8 * 1024) {
+    private val placeholderCache = object : LruCache<Int, Bitmap>(cacheBudget.placeholderKb) {
         override fun sizeOf(key: Int, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
 
@@ -268,7 +269,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
 
 
-    private val rawCache = object : LruCache<Int, ByteArray>(rawCacheLimit) {
+    private val rawCache = object : LruCache<Int, ByteArray>(cacheBudget.rawKb) {
         override fun sizeOf(key: Int, value: ByteArray): Int = (value.size / 1024).coerceAtLeast(1)
     }
     private val rawLock = Any()
@@ -330,10 +331,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         val result: CompletableDeferred<Bitmap?>
     )
 
-    private val bytesCache = object : LruCache<Int, ByteArray>(48 * 1024) {
+    private val bytesCache = object : LruCache<Int, ByteArray>(cacheBudget.bytesKb) {
         override fun sizeOf(key: Int, value: ByteArray): Int = (value.size / 1024).coerceAtLeast(1)
     }
-    private val tileCache = object : LruCache<String, Bitmap>(32 * 1024) {
+    private val tileCache = object : LruCache<String, Bitmap>(cacheBudget.tileKb) {
         override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
     private val tileQueue = ArrayDeque<TileLoad>()
@@ -341,7 +342,23 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val tileLock = Any()
     private val tileWake = Channel<Unit>(Channel.CONFLATED)
 
+    private lateinit var memoryGuard: ComponentCallbacks2
+
+    /**
+     * Frees what a re-decode can rebuild. The page cache is left alone on purpose: the bitmap on
+     * screen is drawn straight out of it, and recycling it behind the UI is what caused
+     * "Canvas: trying to use a recycled bitmap".
+     */
+    private fun releaseCaches() {
+        translatedCache.evictAll()
+        synchronized(tileLock) { tileCache.evictAll() }
+        bytesCache.evictAll()
+        synchronized(rawLock) { rawCache.evictAll() }
+        placeholderCache.evictAll()
+    }
+
     init {
+        memoryGuard = MemoryPressure.watch(getApplication()) { releaseCaches() }
         
         
         
@@ -677,7 +694,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     // Deliberately not recycled on eviction: this cache holds the bitmap the reader is drawing
     // right now, and clearTranslations() runs while that frame is still on screen. It is capped
     // at 32 MB, so leaving it to the GC is the safe trade.
-    private val translatedCache = object : LruCache<String, Bitmap>(32 * 1024) {
+    private val translatedCache = object : LruCache<String, Bitmap>(cacheBudget.translationKb) {
         override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
     }
     private val pageResults = object : LruCache<String, PageResult>(16) {}
@@ -1257,6 +1274,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         super.onCleared()
+        runCatching { getApplication<Application>().unregisterComponentCallbacks(memoryGuard) }
         dropPending()
         runCatching { reader?.close() }
         reader = null
