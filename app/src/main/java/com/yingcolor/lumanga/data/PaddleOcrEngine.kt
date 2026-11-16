@@ -44,6 +44,15 @@ private const val REFILL_MIN_CONF = 0.5f
 /** Columns per page that may be re-read for a missing tail; each one costs a medium inference. */
 private const val EXTEND_LIMIT = 3
 
+/** Columns per page that may be re-read for glyphs the detector skipped at the top. */
+private const val HEAD_LIMIT = 2
+
+/** How much of the old reading has to reappear at the end of the longer one. */
+private const val HEAD_KEEP = 0.6f
+
+/** Characters a line of dialogue never starts with: the glyphs before them were cut away. */
+private const val HEAD_CONTINUES = "がをにはのでともてってゃゅょー…、。"
+
 /** Below this the chosen model is guessing: the column is re-read with the medium recogniser. */
 private const val RECHECK_CONF = 0.75f
 
@@ -150,14 +159,13 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
                     runtime = PaddleRuntime(copyModels(context, model), model)
                     runtimeModel = model
                 }
-                refillBlanks(
-                    bitmap,
-                    recheckGarbled(bitmap, extendTruncated(bitmap, runtime!!.recognize(bitmap)))
-                )
+                // Read once, then repair the reading in a fixed order: a cut-off tail, glyphs the
+                // detector skipped above the box, a column the small model mangled, empty boxes.
+                val read = extendTruncated(bitmap, runtime!!.recognize(bitmap))
+                refillBlanks(bitmap, recheckGarbled(bitmap, extendHeads(bitmap, read)))
             }
         }
     }
-
     /**
      * Recogniser that re-reads a box the chosen model returned nothing for.
      *
@@ -247,6 +255,94 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
             region.copy(text = again.text, box = box, confidence = again.confidence)
         }
         return regions.map { grown[it] ?: it }
+    }
+
+    /**
+     * Re-reads a column whose reading starts in the middle of a sentence.
+     *
+     * The detector sometimes begins a column below its first glyphs: on copin p33 the middle
+     * strip reads 「が荒くなっているのがわかる。」 while the page says 「……息が荒くなっているのがわかる。」.
+     * The three skipped glyphs belong to no box, so no group translates them and no plate covers
+     * them — they sit in Japanese above the Chinese, which reads like a bubble that was skipped.
+     *
+     * The box grows three character cells upward and the longer reading is only kept when the old
+     * one is still its tail. A column that starts with a particle is the signal, which keeps the
+     * extra inference down to at most two columns a page.
+     */
+    private fun extendHeads(bitmap: Bitmap, regions: List<TextRegion>): List<TextRegion> {
+        if (!prefs.ocrBlankRefill) return regions
+        if (OcrModel.from(prefs.ocrModel) == OcrModel.MEDIUM) return regions
+        fun columnText(box: Rect): String = regions
+            .filter { it.vertical && overlapsX(it.box, box) }
+            .sortedBy { it.box.top }
+            .joinToString("") { it.text }
+        val candidates = regions
+            .filter { it.vertical && it.box.top > it.box.width() }
+            .filter { columnText(it.box).let { t -> t.length >= 4 && t.first() in HEAD_CONTINUES } }
+            // Only the top slice: a lower slice already has the rest of the sentence above it, and
+            // growing it would read those glyphs a second time.
+            .filter { region ->
+                regions.none { it !== region && overlaps(region.box, it.box) &&
+                    it.box.top < region.box.top }
+            }
+            .sortedByDescending { it.box.height() }
+            .take(HEAD_LIMIT)
+        if (candidates.isEmpty()) return regions
+        android.util.Log.i("Ocr", "OCR head list=${candidates.map { "${it.box}:${it.text.take(6)}" }}")
+        val reader = refillReader()
+        val grown = candidates.associateWith { region ->
+            val box = Rect(region.box)
+            box.top = (box.top - region.box.width() * 3).coerceAtLeast(0)
+            val again = runCatching { reader.readBox(bitmap, box) }.getOrNull()
+            android.util.Log.i("Ocr", "OCR head? ${region.box} text=${region.text} -> ${again?.text}")
+            if (again == null || again.confidence < REFILL_MIN_CONF ||
+                again.text.length <= region.text.length ||
+                tailMatch(again.text, region.text) < region.text.length * HEAD_KEEP
+            ) return@associateWith null
+            // Three cells is more than the missing glyphs, and the patch painted for this box
+            // would cover that much blank page above the balloon. Trim to where the balloon's
+            // own white interior starts so the plate lands on it, not on the artwork beside it.
+            val tight = Rect(box)
+            tight.top = whiteStart(bitmap, box)
+            android.util.Log.i("Ocr", "OCR head ${region.box} -> ${again.text}")
+            region.copy(text = again.text, box = tight, confidence = again.confidence)
+        }
+        return regions.map { grown[it] ?: it }
+    }
+
+    /**
+     * First row of [box] that is mostly the page's light background.
+     *
+     * A grown head box usually reaches over the balloon into the drawing above it, which on this
+     * page is a dark wall: painting the patch from the box top left a white notch in the artwork.
+     * The first row where most pixels are bright is the balloon's interior, so the patch starts
+     * there. A column printed on dark paper has no such row and keeps its box.
+     */
+    private fun whiteStart(bitmap: Bitmap, box: Rect): Int {
+        val w = box.width()
+        val h = box.bottom - box.top
+        if (w < 2 || h < 2) return box.top
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, box.left, box.top, w, h)
+        for (y in 0 until h) {
+            var bright = 0
+            for (x in 0 until w) {
+                val c = pixels[y * w + x]
+                val gray = (Color.red(c) * 299 + Color.green(c) * 587 + Color.blue(c) * 114) / 1000
+                if (gray >= 165) bright++
+            }
+            if (bright * 5 >= w * 3) return (box.top + y - 2).coerceAtLeast(box.top)
+        }
+        return box.top
+    }
+
+    /** Length of the common tail of [text] and [old]: how much of the old reading came back. */
+    private fun tailMatch(text: String, old: String): Int {
+        var same = 0
+        while (same < old.length && same < text.length &&
+            text[text.length - 1 - same] == old[old.length - 1 - same]
+        ) same++
+        return same
     }
 
     /**
