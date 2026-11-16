@@ -1605,8 +1605,12 @@ object TranslationEngine {
             // Measure the lettering from the untouched page: out is still a plain copy at this
             // point (patches are collected first, painted afterwards).
             val target = sourceGlyphSize(group, out, background)
+            // The plate is clipped to the balloon outline, so any text laid out past that
+            // outline is drawn straight onto the drawing. Clamping the typesetting bounds to the
+            // outline's bounding box keeps it inside; a patch that already fits never grows, so
+            // only the overflowing ones (roughly a third of a page) lose a little size here.
             val fitted = fittedBox(
-                value, paint, Rect(group.bubble), area, verticalText, target
+                value, paint, Rect(group.bubble), typeBounds(group, area), verticalText, target
             ) ?: return@forEachIndexed
             // The plate is NOT the typesetting bounds. It covers exactly the original lettering,
             // any column the confidence floor dropped, and the box the Chinese actually occupies.
@@ -1616,6 +1620,11 @@ object TranslationEngine {
             fill.union(fitted.first)
             patches.add(
                 Patch(value, fill, background, verticalText, fitted, group.contour)
+            )
+            android.util.Log.d(
+                "Translate",
+                "TR inside i=$i contour=${if (group.contour == null) 0 else 1} " +
+                    "over=${overflowOf(fitted.first, group.contour)} w=${fitted.first.width()}"
             )
             android.util.Log.d(
                 "Translate",
@@ -1909,6 +1918,40 @@ object TranslationEngine {
      * lettering sat. [bounds] is only the room typesetting may borrow; the painted plate is
      * sized from the returned box instead, so a generous bounds no longer makes a huge cover.
      */
+    /** [area] clipped to the balloon's bounding box; [area] itself when there is no outline. */
+    private fun typeBounds(group: BubbleGroup, area: Rect): Rect {
+        val contour = group.contour ?: return area
+        val outline = contourBounds(contour) ?: return area
+        val clamped = Rect(area)
+        if (!clamped.intersect(outline)) return area
+        return clamped
+    }
+
+    /** Pixels by which [box] pokes past the outline's bounding box; -1 when there is no outline. */
+    private fun overflowOf(box: Rect, contour: FloatArray?): Int {
+        val outline = contourBounds(contour) ?: return -1
+        return (maxOf(0, outline.left - box.left) + maxOf(0, box.right - outline.right) +
+            maxOf(0, outline.top - box.top) + maxOf(0, box.bottom - outline.bottom))
+    }
+
+    private fun contourBounds(contour: FloatArray?): Rect? {
+        if (contour == null || contour.size < 6) return null
+        var x0 = Float.MAX_VALUE
+        var y0 = Float.MAX_VALUE
+        var x1 = -Float.MAX_VALUE
+        var y1 = -Float.MAX_VALUE
+        var i = 0
+        while (i + 1 < contour.size) {
+            if (contour[i] < x0) x0 = contour[i]
+            if (contour[i] > x1) x1 = contour[i]
+            if (contour[i + 1] < y0) y0 = contour[i + 1]
+            if (contour[i + 1] > y1) y1 = contour[i + 1]
+            i += 2
+        }
+        if (x1 - x0 < 8f || y1 - y0 < 8f) return null
+        return Rect(x0.toInt(), y0.toInt(), x1.toInt(), y1.toInt())
+    }
+
     private fun fittedBox(
         text: String,
         paint: Paint,

@@ -46,8 +46,11 @@ BASELINE = {
     #   把系统内存压力回调接成一次清理。原先缓存配额合计 213MB / 256MB 堆，翻页时分配
     #   17MB 整页位图必失败 → 全量 GC → OutOfMemoryError → 输入 5 秒没人处理（ANR）。
     #   ReaderScreen.kt 本身只留引用，单文件行数反而没超。）
+    # 第 70 轮上调：+50 行 = 「译文不越出气球」
+    #   （typeBounds() 把排版范围夹到气球轮廓外接框、overflowOf()/contourBounds() 观测越界像素；
+    #   只影响原本就溢出的组，已经放得下的组排版完全不变）。
     "kt_files": 58,          # app/src/main/java 下的 Kotlin 文件数
-    "kt_lines": 19100,      # 总行数（当前 19062）
+    "kt_lines": 19150,      # 总行数（当前 19105）
     "max_file_lines": 2850, # 单文件行数（ReaderScreen.kt 2844，已知最大块，不许再长）
     "dead_strings": 0,       # UiStrings 里零引用的文案常量
     "unused_imports": 0,      # 确认无用的 import
