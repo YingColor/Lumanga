@@ -44,6 +44,18 @@ private const val REFILL_MIN_CONF = 0.5f
 /** Columns per page that may be re-read for a missing tail; each one costs a medium inference. */
 private const val EXTEND_LIMIT = 3
 
+/** Below this the chosen model is guessing: the column is re-read with the medium recogniser. */
+private const val RECHECK_CONF = 0.75f
+
+/** Shorter readings are noise on artwork, not a paragraph worth a second pass. */
+private const val RECHECK_MIN_LEN = 3
+
+/** How much more confident the second reading has to be before it replaces the first. */
+private const val RECHECK_GAIN = 0.12f
+
+/** Columns per page that may be re-read for a bad reading. */
+private const val RECHECK_LIMIT = 3
+
 object PaddleOcr {
     @Volatile
     private var instance: PaddleOcrEngine? = null
@@ -121,7 +133,7 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
         if (parallel && pool != null && pool.model == OcrModel.from(prefs.ocrModel)) {
             val worker = pool.channel.receive()
             try {
-                refillBlanks(bitmap, worker.recognize(bitmap))
+                refillBlanks(bitmap, recheckGarbled(bitmap, worker.recognize(bitmap)))
             } finally {
                 pool.channel.trySend(worker)
             }
@@ -138,7 +150,10 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
                     runtime = PaddleRuntime(copyModels(context, model), model)
                     runtimeModel = model
                 }
-                refillBlanks(bitmap, extendTruncated(bitmap, runtime!!.recognize(bitmap)))
+                refillBlanks(
+                    bitmap,
+                    recheckGarbled(bitmap, extendTruncated(bitmap, runtime!!.recognize(bitmap)))
+                )
             }
         }
     }
@@ -232,6 +247,47 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
             region.copy(text = again.text, box = box, confidence = again.confidence)
         }
         return regions.map { grown[it] ?: it }
+    }
+
+    /**
+     * Re-reads a column the chosen model clearly mangled.
+     *
+     * The small recogniser is quick but not accurate on the brush lettering these pages use for
+     * narration: CG p.10 read 「それと共にー」 as 「小れと#足ー」 at confidence 0.71, and the page
+     * then showed half a sentence. The same box through the medium recogniser reads it at 0.91.
+     * Low confidence is the signal that the reading is wrong, so only those columns are re-read,
+     * and only when the second reading is both more confident and no shorter - a guess that drops
+     * characters is not an improvement. Three columns per page at most; each costs an inference.
+     */
+    private fun recheckGarbled(bitmap: Bitmap, regions: List<TextRegion>): List<TextRegion> {
+        if (!prefs.ocrBlankRefill) return regions
+        if (OcrModel.from(prefs.ocrModel) == OcrModel.MEDIUM) return regions
+        val candidates = regions
+            .filter {
+                it.vertical && it.text.length >= RECHECK_MIN_LEN && it.confidence < RECHECK_CONF
+            }
+            .sortedByDescending { it.box.height() }
+            .take(RECHECK_LIMIT)
+        if (candidates.isEmpty()) return regions
+        android.util.Log.i(
+            "Ocr",
+            "OCR recheck list=${candidates.map { "${it.text.take(6)}:${"%.2f".format(it.confidence)}" }}"
+        )
+        val reader = refillReader()
+        val fixed = HashMap<Rect, TextRegion>()
+        for (region in candidates) {
+            val again = runCatching { reader.readBox(bitmap, region.box) }.getOrNull() ?: continue
+            if (again.text.length < region.text.length) continue
+            if (again.confidence < REFILL_MIN_CONF) continue
+            if (again.confidence < region.confidence + RECHECK_GAIN) continue
+            android.util.Log.i(
+                "Ocr",
+                "OCR recheck ${region.box} ${region.text} -> ${again.text} " +
+                    "(${"%.2f".format(region.confidence)} -> ${"%.2f".format(again.confidence)})"
+            )
+            fixed[region.box] = region.copy(text = again.text, confidence = again.confidence)
+        }
+        return regions.map { fixed[it.box] ?: it }
     }
 
     /** True when two boxes sit in the same column band. */

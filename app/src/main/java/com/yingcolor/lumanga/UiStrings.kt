@@ -264,7 +264,7 @@ object S {
     const val ocrModelHybridTip = "用 medium 的检测器找气泡（能补上 small 整块漏掉的），配上 small 的快速识别；单页大约慢 2–3 倍，仍比完整 medium 快"
     const val ocrModelMangaTip = "漫画专用：整个气泡一次读出一句，语序自然，但个别字和速度不如 small 稳"
     const val ocrBlankRefill = "用 medium 补读读不准的地方"
-    const val ocrBlankRefillTip = "整页模型读成空白的框，以及末尾被截断的竖列，会单独用 medium 再读一次（每页最多补 3 列）。一页通常多花 1~3 秒；关掉就完全只用上面的模型。"
+    const val ocrBlankRefillTip = "整页模型读成空白的框、末尾被截断的竖列，以及读得含糊（置信度低）的列，会单独用 medium 再读一次（每页最多 3 列）。一页通常多花 1~3 秒；关掉就完全只用上面的模型。"
     fun preTranslateOcrValue(name: String): String = "$name · 在「翻译配置」里可切换"
     const val preTranslatePages = "要翻译的页 · 点缩略图勾选"
     const val preTranslateSelectAll = "全选"

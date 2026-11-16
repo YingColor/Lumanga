@@ -38,8 +38,11 @@ BASELINE = {
     #   与 refillBlanks；拷贝逻辑抽成 copyAssets 供两边共用；ONNX 识别改为按内容宽度输入；
     #   补读结果带 2 字/0.5 置信度门槛，避免把画面杂点读成「2」；
     #   竖列末尾被 det 截断时下扩 3 格再读（每页最多 3 列））。
+    # 第 67 轮上调：+50 行 = 「读得含糊的列用 medium 复核」
+    #   （recheckGarbled：置信度 <0.75 且 ≥3 字的竖列重读，要求置信度 +0.12 且不更短才替换，
+    #   每页最多 3 列；复用同一台 recOnly 识别器与同一个用户开关）。
     "kt_files": 56,          # app/src/main/java 下的 Kotlin 文件数
-    "kt_lines": 18920,      # 总行数（当前 18910）
+    "kt_lines": 18970,      # 总行数（当前 18969）
     "max_file_lines": 2850, # 单文件行数（ReaderScreen.kt 2826，已知最大块，不许再长）
     "dead_strings": 0,       # UiStrings 里零引用的文案常量
     "unused_imports": 0,      # 确认无用的 import
