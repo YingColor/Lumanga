@@ -1893,10 +1893,15 @@ object TranslationEngine {
         (Color.red(color) * 299 + Color.green(color) * 587 + Color.blue(color) * 114) / 1000
 
     private fun sampleBubbleColor(source: Bitmap, box: Rect): Int {
-        val w = box.width().coerceAtLeast(1)
-        val h = box.height().coerceAtLeast(1)
+        // A patch that touches the page edge can be grown past it (bubbleSafeArea() and the
+        // one-column widening for no-outline groups both work in page coordinates). Reading such
+        // a box threw "x + width must be <= bitmap.width()" and lost the whole page's lettering.
+        val safe = Rect(box)
+        if (!safe.intersect(0, 0, source.width, source.height)) return Color.WHITE
+        val w = safe.width().coerceAtLeast(1)
+        val h = safe.height().coerceAtLeast(1)
         val pixels = IntArray(w * h)
-        source.getPixels(pixels, 0, w, box.left, box.top, w, h)
+        source.getPixels(pixels, 0, w, safe.left, safe.top, w, h)
         val bright = ArrayList<Int>(pixels.size / 4)
         for (pixel in pixels) {
             if (luminance(pixel) > 120) bright.add(pixel)
@@ -1963,22 +1968,43 @@ object TranslationEngine {
         if (bounds.width() < 10 || bounds.height() < 10) return null
         // A short line fits almost anywhere, so a target clamped to MAX_GLYPH was kept verbatim:
         // one or two glyphs in a small balloon came out at the ceiling and the plate grew around
-        // them. Derive those from the lettering box; longer text keeps its measured size.
+        // them. Derive those from the lettering box.
+        val plate = Rect(anchor)
+        val platePad = (min(anchor.width(), anchor.height()) * 0.04f).toInt().coerceIn(4, 12)
+        plate.inset(-platePad, -platePad)
         var sizeCap = target.coerceIn(7f, MAX_GLYPH)
+        var onPlate = false
         if (text.count { !it.isWhitespace() } <= 4) {
-            val plate = Rect(anchor)
-            val pad = (min(anchor.width(), anchor.height()) * 0.04f).toInt().coerceIn(4, 12)
-            plate.inset(-pad, -pad)
             while (sizeCap > 7f && layoutIn(text, paint, plate, sizeCap, vertical) == null) {
                 sizeCap -= 1f
             }
             sizeCap = sizeCap.coerceAtLeast(7f)
+        } else {
+            // Long text used to keep its measured size and widen the plate around itself, which
+            // painted over more of the drawing than the Japanese ever did. The plate winning is
+            // the behaviour asked for, so try the lettering box first and set the translation a
+            // little smaller instead; the size only gives up LONG_SHRINK_FLOOR of the target
+            // before the old grow-then-shrink path takes over again.
+            val floor = (sizeCap * LONG_SHRINK_FLOOR).coerceAtLeast(7f)
+            var probe = sizeCap
+            while (probe >= floor && layoutIn(text, paint, plate, probe, vertical) == null) {
+                probe -= 1f
+            }
+            if (probe >= floor) {
+                sizeCap = probe
+                onPlate = true
+            }
         }
         // A little slack, so a descender or a heavy last stroke is not clipped by the box edge.
         val margin = (sizeCap * 0.22f).toInt().coerceAtLeast(2)
-        val box = Rect(anchor)
-        box.inset(-margin, -margin)
-        if (!box.intersect(bounds)) box.set(anchor)
+        val box = if (onPlate) {
+            Rect(plate).also { if (!it.intersect(bounds)) it.set(anchor) }
+        } else {
+            Rect(anchor).also {
+                it.inset(-margin, -margin)
+                if (!it.intersect(bounds)) it.set(anchor)
+            }
+        }
         var fit = layoutIn(text, paint, box, sizeCap, vertical)
         while (fit == null && growWithin(box, bounds, sizeCap * 0.25f)) {
             fit = layoutIn(text, paint, box, sizeCap, vertical)
@@ -2164,6 +2190,9 @@ object TranslationEngine {
 
     /** Ceiling for a glyph size; large enough for shout lettering, small enough to stay sane. */
     private const val MAX_GLYPH = 120f
+
+/** How much of the measured size a long line may give up to keep the plate small. */
+    private const val LONG_SHRINK_FLOOR = 0.65f
 
     /** Used for everything the bundled lettering face cannot draw, and when it is unavailable. */
     private val SYSTEM_FACE: Typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
