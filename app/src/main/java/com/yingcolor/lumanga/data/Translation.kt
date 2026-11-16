@@ -2088,7 +2088,7 @@ object TranslationEngine {
         val metrics = paint.fontMetrics
         val glyphH = metrics.descent - metrics.ascent
         if (vertical) {
-            val colW = chosen.size * 1.10f
+            val colW = chosen.size * COLUMN_PITCH
             val lineH = chosen.size * 1.04f
             val totalW = chosen.columns.size * colW
             // Every column starts at the same height, the way Japanese vertical text is set.
@@ -2238,6 +2238,18 @@ object TranslationEngine {
 
     /** The drawing uses size * 1.04 as its vertical character advance. */
     private const val VERTICAL_ADVANCE = 1.04f
+
+    /**
+     * Distance between column centres, as a fraction of the glyph size.
+     *
+     * It used to be 1.10, which leaves a tenth of a glyph between columns on paper. The comic
+     * face fills its em box and the fake bold adds [INK_WEIGHT] on top, so what reached the page
+     * was a gap of about 0.04 of a glyph: three columns of a narrow strip read as one smeared
+     * block (copin p34). 1.18 keeps a measured 0.12 of a glyph of clear space there. Deliberately
+     * not wider — every step costs the font size on a two-column bubble, and that is worse than
+     * a narrow gap.
+     */
+    private const val COLUMN_PITCH = 1.18f
 
     /**
      * Distance between the centres of consecutive characters, read straight off the page ink.
@@ -2406,7 +2418,7 @@ object TranslationEngine {
         if (text.isEmpty()) return null
         if (vertical) {
             val lineH = size * 1.04f
-            val colW = size * 1.10f
+            val colW = size * COLUMN_PITCH
             val per = floor(availH / lineH).toInt()
             if (per < 1) return null
             val columns = chunk(text, per)
