@@ -14,6 +14,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -71,6 +72,24 @@ fun OcrModelPicker(settings: UiSettings) {
                     )
                 }
             }
+        }
+        Spacer(Modifier.height(10.dp))
+        // Only boxes the chosen model gave up on are re-read, so the cost is a second per box
+        // rather than a medium pass over the page. Disabled while MEDIUM is already the reader.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = S.ocrBlankRefill, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    text = S.ocrBlankRefillTip,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = settings.ocrBlankRefill,
+                enabled = OcrModel.from(settings.ocrModel) != OcrModel.MEDIUM,
+                onCheckedChange = { settings.setOcrBlankRefill(it) }
+            )
         }
     }
 }

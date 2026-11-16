@@ -243,6 +243,17 @@ class Prefs(context: Context) {
             edit.apply()
         }
 
+    /**
+     * Re-read a box the chosen model returned nothing for with the medium recogniser.
+     *
+     * SMALL decodes white outlined lettering on a dark drawing as nothing at all, while MEDIUM
+     * reads it; the model is already bundled, so the only cost is about a second per box. On by
+     * default because a missing column looks like a bug, and nothing else pays for it.
+     */
+    var ocrBlankRefill: Boolean
+        get() = sp.getBoolean(KEY_OCR_BLANK_REFILL, true)
+        set(value) = sp.edit().putBoolean(KEY_OCR_BLANK_REFILL, value).apply()
+
     /** 0 = PP-OCRv6 Small (default), 1 = PP-OCRv6 Medium, 2 = MangaOCR_mobile. */
     var ocrModel: Int
         get() = sp.getInt(KEY_OCR_MODEL, OcrModel.DEFAULT.id)
@@ -440,6 +451,7 @@ class Prefs(context: Context) {
         const val KEY_TRANSLATE_MODEL = "translate_model"
         const val KEY_TRANSLATE_KEY = "translate_api_key"
         const val KEY_OCR_MODEL = "ocr_model"
+        const val KEY_OCR_BLANK_REFILL = "ocr_blank_refill"
         const val KEY_OCR_ONLINE = "ocr_online"
         const val KEY_OCR_API = "ocr_api"
         const val KEY_OCR_API_KEY = "ocr_api_key"

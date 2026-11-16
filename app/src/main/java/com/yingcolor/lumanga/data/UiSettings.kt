@@ -153,6 +153,14 @@ class UiSettings(private val prefs: Prefs) {
     private var stateOcrOnline by mutableStateOf(prefs.ocrOnline)
     val ocrOnline: Boolean get() = stateOcrOnline
 
+    private var stateOcrBlankRefill by mutableStateOf(prefs.ocrBlankRefill)
+    val ocrBlankRefill: Boolean get() = stateOcrBlankRefill
+
+    fun setOcrBlankRefill(value: Boolean) {
+        stateOcrBlankRefill = value
+        prefs.ocrBlankRefill = value
+    }
+
     private var stateOcrApi by mutableStateOf(prefs.ocrApi)
     val ocrApi: String get() = stateOcrApi
 

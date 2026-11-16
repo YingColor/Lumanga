@@ -35,7 +35,9 @@ enum class OcrModel(
         "ppocrv6_medium_det_640_fp16.onnx",
         "ppocrv6_medium_rec_640_fp16.onnx",
         true,
-        true
+        true,
+        // One ONNX session takes any width, so the same three buckets apply without extra files.
+        listOf(320, 640, 960)
     ),
     /**
      * Whole-bubble recognition. It still uses SMALL's detector and text boxes for grouping,
@@ -70,8 +72,10 @@ enum class OcrModel(
             add(det)
             add(rec)
             add("characters.json")
-            // The extra widths are named by convention so the enum stays a data table.
-            recBuckets.filter { it != 640 }.forEach { add("ppocrv6_small_rec_${it}_fp32.tflite") }
+            // Extra widths only exist as separate TFLite files; the ONNX recogniser is dynamic.
+            if (!recOnnx) {
+                recBuckets.filter { it != 640 }.forEach { add("ppocrv6_small_rec_${it}_fp32.tflite") }
+            }
         }
 
     /**

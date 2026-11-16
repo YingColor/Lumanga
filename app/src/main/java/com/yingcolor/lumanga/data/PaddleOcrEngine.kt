@@ -35,6 +35,12 @@ import kotlin.math.min
  */
 private const val MAX_PARALLEL_OCR = 3
 
+/** Widest recogniser grid any bundled model accepts; buffers are sized for it once. */
+private const val MAX_BUCKET = 960
+
+/** A refill below this confidence is artwork the extra model guessed at, not recovered text. */
+private const val REFILL_MIN_CONF = 0.5f
+
 object PaddleOcr {
     @Volatile
     private var instance: PaddleOcrEngine? = null
@@ -112,7 +118,7 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
         if (parallel && pool != null && pool.model == OcrModel.from(prefs.ocrModel)) {
             val worker = pool.channel.receive()
             try {
-                worker.recognize(bitmap)
+                refillBlanks(bitmap, worker.recognize(bitmap))
             } finally {
                 pool.channel.trySend(worker)
             }
@@ -129,8 +135,52 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
                     runtime = PaddleRuntime(copyModels(context, model), model)
                     runtimeModel = model
                 }
-                runtime!!.recognize(bitmap)
+                refillBlanks(bitmap, runtime!!.recognize(bitmap))
             }
+        }
+    }
+
+    /**
+     * Recogniser that re-reads a box the chosen model returned nothing for.
+     *
+     * SMALL decodes white outlined lettering on a dark drawing as nothing — CG p.10 lost
+     * 「そして、」 that way — while MEDIUM reads that same crop at 0.9. Only the recogniser is
+     * copied and loaded, and only once a page actually has such a box.
+     */
+    @Volatile
+    private var refillReader: PaddleRuntime? = null
+
+    @Synchronized
+    private fun refillReader(): PaddleRuntime {
+        refillReader?.let { return it }
+        val dir = copyAssets(listOf(OcrModel.MEDIUM.rec), ".refill")
+        android.util.Log.i("Ocr", "refill ready")
+        return PaddleRuntime(dir, OcrModel.MEDIUM, recOnly = true).also { refillReader = it }
+    }
+
+    /**
+     * Gives every empty box a second read with the medium recogniser.
+     *
+     * The box, not the page, is the unit: nothing missing means no inference at all. Picking
+     * MEDIUM as the reader, or turning the switch off, leaves this a no-op.
+     */
+    private fun refillBlanks(bitmap: Bitmap, regions: List<TextRegion>): List<TextRegion> {
+        if (!prefs.ocrBlankRefill) return regions
+        if (OcrModel.from(prefs.ocrModel) == OcrModel.MEDIUM) return regions
+        if (regions.none { it.text.isBlank() }) return regions
+        val reader = refillReader()
+        return regions.map { region ->
+            if (region.text.isNotBlank()) return@map region
+            // A refill is a bonus, never a reason to lose the page: if the extra model cannot
+            // run, the box stays empty and the cover still hides it.
+            val again = runCatching { reader.readBox(bitmap, region.box) }.getOrNull()
+            // A single glyph read off artwork is not text worth translating, and accepting it
+            // would also cost the box its cover (it would stop counting as unread). Keep it blank.
+            if (again == null || again.text.length < 2 || again.confidence < REFILL_MIN_CONF) {
+                return@map region
+            }
+            android.util.Log.i("Ocr", "OCR refill ${region.box} -> ${again.text}")
+            region.copy(text = again.text, confidence = again.confidence)
         }
     }
 
@@ -139,13 +189,17 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
      * app update never replaces a stale model. The stamp ties the cache to both the model and
      * the bundle revision, so a changed model is re-copied on the next run.
      */
-    private fun copyModels(context: Context, model: OcrModel): File {
+    private fun copyModels(context: Context, model: OcrModel): File =
+        copyAssets(model.files, ".bundle_${model.id}")
+
+    /** Copies [names] out of assets once; [stampName] records the bundle revision that did it. */
+    private fun copyAssets(names: List<String>, stampName: String): File {
         val dir = File(context.filesDir, "ocr")
         if (!dir.exists()) dir.mkdirs()
-        val stamp = File(dir, ".bundle_${model.id}")
+        val stamp = File(dir, stampName)
         val expected = "$MODEL_BUNDLE_REV"
         val unchanged = runCatching { stamp.readText() }.getOrNull() == expected
-        for (name in model.files) {
+        for (name in names) {
             val target = File(dir, name)
             if (unchanged && target.exists() && target.length() > 0) continue
             val temp = File(dir, "$name.tmp")
@@ -197,7 +251,13 @@ private class TfLiteSession(path: File, inputElements: Int, outputElements: Int)
  * owns its input tensor and result, so one session is shared by all workers and the 67 MB
  * of FP16 weights are loaded only once.
  */
-private class OnnxSession(path: File, private val shape: LongArray, inputElements: Int) : OcrSession {
+private class OnnxSession(
+    path: File,
+    private val shape: LongArray,
+    inputElements: Int,
+    /** True when the last dimension may change per call (the recogniser), false for the detector. */
+    private val dynamicWidth: Boolean = false
+) : OcrSession {
     private val env = OrtEnvironment.getEnvironment()
     private val session: OrtSession
     private val inputName: String
@@ -217,11 +277,19 @@ private class OnnxSession(path: File, private val shape: LongArray, inputElement
     }
 
     override fun run(values: FloatArray, out: FloatArray) {
+        // A padded recogniser input is not neutral: the model reads the trailing zeros as
+        // ink-free paper and they steal the attention a short column needs. Feeding the exact
+        // content width is what turns 「そって」 back into 「そして」 (CG p.10, three glyphs).
+        // The width therefore comes from the buffer size, and the buffer is limited to it —
+        // ONNX rejects a buffer larger than the shape it is told to expect.
+        val width = if (dynamicWidth) values.size / (3 * 48) else shape[3].toInt()
         val inputBuffer = inputBuffers.get()!!
-        inputBuffer.rewind()
+        inputBuffer.clear()
+        inputBuffer.limit(values.size.coerceAtMost(3 * 48 * width))
         inputBuffer.put(values)
         inputBuffer.rewind()
-        val tensor = OnnxTensor.createTensor(env, inputBuffer, shape)
+        val actual = if (dynamicWidth) longArrayOf(1, 3, 48, width.toLong()) else shape
+        val tensor = OnnxTensor.createTensor(env, inputBuffer, actual)
         val result = session.run(Collections.singletonMap(inputName, tensor))
         try {
             val buffer = (result.get(0) as OnnxTensor).floatBuffer
@@ -230,6 +298,7 @@ private class OnnxSession(path: File, private val shape: LongArray, inputElement
         } finally {
             result.close()
             tensor.close()
+            inputBuffer.clear()
         }
     }
 
@@ -238,7 +307,12 @@ private class OnnxSession(path: File, private val shape: LongArray, inputElement
     }
 }
 
-private class PaddleRuntime(private val dir: File, private val model: OcrModel) {
+private class PaddleRuntime(
+    private val dir: File,
+    private val model: OcrModel,
+    /** True for the refill reader: it only ever reads single boxes, never detects a page. */
+    private val recOnly: Boolean = false
+) {
     /** Longest tile edge fed to the 640 detector; keeps text near its native size. */
     private val TILE_TARGET = 860
 
@@ -279,9 +353,11 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
     // SMALL and MEDIUM share tensor shapes, so detector and recogniser can come from different
     // bundles (see OcrModel.HYBRID); each half picks its own backend.
     private val detShared: OnnxSession? =
-        if (model.detOnnx) OnnxSession(detFile, longArrayOf(1, 3, 640, 640), 3 * 640 * 640) else null
+        if (!recOnly && model.detOnnx) OnnxSession(detFile, longArrayOf(1, 3, 640, 640), 3 * 640 * 640)
+        else null
     private val recShared: OnnxSession? =
-        if (model.recOnnx) OnnxSession(recFile, longArrayOf(1, 3, 48, 640), 3 * 48 * 640) else null
+        if (model.recOnnx) OnnxSession(recFile, longArrayOf(1, 3, 48, 640), 3 * 48 * MAX_BUCKET, true)
+        else null
     private val owned = Collections.synchronizedList(mutableListOf<OcrSession>())
 
     /**
@@ -337,15 +413,11 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
 
         private val slots = HashMap<Int, Slot>(buckets.size)
 
-        fun slot(bucket: Int): Slot {
-            // An ONNX recogniser has one fixed shape, so every bucket collapses onto it.
-            val wanted = if (shared != null) 640 else bucket
-            return slots.getOrPut(wanted) {
-                val session = shared
-                    ?: TfLiteSession(fileFor(wanted), 3 * 48 * wanted, (wanted / 8) * 18710)
-                        .also { owned.add(it) }
-                Slot(session, FloatArray(3 * 48 * wanted), FloatArray((wanted / 8) * 18710))
-            }
+        fun slot(bucket: Int): Slot = slots.getOrPut(bucket) {
+            val session = shared
+                ?: TfLiteSession(fileFor(bucket), 3 * 48 * bucket, (bucket / 8) * 18710)
+                    .also { owned.add(it) }
+            Slot(session, FloatArray(3 * 48 * bucket), FloatArray((bucket / 8) * 18710))
         }
     }
 
@@ -472,6 +544,10 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         android.util.Log.i("Ocr", "OCR det=${detectMs}ms rec=${recogniseMs}ms boxes=${boxes.size}")
         return regions
     }
+
+    /** Reads one box with this runtime's recogniser; the refill path calls this. */
+    fun readBox(bitmap: Bitmap, box: Rect): TextRegion? =
+        recognizeBoxes(bitmap, listOf(box)).firstOrNull()
 
     /** Recognises the given boxes on one bitmap. Shared by the page pass and the per-balloon pass. */
     private fun recognizeBoxes(bitmap: Bitmap, boxes: List<Rect>): List<TextRegion> {
