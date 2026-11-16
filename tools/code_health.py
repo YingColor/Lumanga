@@ -36,9 +36,10 @@ BASELINE = {
     # 第 65 轮上调：+110 行 = 「读不出字时用 medium 补读」用户开关
     #   （Prefs/UiSettings 新键 + OcrModelPicker 开关 + PaddleOcrEngine 懒加载的 recOnly 识别器
     #   与 refillBlanks；拷贝逻辑抽成 copyAssets 供两边共用；ONNX 识别改为按内容宽度输入；
-    #   补读结果带 2 字/0.5 置信度门槛，避免把画面杂点读成「2」）。
+    #   补读结果带 2 字/0.5 置信度门槛，避免把画面杂点读成「2」；
+    #   竖列末尾被 det 截断时下扩 3 格再读（每页最多 3 列））。
     "kt_files": 56,          # app/src/main/java 下的 Kotlin 文件数
-    "kt_lines": 18850,      # 总行数（当前 18847）
+    "kt_lines": 18920,      # 总行数（当前 18910）
     "max_file_lines": 2850, # 单文件行数（ReaderScreen.kt 2826，已知最大块，不许再长）
     "dead_strings": 0,       # UiStrings 里零引用的文案常量
     "unused_imports": 0,      # 确认无用的 import

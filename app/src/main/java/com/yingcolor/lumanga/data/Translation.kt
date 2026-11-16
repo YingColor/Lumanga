@@ -533,6 +533,9 @@ object TranslationEngine {
                 cluster.all { isEllipsisOnly(it) } ||
                 (bitmap != null && letters >= 1 && patchOf(bitmap, cluster) != null)
             if (!keep) {
+                // A fragment still has ink on the page: hand it to the cover of the group next to
+                // it, or the piece the recogniser misread stays readable beside the Chinese.
+                nearMiss.addAll(cluster)
                 android.util.Log.d(
                     "Translate",
                     "TR skip group letters=$letters text=${cluster.joinToString(" ") { it.text }}"

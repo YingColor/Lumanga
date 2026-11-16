@@ -41,6 +41,9 @@ private const val MAX_BUCKET = 960
 /** A refill below this confidence is artwork the extra model guessed at, not recovered text. */
 private const val REFILL_MIN_CONF = 0.5f
 
+/** Columns per page that may be re-read for a missing tail; each one costs a medium inference. */
+private const val EXTEND_LIMIT = 3
+
 object PaddleOcr {
     @Volatile
     private var instance: PaddleOcrEngine? = null
@@ -135,7 +138,7 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
                     runtime = PaddleRuntime(copyModels(context, model), model)
                     runtimeModel = model
                 }
-                refillBlanks(bitmap, runtime!!.recognize(bitmap))
+                refillBlanks(bitmap, extendTruncated(bitmap, runtime!!.recognize(bitmap)))
             }
         }
     }
@@ -182,6 +185,66 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
             android.util.Log.i("Ocr", "OCR refill ${region.box} -> ${again.text}")
             region.copy(text = again.text, confidence = again.confidence)
         }
+    }
+
+    /**
+     * Grows a column whose reading stops mid-sentence and reads it again.
+     *
+     * The detector cuts tall narration columns short — CG p.10 ended all three at the same y,
+     * 230 px above the last glyph, so 「てる。」 stayed on the page with no plate over it. The
+     * extension is read, not measured: the box grows by three character cells and the longer
+     * reading is only kept when it starts like the old one and is more confident. Three columns
+     * per page at most, because each costs a medium inference.
+     */
+    private fun extendTruncated(bitmap: Bitmap, regions: List<TextRegion>): List<TextRegion> {
+        if (!prefs.ocrBlankRefill) return regions
+        if (OcrModel.from(prefs.ocrModel) == OcrModel.MEDIUM) return regions
+        val ends = "。．！？!?…‥」』）ー"
+        // Judged on the whole column, not on one slice: the detector splits a column in two and
+        // the tail slice alone is often too short to look like a sentence.
+        fun columnText(box: Rect): String = regions
+            .filter { it.vertical && overlapsX(it.box, box) }
+            .sortedBy { it.box.top }
+            .joinToString("") { it.text }
+        val candidates = regions
+            .filter { it.vertical && it.box.bottom < bitmap.height - it.box.width() }
+            .filter { columnText(it.box).let { t -> t.length >= 4 && t.last() !in ends } }
+            // Only the bottom slice of a column: when the detector already returned the part
+            // below as its own box, growing an upper slice would read the same glyphs twice.
+            .filter { region ->
+                regions.none { it !== region && overlaps(region.box, it.box) &&
+                    it.box.bottom > region.box.bottom }
+            }
+            .sortedByDescending { it.box.height() }
+            .take(EXTEND_LIMIT)
+        if (candidates.isEmpty()) return regions
+        android.util.Log.i("Ocr", "OCR extend list=${candidates.map { "${it.box}:${it.text.take(6)}" }}")
+        val reader = refillReader()
+        val grown = candidates.associateWith { region ->
+            val box = Rect(region.box)
+            box.bottom = (box.bottom + region.box.width() * 3).coerceAtMost(bitmap.height - 1)
+            val again = runCatching { reader.readBox(bitmap, box) }.getOrNull()
+            android.util.Log.i("Ocr", "OCR extend? ${region.box} text=${region.text} -> ${again?.text}")
+            if (again == null || again.text.length <= region.text.length ||
+                again.confidence < REFILL_MIN_CONF || again.text.take(2) != region.text.take(2)
+            ) return@associateWith null
+            android.util.Log.i("Ocr", "OCR extend ${region.box} -> ${again.text}")
+            region.copy(text = again.text, box = box, confidence = again.confidence)
+        }
+        return regions.map { grown[it] ?: it }
+    }
+
+    /** True when two boxes sit in the same column band. */
+    private fun overlapsX(a: Rect, b: Rect): Boolean =
+        (minOf(a.right, b.right) - maxOf(a.left, b.left)).toFloat() /
+            minOf(a.width(), b.width()) >= 0.7f
+
+    /** True when two boxes share an x band and their vertical spans intersect. */
+    private fun overlaps(a: Rect, b: Rect): Boolean {
+        val x = (minOf(a.right, b.right) - maxOf(a.left, b.left)).toFloat() /
+            minOf(a.width(), b.width())
+        val y = minOf(a.bottom, b.bottom) - maxOf(a.top, b.top)
+        return x >= 0.7f && y > 0
     }
 
     /**
