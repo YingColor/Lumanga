@@ -1534,7 +1534,12 @@ object TranslationEngine {
         /** Cached typesetting result, so the cover is sized from the very box we draw in. */
         val fitted: Pair<Rect, Fit>,
         /** Balloon outline in page pixels, when the segmentation model matched this group. */
-        val contour: FloatArray? = null
+        val contour: FloatArray? = null,
+        /**
+         * True when that outline actually surrounds this lettering. A column strip is sometimes
+         * split across two balloons, and then the outline masks away part of the cover.
+         */
+        val holdsText: Boolean = true
     )
 
     /**
@@ -1619,7 +1624,10 @@ object TranslationEngine {
             group.cover?.let { fill.union(it) }
             fill.union(fitted.first)
             patches.add(
-                Patch(value, fill, background, verticalText, fitted, group.contour)
+                Patch(
+                    value, fill, background, verticalText, fitted, group.contour,
+                    contourHoldsText(group.contour, group.bubble)
+                )
             )
             android.util.Log.d(
                 "Translate",
@@ -1657,34 +1665,37 @@ object TranslationEngine {
             android.util.Log.d(
                 "Translate",
                 "TR cover i=${patches.indexOf(patch)} " +
-                    "shape=${if (whole) "balloon" else if (outline != null) "lettering" else "rect"}"
+                    "shape=${if (whole) "balloon" else if (outline != null && patch.holdsText) "lettering" else "rect"} " +
+                    "holds=${if (patch.holdsText) 1 else 0}"
             )
+            val rect = RectF(patch.fill)
+            // Two percent of the short edge, not a fixed three pixels: the detector box
+            // stops at the glyph centres, so a fixed margin left the first and last column's
+            // outer strokes visible beside the cover on a long narration strip. Kept small
+            // because the cover is opaque now - every pixel of margin is a pixel of artwork
+            // that disappears.
+            val pad = min(rect.width(), rect.height()) * 0.02f
+            rect.inset(-pad, -pad)
+            val radius = min(rect.width(), rect.height()) * 0.12f
             if (whole && outline != null) {
                 // The user's choice: follow the balloon outline. It also hides kana the detector
                 // missed, at the cost of painting over the outline itself.
                 canvas.drawPath(outline, coverPaint)
+                // The outline can surround only part of the lettering (a strip of columns is
+                // sometimes cut in two by the segmenter). Painting just the shape then leaves the
+                // rest of the Japanese on the page, so the lettering box is covered too.
+                if (!patch.holdsText) canvas.drawRoundRect(rect, radius, radius, coverPaint)
+            } else if (outline != null && patch.holdsText) {
+                // The default: cover the original lettering and the translation only, so the
+                // balloon's outline, tail and shading survive. The outline is still used, but
+                // as a clip: a rounded rectangle can stick out of a slanted or jagged balloon
+                // and paint over the drawing beside it.
+                canvas.save()
+                canvas.clipPath(outline)
+                canvas.drawRoundRect(rect, radius, radius, coverPaint)
+                canvas.restore()
             } else {
-                val rect = RectF(patch.fill)
-                // Two percent of the short edge, not a fixed three pixels: the detector box
-                // stops at the glyph centres, so a fixed margin left the first and last column's
-                // outer strokes visible beside the cover on a long narration strip. Kept small
-                // because the cover is opaque now - every pixel of margin is a pixel of artwork
-                // that disappears.
-                val pad = min(rect.width(), rect.height()) * 0.02f
-                rect.inset(-pad, -pad)
-                val radius = min(rect.width(), rect.height()) * 0.12f
-                if (outline != null) {
-                    // The default: cover the original lettering and the translation only, so the
-                    // balloon's outline, tail and shading survive. The outline is still used, but
-                    // as a clip: a rounded rectangle can stick out of a slanted or jagged balloon
-                    // and paint over the drawing beside it.
-                    canvas.save()
-                    canvas.clipPath(outline)
-                    canvas.drawRoundRect(rect, radius, radius, coverPaint)
-                    canvas.restore()
-                } else {
-                    canvas.drawRoundRect(rect, radius, radius, coverPaint)
-                }
+                canvas.drawRoundRect(rect, radius, radius, coverPaint)
             }
         }
         patches.forEach { patch ->
@@ -1926,10 +1937,30 @@ object TranslationEngine {
     /** [area] clipped to the balloon's bounding box; [area] itself when there is no outline. */
     private fun typeBounds(group: BubbleGroup, area: Rect): Rect {
         val contour = group.contour ?: return area
+        // Only an outline that surrounds this lettering may confine it. A long strip of columns
+        // is sometimes cut in two by the segmenter, and then clamping to the half it did find
+        // pushed the translation down the page: on copin p33 the strip spans y 114..1501 while
+        // its outline spans 573..1500, so the box became exactly the lower 927 px.
+        if (!contourHoldsText(contour, group.bubble)) return area
         val outline = contourBounds(contour) ?: return area
         val clamped = Rect(area)
         if (!clamped.intersect(outline)) return area
         return clamped
+    }
+
+    /**
+     * True when the outline's own bounding box contains [anchor].
+     *
+     * Detection boxes stop at the glyph centres, so the outline is routinely a little smaller
+     * than the lettering; a few percent of slack covers that. Anything bigger means the outline
+     * describes a different piece of the page, and using it as a mask would erase the cover
+     * rather than shape it.
+     */
+    private fun contourHoldsText(contour: FloatArray?, anchor: Rect): Boolean {
+        val outline = contourBounds(contour) ?: return false
+        val slack = maxOf(4, (min(anchor.width(), anchor.height()) * 0.08f).toInt())
+        return outline.left <= anchor.left + slack && outline.top <= anchor.top + slack &&
+            outline.right >= anchor.right - slack && outline.bottom >= anchor.bottom - slack
     }
 
     /** Pixels by which [box] pokes past the outline's bounding box; -1 when there is no outline. */

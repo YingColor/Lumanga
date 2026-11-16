@@ -49,8 +49,12 @@ BASELINE = {
     # 第 70 轮上调：+50 行 = 「译文不越出气球」
     #   （typeBounds() 把排版范围夹到气球轮廓外接框、overflowOf()/contourBounds() 观测越界像素；
     #   只影响原本就溢出的组，已经放得下的组排版完全不变）。
+    # 第 72 轮上调：+50 行 = 修「轮廓只盖住半截时底板被裁掉、上半截原文裸露」
+    #   （contourHoldsText() 判断轮廓是否真的罩住这组文字；不罩住就不再把排版框夹进轮廓、
+    #   也不拿它当底板的裁剪路径。copin 第 33 页右侧长条：文字 y 114..1501、轮廓 y 573..1500，
+    #   第 70 轮的夹取把译文整体下推到 573 之后，同时底板被同一轮廓裁掉上半截。）
     "kt_files": 58,          # app/src/main/java 下的 Kotlin 文件数
-    "kt_lines": 19150,      # 总行数（当前 19105）
+    "kt_lines": 19200,      # 总行数（当前 19165）
     "max_file_lines": 2850, # 单文件行数（ReaderScreen.kt 2844，已知最大块，不许再长）
     "dead_strings": 0,       # UiStrings 里零引用的文案常量
     "unused_imports": 0,      # 确认无用的 import
