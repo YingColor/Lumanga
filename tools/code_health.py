@@ -34,7 +34,7 @@ BASELINE = {
     # 第 62 轮上调：+1 文件 / +70 行 = 「底板范围」用户选项
     #   （data/CoverStyle.kt + Prefs/UiSettings/配置页开关 + 渲染参数）。
     "kt_files": 56,          # app/src/main/java 下的 Kotlin 文件数
-    "kt_lines": 18730,      # 总行数（当前 18721）
+    "kt_lines": 18730,      # 总行数（当前 18726）
     "max_file_lines": 2850, # 单文件行数（ReaderScreen.kt 2826，已知最大块，不许再长）
     "dead_strings": 0,       # UiStrings 里零引用的文案常量
     "unused_imports": 0,      # 确认无用的 import

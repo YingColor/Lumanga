@@ -393,6 +393,12 @@ object TranslationEngine {
                 // out of the translator AND out of nearMiss, so no cover reaches it either.
                 return@forEach
             }
+            if (region.text.isBlank()) {
+                // The recogniser gave up on this box, but the ink is still on the page: it has to
+                // reach the cover even though it carries no text (CG p.10 kept a column top raw).
+                nearMiss.add(region)
+                return@forEach
+            }
             if (isUsable(region, language)) {
                 usable.add(region)
             } else {

@@ -254,16 +254,11 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
     /**
      * Share of the page a balloon must cover before it gets its own detection pass.
      *
-     * This used to be 3%, on the assumption that a small balloon holds one short column the page
-     * pass already reads. That is wrong for a two-glyph horizontal line in a small balloon: the
-     * page-wide detector boxed only 「は」 of 「はい」 on CG p.6, the recogniser returned the single
-     * kana, and the translator turned that orphan into 「哈」 while the reference project read the
-     * whole word. Re-detecting inside the balloon is what the reference project does for every
-     * balloon, so the floor is lowered until only thumbnails are skipped. Cost is small: the
-     * detector runs on a tight crop instead of the whole page.
+     * This used to be 3%, which skipped small balloons: the page-wide detector boxed only 「は」 of
+     * 「はい」 on CG p.6 and the translator turned that orphan into 「哈」. The floor is lowered
+     * until only thumbnails are skipped; the detector runs on a tight crop, so the cost is small.
      */
     private val BALLOON_REDETECT_SHARE = 0.006f
-
 
     /** Below this confidence the column is read again with the wider margin. */
     private val WIDE_RETRY_CONF = 0.85f
@@ -271,10 +266,9 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
     private val recFile = File(dir, model.rec)
 
     /**
-     * Recogniser input widths this model ships. PP-OCR's recogniser is trained at one fixed
-     * width, and the reference project bundles 320/640/960, choosing by content width. This is
-     * what recovers short columns: a 299 px strip fed to the 640 model spends most of its output
-     * grid on padding and 「ふふふ」 came back as 「…」, while the 320 model reads it.
+     * Recogniser input widths this model ships. The recogniser is trained at one fixed width and
+     * the reference project bundles 320/640/960: a 299 px strip sent to the 640 model spends its
+     * output grid on padding and 「ふふふ」 came back as 「…」, while the 320 model reads it.
      */
     private val recBuckets: List<Int> =
         if (model.recBuckets.isEmpty()) listOf(640) else model.recBuckets
@@ -282,8 +276,8 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         JSONArray(File(dir, "characters.json").readText(Charsets.UTF_8))
             .let { array -> List(array.length()) { array.getString(it) } }
 
-    // SMALL and MEDIUM use identical tensor shapes, so the detector and the recogniser can
-    // come from different bundles (see OcrModel.HYBRID). Each half picks its own backend.
+    // SMALL and MEDIUM share tensor shapes, so detector and recogniser can come from different
+    // bundles (see OcrModel.HYBRID); each half picks its own backend.
     private val detShared: OnnxSession? =
         if (model.detOnnx) OnnxSession(detFile, longArrayOf(1, 3, 640, 640), 3 * 640 * 640) else null
     private val recShared: OnnxSession? =
@@ -291,9 +285,8 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
     private val owned = Collections.synchronizedList(mutableListOf<OcrSession>())
 
     /**
-     * Recognising a page is one inference per text column, and those columns are independent, so
-     * they run on two workers instead of one after another. TFLite interpreters are not
-     * thread-safe, so each worker gets its own; the cost is one extra copy of the 21 MB recogniser.
+     * One inference per column, and columns are independent, so two workers run instead of one
+     * after another. Interpreters are not thread-safe, so each worker gets its own copy.
      */
     private val recWorkers = Executors.newFixedThreadPool(2) { runnable ->
         Thread(runnable, "ocr-rec").apply { isDaemon = true }
@@ -526,9 +519,14 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
 
         val regions = ArrayList<TextRegion>(boxes.size)
         boxes.forEachIndexed { index, column ->
-            val result = texts[index] ?: return@forEachIndexed
-            if (result.first.isBlank()) return@forEachIndexed
-            val box = rects[index] ?: return@forEachIndexed
+            val result = texts[index]
+            val box = rects[index]
+            if (result == null || box == null) {
+                android.util.Log.d("Ocr", "OCR blank $column")
+                return@forEachIndexed
+            }
+            // An unread box is kept with empty text: the grouping pass turns it into cover area,
+            // because the ink is still on the page even though the recogniser gave up on it.
             regions.add(TextRegion(result.first, box, result.second, verticals[index]))
         }
         return regions.sortedWith(
@@ -536,11 +534,6 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         )
     }
 
-    /**
-     * Runs the detector over overlapping tiles instead of one shrunken full page.
-     * A 1240x1754 page squeezed into 640 leaves columns ~18 px wide, which the recognizer then
-     * has to blow up again; tiling keeps them around 25-35 px and lifts confidence a lot.
-     */
     /**
      * Splits boxes that swallowed several vertical columns into one box per column.
      *
@@ -847,7 +840,6 @@ private class PaddleRuntime(private val dir: File, private val model: OcrModel) 
         val matrix = Matrix().apply { postRotate(-90f) }
         return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
     }
-
 
     private fun recognizeHorizontal(crop: Bitmap, worker: RecWorker): Pair<String, Float> {
         val required = max(1, ceil(48.0 * crop.width / crop.height.toDouble()).toInt())
