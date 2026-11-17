@@ -1600,9 +1600,13 @@ object TranslationEngine {
             // footprints have to be inside the cover as well as inside the typesetting bounds.
             group.cover?.let { area.union(it) }
             placed.add(area)
-            // Sample from the patch itself: a halftone bubble needs its own grey as the fill,
-            // otherwise the cover reads as a bright white hole punched in the drawing.
-            val background = sampleBubbleColor(out, area)
+            // Sample the paper the Japanese actually sat on, not the grown plate: narration set
+            // straight onto a light panel grew until the box swallowed the drawing beside it,
+            // most of the sample came out dark, and the plate landed as a near-black slab over a
+            // white area (copin p11: 3.8% bright -> lum 62 over light artwork).
+            val sampleBox = Rect(group.bubble)
+            group.cover?.let { sampleBox.union(it) }
+            val background = sampleBubbleColor(out, sampleBox)
             val verticalText = if (forceHorizontal) false else group.vertical
             // The erasing area is the bubble, but the translation has to sit where the Japanese
             // sat and be about as large as the Japanese was. Both come from the source, not from
@@ -1920,7 +1924,15 @@ object TranslationEngine {
         val pool = if (bright.size >= pixels.size / 6) bright else pixels.toList()
         val sorted = pool.sortedBy { luminance(it) }
         val picked = sorted[sorted.size / 2]
-        return Color.rgb(Color.red(picked), Color.green(picked), Color.blue(picked))
+        val chosen = Color.rgb(Color.red(picked), Color.green(picked), Color.blue(picked))
+        // Which pool the sample came from decides whether a plate can land on the wrong colour:
+        // a white balloon crossed by heavy ink falls back to "all pixels" and is painted dark.
+        android.util.Log.d(
+            "Translate",
+            "TR plate box=${w}x${h} bright=${bright.size}/${pixels.size} " +
+                "lum=${luminance(chosen)} fallback=${bright.size < pixels.size / 6}"
+        )
+        return chosen
     }
 
     private class Fit(

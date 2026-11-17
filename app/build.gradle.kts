@@ -24,7 +24,7 @@ android {
         // only this counter has to keep rising. The release notes must repeat the same number on
         // their first line, or the in-app update check either misses a build or offers one that
         // is already installed.
-        versionCode = 125
+        versionCode = 127
         versionName = "1.1.0"
         vectorDrawables { useSupportLibrary = true }
         // Both OCR backends ship native libs for four ABIs. Only real phones matter here;
