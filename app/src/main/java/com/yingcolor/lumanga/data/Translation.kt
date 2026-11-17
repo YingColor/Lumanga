@@ -579,11 +579,21 @@ object TranslationEngine {
             // see where one ends. Without it a five-column sentence arrives as one run and is
             // reordered by guesswork, which looked like a recognition error.
             val columns = buildString {
+                var previous: TextRegion? = null
                 cluster.forEachIndexed { index, region ->
-                    if (index > 0 && (vertical || horizontalSource) && !isEllipsisOnly(region)) {
-                        append(COLUMN_BREAK)
+                    val prev = previous
+                    val continues = prev != null && sameColumn(prev.box, region.box)
+                    if (prev != null && continues) {
+                        // Same column, next slice: the sentence runs on, so no column break here,
+                        // and the overlap the two boxes share was recognised twice.
+                        append(dropSeamRepeat(prev.box, prev.text, region.box, region.text))
+                    } else {
+                        if (index > 0 && (vertical || horizontalSource) && !isEllipsisOnly(region)) {
+                            append(COLUMN_BREAK)
+                        }
+                        append(region.text)
                     }
-                    append(region.text)
+                    previous = region
                 }
             }
             // MangaOCR_mobile was trained on Japanese manga. For any other printed language the
@@ -624,6 +634,15 @@ object TranslationEngine {
                         "Translate",
                         "TR src$i box=${g.bubble.left},${g.bubble.top}," +
                             "${g.bubble.right},${g.bubble.bottom} v=${g.vertical} text=${g.source}"
+                    )
+                    // What the merged box actually consists of: a group whose parts sit far apart
+                    // is a merge that should not have happened, and stacked parts in one column
+                    // are the seams where characters used to be read twice.
+                    android.util.Log.d(
+                        "Translate",
+                        "TR parts$i n=${g.regions.size} " + g.regions.joinToString(" ") {
+                            "${it.box.left},${it.box.top},${it.box.width()}x${it.box.height()}"
+                        }
                     )
                 }
             }
@@ -970,6 +989,43 @@ object TranslationEngine {
             if (column == null) columns.add(mutableListOf(region)) else column.add(region)
         }
         return columns.flatMap { members -> members.sortedBy { it.box.top } }
+    }
+
+    /**
+     * True when [b] sits in the same vertical column as [a].
+     *
+     * Two neighbouring columns never share half a column of width; two boxes the detector cut
+     * out of one tall column always do (they differ by a few pixels at most).
+     */
+    private fun sameColumn(a: Rect, b: Rect): Boolean {
+        val shared = minOf(a.right, b.right) - maxOf(a.left, b.left)
+        val narrower = minOf(a.width(), b.width()).coerceAtLeast(1)
+        return shared.toFloat() / narrower > 0.5f
+    }
+
+    /**
+     * Drops the glyphs the lower box read again because it overlaps the upper one.
+     *
+     * A tall column is sliced into stacked boxes whose ends overlap by 10-20% of their height, so
+     * the seam glyphs are recognised twice and the sentence reaches the model stuttering:
+     * 「事実を意識」+「識し」, 「俺が選んだお菓子」+「子」 (copin p11). Only a repeat the overlap
+     * can explain is removed — never more glyphs than the overlap is tall — so a genuine double
+     * character (「だんだん」) survives when the boxes merely touch.
+     */
+    private fun dropSeamRepeat(
+        before: Rect,
+        beforeText: String,
+        after: Rect,
+        afterText: String
+    ): String {
+        val overlap = before.bottom - after.top
+        if (overlap <= 0 || beforeText.isEmpty() || afterText.isEmpty()) return afterText
+        val glyph = after.width().coerceAtLeast(1)
+        val room = ((overlap + glyph / 2) / glyph).coerceIn(1, 3)
+        for (k in minOf(room, beforeText.length, afterText.length) downTo 1) {
+            if (beforeText.takeLast(k) == afterText.take(k)) return afterText.drop(k)
+        }
+        return afterText
     }
 
     /**

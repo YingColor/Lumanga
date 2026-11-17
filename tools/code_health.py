@@ -58,7 +58,9 @@ BASELINE = {
     #   旧读仍是结尾」才采用，每页最多 2 列；whiteStart() 把长过的框顶收回到气球白底起始行，
     #   免得底板糊到画面上；tailMatch() 算尾巴吻合度。copin 第 33 页「……息」就靠这条补回来。）
     "kt_files": 58,          # app/src/main/java 下的 Kotlin 文件数
-    "kt_lines": 19300,      # 总行数（当前 19261）
+    # 第 78 轮 19300→19400：拼接同列上下叠框时不再插列分隔、并去掉接缝重复字
+    # （sameColumn + dropSeamRepeat 两个函数 + 拼接循环改写 + 一行 TR parts 诊断）。
+    "kt_lines": 19400,      # 总行数（当前 19346）
     "max_file_lines": 2850, # 单文件行数（ReaderScreen.kt 2844，已知最大块，不许再长）
     "dead_strings": 0,       # UiStrings 里零引用的文案常量
     "unused_imports": 0,      # 确认无用的 import
