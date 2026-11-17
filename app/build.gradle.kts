@@ -20,14 +20,16 @@ android {
         minSdk = 26
         targetSdk = 36
         // Bumped with every delivered build so an install can be told apart: 关于 dialog shows
-        // "版本 <name>（构建 <code>）". Version *name* stays 1.5.0 on purpose — only this counter
-        // moves. The release notes must repeat the same number on their first line, or the
-        // in-app update check either misses a build or offers one that is already installed.
-        versionCode = 124
-        versionName = "1.5.0"
+        // "版本 <name>（构建 <code>）". The name is set by the user (1.1.0 as of build 125) and
+        // only this counter has to keep rising. The release notes must repeat the same number on
+        // their first line, or the in-app update check either misses a build or offers one that
+        // is already installed.
+        versionCode = 125
+        versionName = "1.1.0"
         vectorDrawables { useSupportLibrary = true }
-        // Both OCR backends ship native libs; the ABIs are chosen by the splits block below
-        // (ndk.abiFilters and splits.abi cannot both be set). x86 emulators are left out.
+        // Both OCR backends ship native libs for four ABIs. Only real phones matter here;
+        // dropping the emulator-only x86 ones keeps the APK from growing by another ~40 MB.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     buildTypes {
@@ -67,27 +69,6 @@ android {
         
         
         checkReleaseBuilds = false
-    }
-
-    // One APK per ABI. The two native stacks (LiteRT + ONNX Runtime) cost 24 MB on arm64 and
-    // 17 MB more for 32-bit devices that will never run this build: shipping both in one file
-    // makes every install pay for the other one. The arm64 file is the one handed out; the
-    // armeabi-v7a one is kept for old phones.
-    splits {
-        abi {
-            isEnable = true
-            reset()
-            include("arm64-v8a", "armeabi-v7a")
-            isUniversalApk = false
-        }
-    }
-
-    androidResources {
-        // The LiteRT library asks AGP to store every .tflite uncompressed so the models can be
-        // memory-mapped. Nothing here maps them — every model is streamed into filesDir on first
-        // use (PaddleOcrEngine.copyAssets) — so the files are deflated instead: ~18 MB smaller
-        // APK for the same bytes on disk.
-        noCompress.clear()
     }
 
     packaging {
