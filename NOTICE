@@ -12,6 +12,19 @@ Bubble / free-text detection model:
   Licensed under AGPL-3.0. Trained with Ultralytics YOLO26s-seg, which is
   distributed under AGPL-3.0.
 
+Optional on-device OCR model (MangaOCR_mobile):
+  app/src/main/assets/ocr/manga_encoder.tflite, manga_decoder.tflite, manga_vocab.txt
+  From bluolightning/manga-ocr-mobile
+  (https://huggingface.co/bluolightning/manga-ocr-mobile)
+  Copyright (C) 2026 bluolightning
+  Licensed under Apache License, Version 2.0. Builds on kha-white/manga-ocr.
+
+Bundled font:
+  app/src/main/assets/fonts/ZCOOLKuaiLe-Regular.ttf
+  ZCOOL KuaiLe, Copyright (C) 2018 ZCOOL
+  SIL Open Font License, Version 1.1; the full text ships with the font in
+  app/src/main/assets/fonts/OFL.txt.
+
 Runtime libraries:
   Apache Commons Compress - https://commons.apache.org/proper/commons-compress/
   Apache License, Version 2.0

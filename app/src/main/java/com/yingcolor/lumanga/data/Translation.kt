@@ -598,9 +598,13 @@ object TranslationEngine {
             }
             // MangaOCR_mobile was trained on Japanese manga. For any other printed language the
             // column join is the honest fallback instead of guessing at an alien script.
-            val text = if (japaneseSource)
-                MangaOcr.readIfSelected(bitmap, union) ?: columns
-            else columns
+            // The reading can carry characters no printed line holds: MangaOCR writes 「い」 as
+            // 「W」 and 「」」 as 「8」 on white lettering over a dark scene, and those reached the
+            // page as 「凉太！8你听我说话了吗？」. Cleaning here covers both the whole-block
+            // re-read above and the column join, including junk that only appears at a seam.
+            val text = stripJunk(
+                if (japaneseSource) MangaOcr.readIfSelected(bitmap, union) ?: columns else columns
+            )
             val unit = clusterUnit(cluster)
             val contour = pickContour(balloons, union)
             val cover = coverAround(union, nearMiss, clusterUnit(cluster))
@@ -1008,7 +1012,7 @@ object TranslationEngine {
      *
      * A tall column is sliced into stacked boxes whose ends overlap by 10-20% of their height, so
      * the seam glyphs are recognised twice and the sentence reaches the model stuttering:
-     * 「事実を意識」+「識し」, 「俺が選んだお菓子」+「子」 (copin p11). Only a repeat the overlap
+     * 「事実を意識」+「識し」, 「俺が選んだお菓子」+「子」 (a seven-column narration block). Only a repeat the overlap
      * can explain is removed — never more glyphs than the overlap is tall — so a genuine double
      * character (「だんだん」) survives when the boxes merely touch.
      */
@@ -1362,7 +1366,27 @@ object TranslationEngine {
                 }
             }
         }
-        android.util.Log.w("Translate", "TR group $index gave up ($lastError)")
+        // One last request, stripped of the context hint and of the format rules. A group keeps
+        // coming back empty when the model does not read its OCR text as Japanese at all — the
+        // fragment 「传网」 was refused twice — and handing it more context only makes it more
+        // certain it should stay silent. Asked plainly, it often answers. A piece of lettering
+        // that is kanji only (「監禁」) hits the same wall for the same reason, so this does not
+        // gate on kana; the request only happens on an entry that has already failed twice.
+        if (lastError == "empty answer" && source.count { !it.isWhitespace() } >= 2) {
+            android.util.Log.i("Translate", "TR group $index plain retry")
+            val plain = "把下面的日文译成简体中文，只输出译文本身：\n" + source
+            val retry = ApiClient.chat(
+                protocol, api, model, apiKey, groupPrompt(sourceLang), plain, token
+            )
+            if (retry is ApiClient.ChatResult.Ok) {
+                val value = tidyGroup(retry.text, source)
+                if (value.isNotEmpty()) {
+                    android.util.Log.i("Translate", "TR group $index plain retry ok")
+                    return value
+                }
+            }
+        }
+        android.util.Log.w("Translate", "TR group $index gave up ($lastError) src=$source")
         return null
     }
 
@@ -1659,7 +1683,7 @@ object TranslationEngine {
             // Sample the paper the Japanese actually sat on, not the grown plate: narration set
             // straight onto a light panel grew until the box swallowed the drawing beside it,
             // most of the sample came out dark, and the plate landed as a near-black slab over a
-            // white area (copin p11: 3.8% bright -> lum 62 over light artwork).
+            // white area (3.8% bright -> lum 62 over light artwork).
             val sampleBox = Rect(group.bubble)
             group.cover?.let { sampleBox.union(it) }
             val background = sampleBubbleColor(out, sampleBox)
@@ -2007,7 +2031,7 @@ object TranslationEngine {
         val contour = group.contour ?: return area
         // Only an outline that surrounds this lettering may confine it. A long strip of columns
         // is sometimes cut in two by the segmenter, and then clamping to the half it did find
-        // pushed the translation down the page: on copin p33 the strip spans y 114..1501 while
+        // pushed the translation down the page: on one test page the strip spans y 114..1501 while
         // its outline spans 573..1500, so the box became exactly the lower 927 px.
         if (!contourHoldsText(contour, group.bubble)) return area
         val outline = contourBounds(contour) ?: return area
@@ -2313,7 +2337,7 @@ object TranslationEngine {
      * It used to be 1.10, which leaves a tenth of a glyph between columns on paper. The comic
      * face fills its em box and the fake bold adds [INK_WEIGHT] on top, so what reached the page
      * was a gap of about 0.04 of a glyph: three columns of a narrow strip read as one smeared
-     * block (copin p34). 1.18 keeps a measured 0.12 of a glyph of clear space there. Deliberately
+     * block (a narrow three-column strip). 1.18 keeps a measured 0.12 of a glyph of clear space there. Deliberately
      * not wider — every step costs the font size on a two-column bubble, and that is worse than
      * a narrow gap.
      */
@@ -2538,11 +2562,11 @@ object TranslationEngine {
             } else {
                 start + ((text.length - start) + left - 1) / left
             }
-            // 「。」「、」「」」 belong to the line they close, not to the top of the next column.
-            if (index < count - 1 && end < text.length - 1 &&
-                isPunctuation(text[end]) && end - start < per
-            ) {
-                end++
+            // 「。」「、」「」」 close the line they belong to. A full column cannot take the
+            // mark too, so the boundary steps back one character instead of opening the next
+            // column with 「！」, which reads as a broken sentence.
+            if (index < count - 1 && end < text.length - 1 && isPunctuation(text[end])) {
+                if (end - start < per) end++ else if (end - start > 1) end--
             }
             columns.add(text.substring(start, end))
             start = end

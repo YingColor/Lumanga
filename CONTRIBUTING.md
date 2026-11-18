@@ -35,7 +35,7 @@
 
 ```bash
 # 1. 绝对路径 / 个人信息
-git grep -nE "D:/|C:\\\\|/Users/|参考软件|_diag" -- '*.kt' '*.md' '*.kts' '*.xml' ':!CONTRIBUTING.md'
+git grep -nE "D:/|C:\\\\|/Users/|_scratch|参考素材" -- '*.kt' '*.md' '*.kts' '*.xml' ':!CONTRIBUTING.md'
 # 2. 内部过程词
 git grep -nE "\bTODO\b|\bFIXME\b|\bXXX\b|\bHACK\b|用户反馈|用户要求|上一轮" -- '*.kt' '*.md' '*.kts' '*.xml' ':!CONTRIBUTING.md'
 # 3. 第三方服务地址（只应剩下文档里提到的开源项目主页）

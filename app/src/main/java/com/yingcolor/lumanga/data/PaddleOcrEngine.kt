@@ -65,6 +65,28 @@ private const val RECHECK_GAIN = 0.12f
 /** Columns per page that may be re-read for a bad reading. */
 private const val RECHECK_LIMIT = 3
 
+/** A box at least this many character cells long is expected to be filled with text. */
+private const val SHORT_READ_CELLS = 2.5f
+
+/** Below this share of its cells the reading is a fragment, not the text the box holds. */
+private const val SHORT_READ_SHARE = 0.6f
+
+/** Boxes per page that may be re-read for a fragment; each one costs a medium inference. */
+private const val REPAIR_LIMIT = 4
+
+/** A column holding a character that cannot be text is re-read on that alone; see hasJunk. */
+private const val JUNK_GAIN = 0.04f
+
+/** The only characters a backfill may ever insert; see backfillPunctuation. */
+private const val SENTENCE_MARKS = "、。，．！？!?…‥"
+
+/** A backfilled reading may score this much below the original one and still be taken. */
+private const val BACKFILL_CONF_DROP = 0.06f
+
+/** Everything a printed line may contain; anything else is a recogniser artefact. */
+private const val TEXT_PUNCT =
+    "、。，．！？!?…‥「」『』（）()［］[]{}〜～ー―—─・･：；:;,.'\"“”‘’　 々〇×○△□■●◇◆☆★♪♥♡※§†‡"
+
 object PaddleOcr {
     @Volatile
     private var instance: PaddleOcrEngine? = null
@@ -142,7 +164,8 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
         if (parallel && pool != null && pool.model == OcrModel.from(prefs.ocrModel)) {
             val worker = pool.channel.receive()
             try {
-                refillBlanks(bitmap, recheckGarbled(bitmap, worker.recognize(bitmap)))
+                val read = repairShortReads(bitmap, worker.recognize(bitmap))
+                refillBlanks(bitmap, recheckGarbled(bitmap, read))
             } finally {
                 pool.channel.trySend(worker)
             }
@@ -159,9 +182,10 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
                     runtime = PaddleRuntime(copyModels(context, model), model)
                     runtimeModel = model
                 }
-                // Read once, then repair the reading in a fixed order: a cut-off tail, glyphs the
-                // detector skipped above the box, a column the small model mangled, empty boxes.
-                val read = extendTruncated(bitmap, runtime!!.recognize(bitmap))
+                // Read once, then repair the reading in a fixed order: a fragment too short for
+                // its box, a cut-off tail, glyphs the detector skipped above the box, a column
+                // the model mangled, empty boxes.
+                val read = extendTruncated(bitmap, repairShortReads(bitmap, runtime!!.recognize(bitmap)))
                 refillBlanks(bitmap, recheckGarbled(bitmap, extendHeads(bitmap, read)))
             }
         }
@@ -211,6 +235,69 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
     }
 
     /**
+     * Re-reads a box whose reading is far shorter than the box can hold.
+     *
+     * MANGAOCR returns a fragment when it cannot decode lettering: on CG p.10 a four-cell column
+     * tail came back as 「SB」 at 0.81 and the box holding 「そして」 as 「ZC」. Both then failed
+     * [Translation.isUsable], so neither was translated *and* neither kept a plate — the raw
+     * Japanese stayed readable beside the Chinese. Geometry is what exposes them: a box four
+     * cells long cannot hold two characters. The medium recogniser reads those two boxes as
+     * 「ている。」 and 「そして」; when it cannot do better either the box is handed back blank on
+     * purpose, because a blank box carries no translation but does get covered.
+     */
+    private fun repairShortReads(bitmap: Bitmap, regions: List<TextRegion>): List<TextRegion> {
+        if (!prefs.ocrBlankRefill) return regions
+        if (OcrModel.from(prefs.ocrModel) == OcrModel.MEDIUM) return regions
+        if (regions.none { isShortRead(it) }) return regions
+        // A page of dense lettering can produce many of these; the repairs share the page's OCR
+        // budget with the other second passes, so only the longest few are worth the time.
+        val doable = regions.filter { isShortRead(it) }
+            .sortedByDescending { it.box.height() }
+            .take(REPAIR_LIMIT)
+            .toSet()
+        // Latin-only readings are only junk on a Japanese page; on an English one they are the
+        // text itself, and covering them would hide a line that was never translated.
+        val japanese = regions.count { hasKanaOrKanji(it.text) } * 2 >= regions.size
+        val reader = refillReader()
+        return regions.map { region ->
+            if (region !in doable) return@map region
+            val again = runCatching { reader.readBox(bitmap, region.box) }.getOrNull()
+            if (again != null && again.confidence >= REFILL_MIN_CONF) {
+                if (again.text == region.text) return@map region
+                if (again.text.length > region.text.length) {
+                    android.util.Log.i(
+                        "Ocr", "OCR repair ${region.box} ${region.text} -> ${again.text}"
+                    )
+                    return@map region.copy(text = again.text, confidence = again.confidence)
+                }
+            }
+            if (!japanese || hasKanaOrKanji(region.text)) return@map region
+            android.util.Log.i("Ocr", "OCR repair ${region.box} ${region.text} -> covered only")
+            region.copy(text = "", confidence = 0f)
+        }
+    }
+
+    /** True when [region] holds far fewer characters than its box has cells. */
+    private fun isShortRead(region: TextRegion): Boolean {
+        if (region.text.isBlank()) return false
+        // An ellipsis-only box is a silent bubble that [Translation.isUsable] keeps on purpose;
+        // it is short because it holds no words, not because the reading failed.
+        if (region.text.count { it.isLetterOrDigit() } < 1) return false
+        val across = if (region.vertical) region.box.width() else region.box.height()
+        if (across < 8) return false
+        val along = if (region.vertical) region.box.height() else region.box.width()
+        val cells = along.toFloat() / across
+        if (cells < SHORT_READ_CELLS) return false
+        return region.text.length < cells * SHORT_READ_SHARE
+    }
+
+    /** Kana or kanji: what a Japanese page is made of, as opposed to Latin noise or digits. */
+    private fun hasKanaOrKanji(text: String): Boolean = text.any { ch ->
+        ch.code in 0x3040..0x30FF || ch.code in 0x3400..0x9FFF || ch.code in 0xFF66..0xFF9F
+    }
+
+
+    /**
      * Grows a column whose reading stops mid-sentence and reads it again.
      *
      * The detector cuts tall narration columns short — CG p.10 ended all three at the same y,
@@ -234,9 +321,15 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
             .filter { columnText(it.box).let { t -> t.length >= 4 && t.last() !in ends } }
             // Only the bottom slice of a column: when the detector already returned the part
             // below as its own box, growing an upper slice would read the same glyphs twice.
+            // A fragment that is not itself a column does not count - on CG p.10 the full stop
+            // under the left column came back as a squat box read 「30」, and treating it as the
+            // column's continuation left the stop uncovered.
             .filter { region ->
-                regions.none { it !== region && overlaps(region.box, it.box) &&
-                    it.box.bottom > region.box.bottom }
+                regions.none { other ->
+                    other !== region && overlaps(region.box, other.box) &&
+                        other.box.bottom > region.box.bottom &&
+                        other.vertical && other.box.height() >= other.box.width() * 1.2f
+                }
             }
             .sortedByDescending { it.box.height() }
             .take(EXTEND_LIMIT)
@@ -260,7 +353,7 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
     /**
      * Re-reads a column whose reading starts in the middle of a sentence.
      *
-     * The detector sometimes begins a column below its first glyphs: on copin p33 the middle
+     * The detector sometimes begins a column below its first glyphs: on one test page the middle
      * strip reads 「が荒くなっているのがわかる。」 while the page says 「……息が荒くなっているのがわかる。」.
      * The three skipped glyphs belong to no box, so no group translates them and no plate covers
      * them — they sit in Japanese above the Chinese, which reads like a bubble that was skipped.
@@ -348,42 +441,83 @@ class PaddleOcrEngine(private val context: Context) : OcrEngine {
     /**
      * Re-reads a column the chosen model clearly mangled.
      *
-     * The small recogniser is quick but not accurate on the brush lettering these pages use for
-     * narration: CG p.10 read 「それと共にー」 as 「小れと#足ー」 at confidence 0.71, and the page
-     * then showed half a sentence. The same box through the medium recogniser reads it at 0.91.
-     * Low confidence is the signal that the reading is wrong, so only those columns are re-read,
-     * and only when the second reading is both more confident and no shorter - a guess that drops
-     * characters is not an improvement. Three columns per page at most; each costs an inference.
+     * The detector slices a tall column into pieces and each piece is read on its own; a slice
+     * that starts mid-sentence gives the recogniser too little context and it invents characters
+     * (CG p.10 read 「そしてそれと共に」 as 「そSれと廿企」 at 0.60). Reading the whole column in one
+     * pass is what recovers the line: the same pixels through the medium recogniser read it at
+     * 0.88, while the lower slice alone still came back as 「それとにー」. So the unit here is the
+     * column, not the box, and a fixed column is written back as one region.
+     *
+     * Slices only count as one column when they overlap or sit within a character cell of each
+     * other; two separate balloons stacked on the same x band are not one column.
      */
     private fun recheckGarbled(bitmap: Bitmap, regions: List<TextRegion>): List<TextRegion> {
         if (!prefs.ocrBlankRefill) return regions
         if (OcrModel.from(prefs.ocrModel) == OcrModel.MEDIUM) return regions
-        val candidates = regions
-            .filter {
-                it.vertical && it.text.length >= RECHECK_MIN_LEN && it.confidence < RECHECK_CONF
+        val columns = ArrayList<MutableList<TextRegion>>()
+        for (region in regions.filter { it.vertical }.sortedBy { it.box.top }) {
+            val host = columns.firstOrNull { column -> touches(column.last(), region) }
+            if (host == null) columns.add(mutableListOf(region)) else host.add(region)
+        }
+        val suspects = columns
+            // A character that cannot appear in a printed line proves the reading is wrong, so
+            // such a column is re-read even at high confidence - MangaOCR writes 「い」
+            // as 「W」 and 「。」 as 「°」 on white lettering over a dark scene,
+            // and those columns scored 0.80-0.85, above the confidence floor.
+            .filter { column ->
+                column.any { it.confidence < RECHECK_CONF || hasJunk(it.text) }
             }
-            .sortedByDescending { it.box.height() }
+            .filter { column -> column.sumOf { it.text.length } >= RECHECK_MIN_LEN }
+            .sortedByDescending { column -> column.sumOf { it.box.height() } }
             .take(RECHECK_LIMIT)
-        if (candidates.isEmpty()) return regions
+        if (suspects.isEmpty()) return regions
         android.util.Log.i(
             "Ocr",
-            "OCR recheck list=${candidates.map { "${it.text.take(6)}:${"%.2f".format(it.confidence)}" }}"
+            "OCR recheck list=" + suspects.map { column ->
+                val text = column.joinToString("") { it.text }.take(6)
+                "$text:${"%.2f".format(column.minOf { it.confidence })}"
+            }
         )
         val reader = refillReader()
-        val fixed = HashMap<Rect, TextRegion>()
-        for (region in candidates) {
-            val again = runCatching { reader.readBox(bitmap, region.box) }.getOrNull() ?: continue
-            if (again.text.length < region.text.length) continue
-            if (again.confidence < REFILL_MIN_CONF) continue
-            if (again.confidence < region.confidence + RECHECK_GAIN) continue
+        val replaced = HashMap<Rect, TextRegion>()
+        val gone = HashSet<Rect>()
+        for (column in suspects) {
+            val box = Rect(column.first().box)
+            column.drop(1).forEach { box.union(it.box) }
+            val joined = column.joinToString("") { it.text }
+            val worst = column.minOf { it.confidence }
+            val again = runCatching { reader.readBox(bitmap, box) }.getOrNull() ?: continue
             android.util.Log.i(
                 "Ocr",
-                "OCR recheck ${region.box} ${region.text} -> ${again.text} " +
-                    "(${"%.2f".format(region.confidence)} -> ${"%.2f".format(again.confidence)})"
+                "OCR recheck? $box $joined(${"%.2f".format(worst)})" +
+                    " -> ${again.text}(${"%.2f".format(again.confidence)})"
             )
-            fixed[region.box] = region.copy(text = again.text, confidence = again.confidence)
+            if (again.confidence < REFILL_MIN_CONF) continue
+            // The whole column has to be clearly better than its worst slice, and it may not lose
+            // half the line: a short confident guess is not a recovery. A column that held junk
+            // needs less: the junk itself already says that reading is wrong.
+            val need = if (column.any { hasJunk(it.text) }) JUNK_GAIN else RECHECK_GAIN
+            if (again.confidence < worst + need) continue
+            if (again.text.length * 2 < joined.length) continue
+            replaced[column.first().box] = TextRegion(again.text, box, again.confidence, true)
+            column.forEach { gone.add(Rect(it.box)) }
         }
-        return regions.map { fixed[it.box] ?: it }
+        if (replaced.isEmpty()) return regions
+        val out = ArrayList<TextRegion>(regions.size)
+        regions.forEach { region ->
+            val fixed = replaced[region.box]
+            if (fixed != null) out.add(fixed) else if (region.box !in gone) out.add(region)
+        }
+        return out.sortedWith(
+            compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top }
+        )
+    }
+
+    /** True when [next] continues the column that ends at [first]: overlapping or a cell apart. */
+    private fun touches(first: TextRegion, next: TextRegion): Boolean {
+        if (!overlapsX(first.box, next.box)) return false
+        val gap = next.box.top - first.box.bottom
+        return gap <= maxOf(first.box.width(), next.box.width())
     }
 
     /** True when two boxes sit in the same column band. */
@@ -802,6 +936,19 @@ private class PaddleRuntime(
                     val wide = read(WIDE_PAD)
                     if (wide != null && wide.second > best.second) best = wide
                 }
+                // A comma drawn touching the glyph above it has no quiet gap of its own, so the
+                // decode merges it away. The mark cannot be read on its own either — asked for
+                // that cell alone the recogniser answers 「N」 — but a wider crop shifts where
+                // the cell falls across the decode steps and often brings it back.
+                if (vertical) {
+                    val filled = backfillPunctuation(best) { pad -> read(pad) }
+                    if (filled != null) {
+                        android.util.Log.i(
+                            "Ocr", "OCR backfill ${box} ${best.first} -> ${filled.first}"
+                        )
+                        best = filled
+                    }
+                }
                 texts[index] = best
                 rects[index] = box
                 verticals[index] = vertical
@@ -823,7 +970,7 @@ private class PaddleRuntime(
             }
             // An unread box is kept with empty text: the grouping pass turns it into cover area,
             // because the ink is still on the page even though the recogniser gave up on it.
-            regions.add(TextRegion(result.first, box, result.second, verticals[index]))
+            regions.add(TextRegion(stripJunk(result.first), box, result.second, verticals[index]))
         }
         return regions.sortedWith(
             compareByDescending<TextRegion> { it.box.centerX() }.thenBy { it.box.top }
@@ -1132,6 +1279,36 @@ private class PaddleRuntime(
         return Rect(left, top, right, bottom)
     }
 
+    /**
+     * Reads a column once more so a swallowed comma or full stop can come back.
+     *
+     * The gate is the reading itself: a column that already carries sentence punctuation is left
+     * alone, and so is a short one, because every retry costs an inference. What is left is the
+     * case seen on CG p.10, where 「そして、それと共に、」 came back as 「そしてそれと共にー」 —
+     * the mark touches the stroke above it, has no quiet gap of its own, and gets decoded into
+     * nothing while the confidence stays high enough that the wide retry never runs. Reading the
+     * mark's cell on its own does not help either: asked for that crop alone the recogniser
+     * answers 「N」.
+     *
+     * Only insertions are accepted. The wide reading has to match the tight one character for
+     * character once its marks are removed, otherwise the wider crop dragged in a neighbouring
+     * column or lost a glyph to the page edge, and the original stands.
+     */
+    private fun backfillPunctuation(
+        best: Pair<String, Float>,
+        read: (Int) -> Pair<String, Float>?
+    ): Pair<String, Float>? {
+        if (best.second < WIDE_RETRY_CONF) return null
+        if (best.first.any { it in SENTENCE_MARKS }) return null
+        if (best.first.count { it.isLetterOrDigit() } < 4) return null
+        val wide = read(WIDE_PAD) ?: return null
+        if (wide.second < best.second - BACKFILL_CONF_DROP) return null
+        val moreMarks = wide.first.count { it in SENTENCE_MARKS }
+        if (moreMarks <= best.first.count { it in SENTENCE_MARKS }) return null
+        if (wide.first.filterNot { it in SENTENCE_MARKS } != best.first) return null
+        return wide
+    }
+
     private fun rotate(source: Bitmap): Bitmap {
         val matrix = Matrix().apply { postRotate(-90f) }
         return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
@@ -1279,4 +1456,77 @@ private class PaddleRuntime(
         }
         return columns
     }
+}
+
+// These describe what a printed line may hold, and both the engine and the per-model
+// runtime need them: the recogniser reports its text from inside PaddleRuntime, while the
+// column re-read that reacts to junk lives in the engine.
+internal fun isKana(ch: Char?): Boolean {
+    if (ch == null) return false
+    return ch.code in 0x3041..0x30FF || ch.code in 0xFF66..0xFF9F
+}
+
+/** True for a character a printed line can hold: kana, kanji, Latin, digit, punctuation. */
+internal fun isTextChar(ch: Char): Boolean {
+    if (ch.code in 0x3041..0x30FF || ch.code in 0x4E00..0x9FFF) return true
+    if (ch.code in 0xFF66..0xFF9F) return true
+    if (ch in 'A'..'Z' || ch in 'a'..'z') return true
+    return ch.isDigit() || ch.isWhitespace() || ch in TEXT_PUNCT
+}
+
+/**
+ * True for a digit the recogniser put where a mark belongs.
+ *
+ * MangaOCR writes the corner quotes of 「」 as an 8, so 「「諒太！」お、聞いて」 came back as
+ * 「8諒太！8お聞いて」. A one- or two-digit run sitting between a mark and a kana is that
+ * mistake; the same digit next to a kanji is a real counter (「2人」「10年」) and stays.
+ */
+internal fun isJunkDigit(text: String, index: Int): Boolean {
+    if (!text[index].isDigit()) return false
+    val left = text.getOrNull(index - 1)
+    val right = text.getOrNull(index + 1)
+    fun mark(ch: Char?): Boolean = ch != null && ch in TEXT_PUNCT && !ch.isWhitespace()
+    return (mark(left) && isKana(right)) || (mark(right) && isKana(left))
+}
+
+/**
+ * True when the reading holds something that cannot be printed text.
+ *
+ * Two shapes are caught. A character outside every script and punctuation set is an artefact
+ * by definition (「°」 where 「。」 belonged). A single Latin letter with kana next to
+ * it is the recogniser's stand-in for a kana it could not decode (「してWる」 is 「している」,
+ * 「おW聞いて」 is 「おい聞いて」) - Japanese never sets those, and a real Latin word
+ * such as 「BGM」 has no kana inside it.
+ */
+internal fun hasJunk(text: String): Boolean {
+    for (index in text.indices) {
+        val ch = text[index]
+        if (!isTextChar(ch)) return true
+        if (isJunkDigit(text, index)) return true
+        if ((ch in 'A'..'Z' || ch in 'a'..'z') &&
+            (isKana(text.getOrNull(index - 1)) || isKana(text.getOrNull(index + 1)))
+        ) return true
+    }
+    return false
+}
+
+/**
+ * Drops what [hasJunk] finds.
+ *
+ * A letter wedged between kana goes as well: the kana around it carry the sentence, and the
+ * substitute is what reached the page as 「涼太！8你听我说话了吗？」.
+ */
+internal fun stripJunk(text: String): String {
+    if (!hasJunk(text)) return text
+    val keep = StringBuilder(text.length)
+    for (index in text.indices) {
+        val ch = text[index]
+        if (!isTextChar(ch)) continue
+        if (isJunkDigit(text, index)) continue
+        if ((ch in 'A'..'Z' || ch in 'a'..'z') &&
+            (isKana(text.getOrNull(index - 1)) || isKana(text.getOrNull(index + 1)))
+        ) continue
+        keep.append(ch)
+    }
+    return keep.toString()
 }

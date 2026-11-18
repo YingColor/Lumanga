@@ -67,7 +67,25 @@ gave feedback for revision, and decided what shipped.
 - The commit history keeps release points only, not the development process.
 
 This note is here so you can judge the project before adopting it; the source is
-provided "as is" under the [LICENSE](LICENSE) (GPL-3.0).
+provided "as is" under the [LICENSE](LICENSE) (AGPL-3.0). The bubble / lettering
+detection model comes from
+[manga-translator-android](https://github.com/jedzqer/manga-translator-android)
+(AGPL-3.0), which is why the app as a whole is AGPL-3.0 too.
+
+## Credits
+
+The models and the font are other people's work:
+
+| Source | Licence | Used for |
+|---|---|---|
+| [jedzqer / manga-translator-android](https://github.com/jedzqer/manga-translator-android) | AGPL-3.0 | Bubble / free-text detection model `mixed-dual-s-e5_float16.tflite`, and the idea of re-running detection inside each balloon |
+| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv6 Small | Apache-2.0 | Default text detection and recognition (LiteRT conversion by [LiteRT Community](https://huggingface.co/litert-community/PP-OCRv6-Small-LiteRT)) |
+| [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv6 Medium | Apache-2.0 | The high-accuracy models behind "precise detection" and the second-pass reads (official ONNX exports, FP16 conversion only) |
+| [bluolightning / manga-ocr-mobile](https://huggingface.co/bluolightning/manga-ocr-mobile) | Apache-2.0 | The optional MangaOCR_mobile recogniser |
+| [ZCOOL KuaiLe](https://fonts.google.com/specimen/ZCOOL+KuaiLe) | SIL OFL 1.1 | The bundled font used to draw translations |
+
+Full version numbers, licence texts and the complete model file list are in
+[`NOTICE`](NOTICE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Long Webtoon strips
 

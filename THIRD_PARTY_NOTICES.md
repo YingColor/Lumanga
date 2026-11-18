@@ -108,3 +108,42 @@ https://www.apache.org/licenses/LICENSE-2.0 . The library is resolved at build t
   recognition graph's opset declaration raised from 11 to 12 so ONNX Runtime's
   ARM NHWC optimiser can find its MaxPool kernel. No retraining, no new weights.
 - Shares `characters.json` with the small model. Images never leave the device.
+
+## PP-OCRv6 Small — recognition width variants
+
+- Files: `ppocrv6_small_rec_320_fp32.tflite`, `ppocrv6_small_rec_960_fp32.tflite`
+  (in addition to the 640 variant listed above)
+- License: Apache License, Version 2.0
+- Source: same LiteRT Community conversions of PaddleOCR PP-OCRv6 small weights.
+- Usage: the reader picks the shortest input grid that still fits the content
+  (320 / 640 / 960 columns), so a short bubble is not padded out to a wider grid.
+  Same weights, same vocabulary; only the input width differs.
+
+## MangaOCR_mobile — optional on-device recognition model
+
+- Files: `manga_encoder.tflite`, `manga_decoder.tflite`, `manga_vocab.txt`
+  (bundled in `app/src/main/assets/ocr`)
+- License: Apache License, Version 2.0
+- Source: https://huggingface.co/bluolightning/manga-ocr-mobile
+- Project page: https://github.com/bluolightning/manga-ocr-mobile
+- Upstream work: builds on kha-white/manga-ocr
+  (https://github.com/kha-white/manga-ocr); trained on the Manga109-s dataset,
+  CC-100 and a web-novel corpus.
+- Usage: an alternative recogniser that reads a whole bubble at once and returns
+  one Japanese sentence. It is not the default; the user selects it. Images never
+  leave the device.
+- Note: the weights are published by their author under Apache-2.0 and are
+  redistributed here unchanged. The dataset they were trained on (Manga109-s)
+  has its own terms for research use; that restriction applies to training, not
+  to running the published weights.
+
+## ZCOOL KuaiLe — bundled font
+
+- Files: `app/src/main/assets/fonts/ZCOOLKuaiLe-Regular.ttf`, with the full
+  licence text next to it in `app/src/main/assets/fonts/OFL.txt`
+- License: SIL Open Font License, Version 1.1
+- Source: https://fonts.google.com/specimen/ZCOOL+KuaiLe
+- Usage: draws the translated text. Characters the font does not carry fall back
+  to the system typeface; the font file itself is unmodified.
+- The OFL requires the licence to travel with the font, which is why `OFL.txt`
+  ships inside the APK rather than only in this repository.
