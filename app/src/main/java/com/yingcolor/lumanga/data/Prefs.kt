@@ -296,7 +296,7 @@ class Prefs(context: Context) {
 
     /** How far the plate behind a translated bubble reaches; see [CoverStyle]. */
     var coverStyle: Int
-        get() = sp.getInt(KEY_COVER_STYLE, CoverStyle.LETTERING)
+        get() = sp.getInt(KEY_COVER_STYLE, CoverStyle.BALLOON)
         set(value) = sp.edit().putInt(KEY_COVER_STYLE, CoverStyle.coerce(value)).apply()
 
     var readMode: Int

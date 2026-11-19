@@ -485,6 +485,10 @@ object TranslationEngine {
                     val gap = horizontalGap(region.box, member.box)
                     val verticalOverlap = overlap(region.box, member.box)
                     if (verticalOverlap < 0.45f) continue
+                    // Two bubbles standing side by side are separated by their own outlines,
+                    // and that ink is what a gap of a few pixels cannot show. Inside one bubble
+                    // the paper between two columns is blank, so this only fires on a real edge.
+                    if (bitmap != null && inkBetween(bitmap, region.box, member.box)) continue
                     if (gap < mergeGap && gap < bestGap) {
                         target = cluster
                         bestGap = gap
@@ -843,6 +847,9 @@ object TranslationEngine {
                     val union = unionOf(groups[i])
                     val other = unionOf(groups[j])
                     if (!sideBySide(union, other)) { j++; continue }
+                    // Same test as the clustering pass: an outline between the two boxes means
+                    // two bubbles, whatever the patches do once they grow.
+                    if (inkBetween(source, union, other)) { j++; continue }
                     val shared = intersects(a, b)
                         .toFloat() / minOf(a.width() * a.height(), b.width() * b.height())
                     // Measured on real pages: two halves of one bubble grow into the same
@@ -975,6 +982,49 @@ object TranslationEngine {
             }
         }
         return if (score >= 0.5f) best else -1
+    }
+
+    /**
+     * True when a bubble outline runs through the gap between two boxes.
+     *
+     * Columns of one bubble are separated by blank paper. Two bubbles standing side by side each
+     * run their own stroke through that strip, and their text boxes stop short of it, which is why
+     * the gap alone cannot tell them apart: a two-glyph bubble and the bubble next to it were
+     * joined into one sentence that then had no single bubble to be drawn in.
+     *
+     * The test looks for *thin* vertical dark runs, not a share of dark pixels. Screentone and
+     * shading never form an unbroken line down the strip, and a balloon printed black with white
+     * lettering is dark across the whole gap instead of in one or two columns, so both are ruled
+     * out: only the strokes of two balloons sitting side by side leave a couple of dark columns.
+     */
+    private fun inkBetween(source: Bitmap, a: Rect, b: Rect): Boolean {
+        val left = minOf(a.right, b.right)
+        val right = maxOf(a.left, b.left)
+        if (right - left < 1) return false
+        val top = maxOf(a.top, b.top)
+        val bottom = minOf(a.bottom, b.bottom)
+        if (bottom - top < 8) return false
+        val stepY = ((bottom - top) / 24).coerceAtLeast(1)
+        var darkColumns = 0
+        var columns = 0
+        for (x in left until right) {
+            val column = x.coerceIn(0, source.width - 1)
+            var sampled = 0
+            var dark = 0
+            var y = top
+            while (y < bottom) {
+                val pixel = source.getPixel(column, y.coerceIn(0, source.height - 1))
+                val lum = ((pixel shr 16 and 0xFF) * 299 + (pixel shr 8 and 0xFF) * 587 +
+                    (pixel and 0xFF) * 114) / 1000
+                if (lum < 170) dark++
+                sampled++
+                y += stepY
+            }
+            columns++
+            if (sampled >= 8 && dark.toFloat() / sampled >= 0.5f) darkColumns++
+        }
+        if (darkColumns == 0) return false
+        return darkColumns.toFloat() / columns <= 0.6f
     }
 
     /**
@@ -1762,9 +1812,13 @@ object TranslationEngine {
             rect.inset(-pad, -pad)
             val radius = min(rect.width(), rect.height()) * 0.12f
             if (whole && outline != null) {
-                // The user's choice: follow the balloon outline. It also hides kana the detector
-                // missed, at the cost of painting over the outline itself.
-                canvas.drawPath(outline, coverPaint)
+                // The balloon itself, not a box drawn inside it: a rounded rectangle either
+                // sticks out of a slanted balloon or floats inside it with its own corners
+                // showing. Pulled in by a couple of pixels so the balloon's own outline and tail
+                // survive; the contour follows the outside of that stroke.
+                val inset = (min(rect.width(), rect.height()) * 0.03f).coerceIn(1.5f, 4f)
+                val shape = insetContour(patch.contour, inset)?.let { balloonPath(it) } ?: outline
+                canvas.drawPath(shape, coverPaint)
                 // The outline can surround only part of the lettering (a strip of columns is
                 // sometimes cut in two by the segmenter). Painting just the shape then leaves the
                 // rest of the Japanese on the page, so the lettering box is covered too.
@@ -1805,6 +1859,39 @@ object TranslationEngine {
         }
         path.close()
         return path
+    }
+
+    /**
+     * Moves every point of a closed polygon [distance] pixels toward its inside.
+     *
+     * The contour runs along the outside of the balloon's stroke, so filling it as-is paints the
+     * outline away and the bubble loses the line that separates it from the drawing. Pulling the
+     * polygon in by about the stroke width keeps that line. Returns null when the polygon is too
+     * small or degenerate to offset, and the caller then uses it unchanged.
+     */
+    private fun insetContour(points: FloatArray?, distance: Float): FloatArray? {
+        if (points == null || distance <= 0f) return null
+        val count = points.size / 2
+        if (count < 3) return null
+        var area = 0f
+        for (i in 0 until count) {
+            val next = (i + 1) % count
+            area += points[i * 2] * points[next * 2 + 1] - points[next * 2] * points[i * 2 + 1]
+        }
+        if (abs(area) < 16f) return null
+        val flip = if (area > 0f) 1f else -1f
+        val out = FloatArray(points.size)
+        for (i in 0 until count) {
+            val prev = (i + count - 1) % count
+            val next = (i + 1) % count
+            val dx = points[next * 2] - points[prev * 2]
+            val dy = points[next * 2 + 1] - points[prev * 2 + 1]
+            val length = sqrt(dx * dx + dy * dy)
+            if (length < 0.001f) return null
+            out[i * 2] = points[i * 2] - dy / length * distance * flip
+            out[i * 2 + 1] = points[i * 2 + 1] + dx / length * distance * flip
+        }
+        return out
     }
 
     /** Typical width of one Japanese column, used as the yardstick for growing the patch. */
