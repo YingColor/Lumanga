@@ -147,6 +147,12 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_SORT, 0).coerceIn(0, 6)
         set(value) = sp.edit().putInt(KEY_SORT, value.coerceIn(0, 6)).apply()
 
+    /** Where the read-state filter lives on the shelf: the chip that opens a menu (default) or a
+     *  row of tabs above the grid, so every state is visible without opening anything. */
+    var shelfStatusTabs: Boolean
+        get() = sp.getBoolean(KEY_STATUS_TABS, false)
+        set(value) = sp.edit().putBoolean(KEY_STATUS_TABS, value).apply()
+
     
     var tapToTurn: Boolean
         get() = sp.getBoolean(KEY_TAP_TURN, true)
@@ -395,19 +401,6 @@ class Prefs(context: Context) {
 
 
 
-    fun progressSnapshot(): Map<Int, Pair<Int, Int>> {
-        val all = sp.all
-        val result = HashMap<Int, Pair<Int, Int>>()
-        for ((key, value) in all) {
-            if (!key.startsWith("pg_")) continue
-            val hash = key.removePrefix("pg_").toIntOrNull() ?: continue
-            val page = value as? Int ?: continue
-            val total = all["pc_$hash"] as? Int ?: 0
-            if (page > 0) result[hash] = page to total
-        }
-        return result
-    }
-
     fun clearProgress() {
         val editor = sp.edit()
         sp.all.keys
@@ -431,6 +424,7 @@ class Prefs(context: Context) {
         const val KEY_AWAKE = "keep_awake"
         const val KEY_COLUMNS = "grid_columns"
         const val KEY_SORT = "sort_mode"
+        const val KEY_STATUS_TABS = "shelf_status_tabs"
         const val KEY_TAP_TURN = "tap_to_turn"
         const val KEY_READ_MODE = "read_mode"
         const val KEY_FIT_MODE = "fit_mode"

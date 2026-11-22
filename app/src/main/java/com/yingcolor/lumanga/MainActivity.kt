@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -41,9 +42,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -83,8 +82,6 @@ import com.yingcolor.lumanga.ui.MotionSpec
 import com.yingcolor.lumanga.ui.PreTranslateDialog
 import com.yingcolor.lumanga.ui.ReaderScreen
 import com.yingcolor.lumanga.ui.ReaderViewModel
-import com.yingcolor.lumanga.ui.SHELF_MODE_HOME
-import com.yingcolor.lumanga.ui.SHELF_MODE_READING
 import com.yingcolor.lumanga.ui.SettingsDialog
 import com.yingcolor.lumanga.ui.TranslateConfigDialog
 import com.yingcolor.lumanga.ui.SettingsRoute
@@ -115,15 +112,22 @@ class MainActivity : ComponentActivity() {
 
 
 
-@Composable
-private fun currentlyReading(allBooks: List<Book>, prefs: Prefs, version: Int): List<Book> =
-    remember(allBooks, prefs, version) {
-        val snapshot = prefs.progressSnapshot()
-        allBooks.filter { book ->
-            val (page, total) = snapshot[book.id.hashCode()] ?: return@filter false
-            page > 0 && !(total > 0 && page >= total - 1)
-        }
-    }
+/**
+ * The pages the bottom bar switches between.
+ *
+ * Only the shelf ships today, so the bar stays hidden and the shelf gets the whole screen. The
+ * pager and the bar are both driven by this list: another home page is one entry here plus its
+ * branch in the pager body, and the bar reappears on its own.
+ */
+private enum class HomePage(
+    val label: String,
+    val icon: ImageVector,
+    val activeIcon: ImageVector
+) {
+    SHELF(S.shelf, Icons.Outlined.Home, Icons.Filled.Home)
+}
+
+private val HOME_PAGES = listOf(HomePage.SHELF)
 
 @Composable
 private fun ComicApp() {
@@ -178,8 +182,7 @@ private fun ComicApp() {
 
     val scope = rememberCoroutineScope()
     val homeGridState = rememberLazyGridState()
-    val readingGridState = rememberLazyGridState()
-    val mainPagerState = rememberPagerState(initialPage = 0) { 2 }
+    val mainPagerState = rememberPagerState(initialPage = 0) { HOME_PAGES.size }
     val mainPage = mainPagerState.currentPage
     val slideSpec = motionTween<IntOffset>(MotionSpec.LONG, MotionSpec.Emphasized)
     val fadeSpec = motionTween<Float>(MotionSpec.MEDIUM, MotionSpec.Emphasized)
@@ -225,19 +228,18 @@ private fun ComicApp() {
     }
 
     val allBooks = shelfVm.books
-    val readingBooks = currentlyReading(allBooks, prefs, progressVersion)
 
     
     
     
     BackHandler(
-        enabled = screen != "reader" && (settingsRoute != SettingsRoute.CLOSED || mainPage == 1)
+        enabled = screen != "reader" && (settingsRoute != SettingsRoute.CLOSED || mainPage != 0)
     ) {
         when {
             settingsRoute == SettingsRoute.READING ||
                 settingsRoute == SettingsRoute.LIBRARIES -> settingsRoute = SettingsRoute.ROOT
             settingsRoute != SettingsRoute.CLOSED -> settingsRoute = SettingsRoute.CLOSED
-            mainPage == 1 -> scope.launch { mainPagerState.animateScrollToPage(0) }
+            mainPage != 0 -> scope.launch { mainPagerState.animateScrollToPage(0) }
         }
     }
 
@@ -289,14 +291,14 @@ private fun ComicApp() {
                     Column(modifier = Modifier.fillMaxSize()) {
                         HorizontalPager(
                             state = mainPagerState,
-                            
-                            
+                            // Pages change by swiping as well as by tapping the bar, so another
+                            // home page needs no extra gesture code.
+                            userScrollEnabled = HOME_PAGES.size > 1,
                             beyondViewportPageCount = 1,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
                         ) { page ->
-                            val readingMode = page == 1
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -312,17 +314,17 @@ private fun ComicApp() {
                                         alpha = 1f - distance * 0.10f
                                     }
                             ) {
-                                ShelfScreen(
-                                    books = if (readingMode) readingBooks else allBooks,
+                                when (HOME_PAGES[page]) {
+                                HomePage.SHELF -> ShelfScreen(
+                                    books = allBooks,
                                     loading = shelfVm.loading,
                                     restoring = shelfVm.restoring,
                                     error = shelfVm.error,
-                                    mode = if (readingMode) SHELF_MODE_READING else SHELF_MODE_HOME,
                                     settings = settings,
                                     prefs = prefs,
                                     vm = shelfVm,
                                     refreshKey = progressVersion,
-                                    gridState = if (readingMode) readingGridState else homeGridState,
+                                    gridState = homeGridState,
                                     onPickFolder = { pickFolder.launch(null) },
                                     onManageFolders = { openSettings(SettingsRoute.LIBRARIES) },
                                     onRefresh = {
@@ -334,18 +336,24 @@ private fun ComicApp() {
                                         readerVm.open(selected)
                                     },
                                     onSettings = { openSettings(SettingsRoute.ROOT) },
-                                    onTranslateConfig = { translateConfigOpen = true },
-                                    onGoHome = { scope.launch { mainPagerState.animateScrollToPage(0) } }
+                                    onTranslateConfig = { translateConfigOpen = true }
                                 )
+                                }
                             }
                         }
-                        MainNavBar(
-                            pagerState = mainPagerState,
-                            readingCount = readingBooks.size,
-                            onSelect = { targetPage ->
-                                scope.launch { mainPagerState.animateScrollToPage(targetPage) }
-                            }
-                        )
+                        // One page means nothing to switch between, so the bar stays out of the
+                        // way and only the system inset is kept. Adding a page brings it back.
+                        if (HOME_PAGES.size > 1) {
+                            MainNavBar(
+                                pagerState = mainPagerState,
+                                pages = HOME_PAGES,
+                                onSelect = { targetPage ->
+                                    scope.launch { mainPagerState.animateScrollToPage(targetPage) }
+                                }
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.navigationBarsPadding())
+                        }
                     }
                 }
             }
@@ -433,7 +441,7 @@ private fun ComicApp() {
 @Composable
 private fun MainNavBar(
     pagerState: PagerState,
-    readingCount: Int,
+    pages: List<HomePage>,
     onSelect: (Int) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -448,7 +456,7 @@ private fun MainNavBar(
                 .navigationBarsPadding()
                 .height(60.dp)
         ) {
-            val itemWidth = maxWidth / 2
+            val itemWidth = maxWidth / pages.size.coerceAtLeast(1)
             val indicatorWidth = 56.dp
             val travelPx = with(LocalDensity.current) { itemWidth.toPx() }
             val startPx = with(LocalDensity.current) {
@@ -462,10 +470,12 @@ private fun MainNavBar(
                     .align(Alignment.TopStart)
                     .offset(y = 16.dp)
                     .graphicsLayer {
-                        val p = (pagerState.currentPage +
-                            pagerState.currentPageOffsetFraction).coerceIn(0f, 1f)
-                        translationX = startPx + p * travelPx
-                        val bulge = kotlin.math.sin(p * kotlin.math.PI).toFloat()
+                        val raw = pagerState.currentPage + pagerState.currentPageOffsetFraction
+                        val p = (raw / (pages.size - 1).coerceAtLeast(1)).coerceIn(0f, 1f)
+                        translationX = startPx + p * travelPx * (pages.size - 1)
+                        val bulge = kotlin.math.sin(
+                            (raw - raw.toInt()) * kotlin.math.PI
+                        ).toFloat()
                         scaleX = 1f + bulge * 0.12f
                         scaleY = 1f - bulge * 0.06f
                     }
@@ -474,26 +484,18 @@ private fun MainNavBar(
             )
 
             Row(modifier = Modifier.fillMaxSize()) {
-                NavTab(
-                    pagerState = pagerState,
-                    index = 0,
-                    icon = Icons.Outlined.Home,
-                    activeIcon = Icons.Filled.Home,
-                    label = S.shelf,
-                    badge = 0,
-                    onClick = { onSelect(0) },
-                    modifier = Modifier.weight(1f)
-                )
-                NavTab(
-                    pagerState = pagerState,
-                    index = 1,
-                    icon = Icons.Outlined.PlayArrow,
-                    activeIcon = Icons.Filled.PlayArrow,
-                    label = S.reading,
-                    badge = readingCount,
-                    onClick = { onSelect(1) },
-                    modifier = Modifier.weight(1f)
-                )
+                pages.forEachIndexed { index, page ->
+                    NavTab(
+                        pagerState = pagerState,
+                        index = index,
+                        icon = page.icon,
+                        activeIcon = page.activeIcon,
+                        label = page.label,
+                        badge = 0,
+                        onClick = { onSelect(index) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
     }

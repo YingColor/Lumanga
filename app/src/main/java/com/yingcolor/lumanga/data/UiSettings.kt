@@ -48,6 +48,9 @@ class UiSettings(private val prefs: Prefs) {
     private var stateSortMode by mutableStateOf(prefs.sortMode)
     val sortMode: Int get() = stateSortMode
 
+    private var stateShelfStatusTabs by mutableStateOf(prefs.shelfStatusTabs)
+    val shelfStatusTabs: Boolean get() = stateShelfStatusTabs
+
     private var stateTapToTurn by mutableStateOf(prefs.tapToTurn)
     val tapToTurn: Boolean get() = stateTapToTurn
 
@@ -364,6 +367,11 @@ class UiSettings(private val prefs: Prefs) {
         val safe = value.coerceIn(0, 6)
         stateSortMode = safe
         prefs.sortMode = safe
+    }
+
+    fun setShelfStatusTabs(value: Boolean) {
+        stateShelfStatusTabs = value
+        prefs.shelfStatusTabs = value
     }
 
     fun setTapToTurn(value: Boolean) {

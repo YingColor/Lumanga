@@ -123,9 +123,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-const val SHELF_MODE_HOME = 0
-const val SHELF_MODE_READING = 1
-
 private val ExpandableHeaderHeight = 116.dp
 private const val HEADER_SCROLL_RATIO = 0.6f
 private val FavoritePink = Color(0xFFFF4D87)
@@ -152,16 +149,9 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
     var error by mutableStateOf<String?>(null)
         private set
 
-    
     var filterGroup by mutableStateOf("")
 
-    
     var readFilter by mutableStateOf(0)
-
-    
-
-
-
 
     fun load(
         roots: List<Uri>,
@@ -195,14 +185,10 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
         loadJob?.cancel()
         restoring = false
         
-        
         val token = ++loadToken
         loadJob = viewModelScope.launch {
             try {
                 error = null
-                
-                
-                
                 
                 if (!sameFolder) books = emptyList()
                 restoring = !force
@@ -222,7 +208,6 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 result.fold(
                     onSuccess = { scanned ->
-                        
                         
                         if (scanned.isEmpty() && books.isNotEmpty()) {
                             lastVerifiedAt = System.currentTimeMillis()
@@ -248,7 +233,6 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    
     fun refresh(onDone: (() -> Unit)? = null) {
         val folder = loadedKey
         if (folder == null) {
@@ -264,7 +248,6 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
         load(roots, force = true, onDone = onDone)
     }
 
-    
     fun refresh() {
         val folder = loadedKey ?: return
         val roots = folder.split("|").mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }
@@ -315,7 +298,6 @@ fun ShelfScreen(
     loading: Boolean,
     restoring: Boolean,
     error: String?,
-    mode: Int,
     settings: UiSettings,
     prefs: Prefs,
     vm: ShelfViewModel,
@@ -326,8 +308,7 @@ fun ShelfScreen(
     onRefresh: () -> Unit,
     onOpenBook: (Book) -> Unit,
     onSettings: () -> Unit,
-    onTranslateConfig: () -> Unit,
-    onGoHome: () -> Unit
+    onTranslateConfig: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
     // The search field is folded away behind a magnifier until it is needed. Opening it hides
@@ -349,12 +330,9 @@ fun ShelfScreen(
     val shelfScope = rememberCoroutineScope()
     val appContext = LocalContext.current.applicationContext
     
-    
-    
     val sorted = remember(books, settings.sortMode, refreshKey) {
         sortBooks(books, settings.sortMode, prefs)
     }
-    
     
     val groups = remember(sorted) {
         sorted.asSequence()
@@ -365,7 +343,6 @@ fun ShelfScreen(
             .toList()
     }
     
-    
     val groupFilter = vm.filterGroup.takeIf { it in groups } ?: ""
     val readFilter = vm.readFilter
     val favorites = settings.favorites
@@ -374,25 +351,23 @@ fun ShelfScreen(
         val q = query.trim()
         val searched = if (q.isEmpty()) base else base.filter { it.name.contains(q, ignoreCase = true) }
         
-        
-        if (mode == SHELF_MODE_READING || readFilter == 0) searched
-        else if (readFilter == 3) searched.filter { it.id in favorites }
+        if (readFilter == 0) searched
+        else if (readFilter == 4) searched.filter { it.id in favorites }
         else searched.filter { book ->
             val page = prefs.progress(book.id)
             val total = prefs.pageCount(book.id)
             val finished = total > 0 && page >= total - 1
-            if (readFilter == 1) finished else page > 0 && !finished
+            when (readFilter) {
+                1 -> page == 0
+                3 -> finished
+                else -> page > 0 && !finished
+            }
         }
     }
     val scheme = MaterialTheme.colorScheme
     val columns = settings.gridColumns
     val batchState by BatchPreTranslate.state.collectAsState()
 
-    
-    
-    
-    
-    
     val maxCollapsePx = with(LocalDensity.current) { ExpandableHeaderHeight.toPx() }
     val collapseState = remember { mutableFloatStateOf(0f) }
     val scrollConnection = remember(maxCollapsePx) {
@@ -407,9 +382,6 @@ fun ShelfScreen(
         }
     }
     val gridScope = rememberCoroutineScope()
-    
-    
-    
     
     var drawerOpen by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
@@ -431,25 +403,19 @@ fun ShelfScreen(
                 .statusBarsPadding()
         ) {
             
-            
-            
             CollapsingHeader(
                 collapse = collapseState,
-                mode = mode,
                 loading = loading,
                 restoring = restoring,
                 count = displayed.size
             )
 
-            
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                
-                
                 
                 IconButton(onClick = { drawerOpen = true }) {
                     Icon(
@@ -569,9 +535,12 @@ fun ShelfScreen(
                     }
                 }
                 Spacer(Modifier.width(4.dp))
+                // With the states across the top of the shelf this chip would be a second copy
+                // of the same switch, so it steps aside and leaves the bar to search and refresh.
+                if (!settings.shelfStatusTabs) {
                 Box {
                     MiniChip(
-                        text = S.readFilterOptions[readFilter.coerceIn(0, 3)],
+                        text = S.readFilterOptions[readFilter.coerceIn(0, 4)],
                         active = readFilter != 0,
                         onClick = { readFilterMenu = true }
                     )
@@ -587,7 +556,7 @@ fun ShelfScreen(
                                         color = scheme.primary
                                     )
                                 },
-                                trailingIcon = if (index == 3) {
+                                trailingIcon = if (index == S.readFilterOptions.lastIndex) {
                                     {
                                         Icon(
                                             imageVector = Icons.Filled.Favorite,
@@ -605,6 +574,7 @@ fun ShelfScreen(
                             )
                         }
                     }
+                }
                 }
                 }
                 // The magnifier sits immediately left of Refresh. Tapping it again folds the
@@ -630,9 +600,21 @@ fun ShelfScreen(
                 }
             }
 
-            
-            
-            
+            // Read states across the top: 全部 / 未读 / 正在读 / 已读完 / 收藏, a single tap each.
+            // Behind the toolbar chip they cost two taps and you cannot see which ones exist
+            // until the menu is open — this is the one filter most people touch every day.
+            if (settings.shelfStatusTabs && books.isNotEmpty()) {
+                StatusTabs(
+                    selected = readFilter,
+                    onSelect = { index ->
+                        if (index != readFilter) {
+                            vm.readFilter = index
+                            collapseState.floatValue = 0f
+                            gridScope.launch { gridState.scrollToItem(0) }
+                        }
+                    }
+                )
+            }
 
             if (batchState.running || batchState.pending.isNotEmpty()) {
                 BatchBanner(state = batchState, onClick = { batchOpen = true })
@@ -646,16 +628,12 @@ fun ShelfScreen(
                 )
                 
                 restoring -> Box(Modifier.fillMaxSize())
-                books.isEmpty() && !loading -> if (mode == SHELF_MODE_READING) {
-                    ReadingEmptyState(onGoHome = onGoHome)
-                } else {
-                    EmptyState(
-                        title = S.emptyTitle,
-                        body = S.emptyBody,
-                        tip = S.emptyTip,
-                        onPickFolder = onPickFolder
-                    )
-                }
+                books.isEmpty() && !loading -> EmptyState(
+                    title = S.emptyTitle,
+                    body = S.emptyBody,
+                    tip = S.emptyTip,
+                    onPickFolder = onPickFolder
+                )
                 displayed.isEmpty() && !loading -> EmptyState(
                     title = S.noResult,
                     body = S.search,
@@ -703,8 +681,6 @@ fun ShelfScreen(
             }
         }
 
-        
-        
         if (showTopButton) {
             SmallFloatingActionButton(
                 onClick = {
@@ -724,8 +700,6 @@ fun ShelfScreen(
             }
         }
 
-        
-        
         PillButton(
             text = S.manageFolders,
             onClick = onManageFolders,
@@ -736,8 +710,6 @@ fun ShelfScreen(
         )
     }
 
-    
-    
     AnimatedVisibility(
         visible = drawerOpen,
         enter = fadeIn(motionTween(MotionSpec.SHORT)),
@@ -916,7 +888,6 @@ fun ShelfScreen(
     }
 }
 
-
 /**
  * Persistent way back into a folder batch. It stays visible while the batch runs and remains
  * after the app was killed so the unfinished queue can be resumed with one tap.
@@ -993,15 +964,9 @@ private fun DrawerRow(
     }
 }
 
-
-
-
-
-
 @Composable
 private fun CollapsingHeader(
     collapse: State<Float>,
-    mode: Int,
     loading: Boolean,
     restoring: Boolean,
     count: Int
@@ -1022,7 +987,7 @@ private fun CollapsingHeader(
                 .padding(start = 20.dp, end = 20.dp, top = 14.dp)
         ) {
             Text(
-                text = if (mode == SHELF_MODE_READING) S.reading else S.shelf,
+                text = S.shelf,
                 fontSize = (28f - 8f * c).sp,
                 fontWeight = FontWeight((700f - 200f * c).toInt()),
                 color = scheme.onSurface,
@@ -1030,7 +995,7 @@ private fun CollapsingHeader(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = if (mode == SHELF_MODE_READING) S.readingSubtitle else S.shelfSubtitle,
+                text = S.shelfSubtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = scheme.onSurfaceVariant,
                 maxLines = 1
@@ -1083,6 +1048,67 @@ private fun MiniChip(text: String, onClick: () -> Unit, active: Boolean = false)
     }
 }
 
+/**
+ * The read-state row shown when the shelf is set to put the filter on top.
+ *
+ * Five fixed entries, so it scrolls sideways only on a very narrow screen; the row keeps the
+ * toolbar free for search and refresh.
+ */
+@Composable
+private fun StatusTabs(selected: Int, onSelect: (Int) -> Unit) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 14.dp, end = 14.dp, bottom = 8.dp)
+    ) {
+        S.readFilterOptions.forEachIndexed { index, label ->
+            StatusTab(
+                text = label,
+                active = selected == index,
+                onClick = { onSelect(index) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusTab(
+    text: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scheme = MaterialTheme.colorScheme
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = motionTween(MotionSpec.SHORT, MotionSpec.EaseOutCubic),
+        label = "tabPress"
+    )
+    Surface(
+        shape = RoundedCornerShape(11.dp),
+        color = if (active) scheme.primary else scheme.surfaceContainerHigh,
+        contentColor = if (active) scheme.onPrimary else scheme.onSurfaceVariant,
+        modifier = modifier.graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+    ) {
+        Box(
+            modifier = Modifier
+                .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+                .fillMaxWidth()
+                .padding(vertical = 10.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(text = text, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BookCard(
@@ -1112,7 +1138,6 @@ private fun BookCard(
         else -> 10.dp
     }
     
-    
     val coverPx = when (columns) {
         5 -> 160
         4 -> 200
@@ -1120,7 +1145,6 @@ private fun BookCard(
         else -> 360
     }
     val cover by produceState<Bitmap?>(
-        
         
         initialValue = vm.peekCover(book, coverPx),
         key1 = book.id,
@@ -1194,7 +1218,6 @@ private fun BookCard(
                     )
                 }
 
-                
                 if (favorite) {
                     Box(
                         modifier = Modifier
@@ -1233,7 +1256,6 @@ private fun BookCard(
                     }
                 }
 
-                
                 DropdownMenu(
                     expanded = coverMenu,
                     onDismissRequest = { coverMenu = false }
@@ -1400,44 +1422,3 @@ private fun EmptyState(
     }
 }
 
-@Composable
-private fun ReadingEmptyState(onGoHome: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .size(132.dp)
-                .clip(RoundedCornerShape(40.dp))
-                .background(scheme.tertiaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "读",
-                style = MaterialTheme.typography.displayLarge,
-                color = scheme.onTertiaryContainer
-            )
-        }
-        Spacer(Modifier.height(26.dp))
-        Text(
-            text = S.readingEmptyTitle,
-            style = MaterialTheme.typography.headlineMedium,
-            color = scheme.onSurface,
-            textAlign = TextAlign.Center
-        )
-        Spacer(Modifier.height(10.dp))
-        Text(
-            text = S.readingEmptyBody,
-            style = MaterialTheme.typography.bodyMedium,
-            color = scheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
-        Spacer(Modifier.height(26.dp))
-        PillButton(text = S.goShelf, onClick = onGoHome)
-    }
-}

@@ -74,32 +74,17 @@ import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.theme.Palettes
 import com.yingcolor.lumanga.data.ZoomMode
 
-
 object SettingsRoute {
     const val CLOSED = 0
 
-    
     const val ROOT = 1
 
-    
     const val READING = 2
 
-    
     const val LIBRARIES = 3
 
-    
     const val PERSONALIZE = 4
 }
-
-
-
-
-
-
-
-
-
-
 
 @Composable
 internal fun SettingsDialog(
@@ -118,8 +103,6 @@ internal fun SettingsDialog(
 ) {
     val scheme = MaterialTheme.colorScheme
 
-    
-    
     val pageFade = motionTween<Float>(MotionSpec.SHORT)
     var shown by remember { mutableIntStateOf(if (route == 0) SettingsRoute.ROOT else route) }
     LaunchedEffect(route) {
@@ -130,18 +113,11 @@ internal fun SettingsDialog(
     val shape = RoundedCornerShape(28.dp)
     val glass = scheme.surfaceContainerLow
     
-    
-    
-    
-    
-    
     val topAlpha = if (frosted) 0.68f else 0.97f
     val bottomAlpha = if (frosted) 0.56f else 0.93f
     val rowAlpha = if (frosted) 0.58f else 0.72f
     val scrimAlpha = if (frosted) 0.10f else 0.30f
 
-    
-    
     var cardOrigin by remember { mutableStateOf(IntOffset.Zero) }
 
     AnimatedVisibility(
@@ -159,9 +135,6 @@ internal fun SettingsDialog(
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             
-            
-            
-            
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -177,8 +150,6 @@ internal fun SettingsDialog(
                     .clip(shape)
                     .onGloballyPositioned { cardOrigin = it.positionInWindow().round() }
                     
-                    
-                    
                     .pointerInput(Unit) { detectTapGestures(onTap = {}) }
             ) {
                 if (backdrop != null) {
@@ -189,9 +160,6 @@ internal fun SettingsDialog(
                         filterQuality = FilterQuality.High,
                         modifier = Modifier.layout { measurable, _ ->
                             
-                            
-                            
-                            
                             val placeable = measurable.measure(
                                 Constraints.fixed(backdrop.windowWidth, backdrop.windowHeight)
                             )
@@ -201,8 +169,6 @@ internal fun SettingsDialog(
                         }
                     )
                 }
-                
-                
                 
                 Box(
                     modifier = Modifier
@@ -217,10 +183,6 @@ internal fun SettingsDialog(
                         )
                 )
 
-                
-                
-                
-                
                 CompositionLocalProvider(LocalContentColor provides scheme.onSurface) {
                     Column(modifier = Modifier.padding(20.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -273,8 +235,6 @@ internal fun SettingsDialog(
                     }
                 }
 
-                
-                
                 Box(
                     modifier = Modifier
                         .matchParentSize()
@@ -297,8 +257,6 @@ private fun RootSettings(
 ) {
     val scheme = MaterialTheme.colorScheme
 
-    
-    
     var clearTaps by remember { mutableIntStateOf(0) }
     var lastClearTapAt by remember { mutableStateOf(0L) }
     var showClearWarning by remember { mutableStateOf(false) }
@@ -404,11 +362,6 @@ private fun RootSettings(
     )
 }
 
-
-
-
-
-
 @Composable
 private fun LibrarySettings(
     folders: List<Pair<String, String>>,
@@ -471,11 +424,6 @@ private fun LibrarySettings(
     }
 }
 
-
-
-
-
-
 @Composable
 private fun PersonalizeSettings(settings: UiSettings) {
     val scheme = MaterialTheme.colorScheme
@@ -504,8 +452,22 @@ private fun PersonalizeSettings(settings: UiSettings) {
         style = MaterialTheme.typography.bodySmall,
         color = scheme.onSurfaceVariant
     )
-}
+    Spacer(Modifier.height(20.dp))
 
+    SectionLabel(S.shelfStatus)
+    SegmentedChoice(
+        options = listOf(S.shelfStatusMenu, S.shelfStatusTabs),
+        selected = if (settings.shelfStatusTabs) 1 else 0,
+        onSelect = { settings.setShelfStatusTabs(it == 1) },
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(6.dp))
+    Text(
+        text = S.shelfStatusTip,
+        style = MaterialTheme.typography.bodySmall,
+        color = scheme.onSurfaceVariant
+    )
+}
 
 @Composable
 private fun SwatchRow(selected: Int, onSelect: (Int) -> Unit) {
