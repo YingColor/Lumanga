@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.yingcolor.lumanga.BuildConfig
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.ApiClient
 import com.yingcolor.lumanga.data.ApiProtocol
@@ -53,13 +54,22 @@ fun OcrSettingsPage(settings: UiSettings) {
         Spacer(Modifier.height(16.dp))
         Text(S.ocrEngineTitle, style = MaterialTheme.typography.titleSmall, color = scheme.primary)
         Spacer(Modifier.height(8.dp))
-        OcrModeCard(
-            title = S.ocrLocalModel,
-            desc = S.ocrLocalModelDesc,
-            selected = !online,
-            onClick = { settings.setOcrOnline(false) }
-        )
-        Spacer(Modifier.height(8.dp))
+        if (BuildConfig.HAS_LOCAL_OCR) {
+            OcrModeCard(
+                title = S.ocrLocalModel,
+                desc = S.ocrLocalModelDesc,
+                selected = !online,
+                onClick = { settings.setOcrOnline(false) }
+            )
+            Spacer(Modifier.height(8.dp))
+        } else {
+            Text(
+                text = S.ocrLiteNotice,
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+        }
         OcrModeCard(
             title = S.ocrOnlineModel,
             desc = S.ocrOnlineModelDesc,

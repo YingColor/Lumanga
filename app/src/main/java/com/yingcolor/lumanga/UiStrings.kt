@@ -227,6 +227,7 @@ object S {
     const val preTranslateOcr = "文字识别模型"
     const val ocrModelSharedHint = "和阅读模式共用这一个模型"
     const val translatedMark = "译"
+    const val ocrLiteNotice = "这个版本不含内置识别模型：每一页的图片都会发到下面填写的地址去识别。想在本机识别，请装完整版。"
     const val ocrEngineTitle = "识别方式"
     const val ocrLocalModel = "本机模型"
     const val ocrOnlineModel = "在线 OCR"

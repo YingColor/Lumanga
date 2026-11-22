@@ -1,5 +1,7 @@
 package com.yingcolor.lumanga.data
 
+import com.yingcolor.lumanga.BuildConfig
+
 import com.yingcolor.lumanga.theme.Palettes
 
 import androidx.compose.runtime.getValue
@@ -177,8 +179,10 @@ class UiSettings(private val prefs: Prefs) {
     val ocrProtocol: Int get() = stateOcrProtocol
 
     fun setOcrOnline(value: Boolean) {
-        stateOcrOnline = value
-        prefs.ocrOnline = value
+        // The lite build has no bundled models, so "local" is not an option there.
+        val allowed = value || BuildConfig.HAS_LOCAL_OCR
+        stateOcrOnline = allowed
+        prefs.ocrOnline = allowed
     }
 
     fun setOcrApi(value: String) {
@@ -288,8 +292,11 @@ class UiSettings(private val prefs: Prefs) {
         stateOcrModel = safe
         prefs.ocrModel = safe
         // Choosing a local model is also the way out of online mode: the two are exclusive.
-        stateOcrOnline = false
-        prefs.ocrOnline = false
+        // In the lite build there is no local model to switch to, so it stays online.
+        if (BuildConfig.HAS_LOCAL_OCR) {
+            stateOcrOnline = false
+            prefs.ocrOnline = false
+        }
     }
 
     private var stateReadMode by mutableStateOf(prefs.readMode)

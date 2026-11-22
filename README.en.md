@@ -100,4 +100,7 @@ The settings window is a translucent floating card, so a change can be judged
 against the page behind it instead of a full-screen panel.
 
 
-Build with `./gradlew assembleRelease` (or `assembleDebug` for debugging only).
+Build with `./gradlew assembleFullRelease` (bundled on-device recognisers) or
+`./gradlew assembleLiteRelease` (no recognisers, about a third of the size, every page is read
+at the endpoint configured in OCR settings). Both flavours share the same applicationId and
+signing key, so they replace each other in place. `assembleDebug` is for debugging only.

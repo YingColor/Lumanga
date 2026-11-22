@@ -51,6 +51,25 @@ android {
         }
     }
 
+    // Two builds of the same app. `full` bundles the on-device recognisers (160 MB of assets);
+    // `lite` ships none of them and recognises every page at the endpoint configured in OCR
+    // settings, which brings the download down to the size of a normal reader. Both keep the
+    // same applicationId and the same signing key, so they replace each other in place and the
+    // books, progress and saved translations survive the swap.
+    flavorDimensions += "ocr"
+    productFlavors {
+        create("full") {
+            dimension = "ocr"
+            buildConfigField("boolean", "HAS_LOCAL_OCR", "true")
+            resValue("string", "app_name", "光漫堂")
+        }
+        create("lite") {
+            dimension = "ocr"
+            buildConfigField("boolean", "HAS_LOCAL_OCR", "false")
+            resValue("string", "app_name", "光漫堂 精简版")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

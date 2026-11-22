@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.yingcolor.lumanga.BuildConfig
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.OcrModel
 import com.yingcolor.lumanga.data.UiSettings
@@ -142,7 +143,7 @@ fun OcrModelRow(settings: UiSettings, enabled: Boolean) {
                             settings.setOcrOnline(true)
                         }
                     )
-                    OcrModel.choices.forEach { model ->
+                    if (BuildConfig.HAS_LOCAL_OCR) OcrModel.choices.forEach { model ->
                         val selected = !settings.ocrOnline && model.id == settings.ocrModel
                         DropdownMenuItem(
                             text = {

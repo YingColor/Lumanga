@@ -93,17 +93,28 @@
 
 见 [使用说明.md](使用说明.md)。简单说：把 APK 传到手机 → 点开安装 → 允许安装未知来源 → 打开应用选一次文件夹。
 
+发布页有两个包，功能一样，区别只在「识别文字」跑在哪：
+
+- `Lumanga-<版本>.apk`（完整版，约 200 MB）：四款识别模型都装在应用里，断网也能识别。
+- `Lumanga-<版本>-lite.apk`（精简版，约 62 MB）：不含识别模型，每一页的图片会发到
+  「翻译配置 → OCR 配置」里填写的地址识别，需要联网，以及一台能跑视觉模型的服务。
+
+两个包**同包名、同签名**，可以直接互相覆盖安装：从完整版换成精简版（或反过来）时，
+书架、阅读进度和已经保存的译文都会留着。
+
 ## 从源码构建
 
 需要 JDK 17+、Android SDK（Platform 36、Build Tools 36.0.0）。rar / 7z 用到的 `junrar`、`xz` 两个库以 jar 形式放在 `app/libs`，不需要联网拉取。
 
 ```bash
-./gradlew assembleDebug     # 调试版（排错用，未优化，手机上会偏慢）
-./gradlew assembleRelease   # 正式版（代码优化 + 资源清理 + 基线配置），推荐安装这个
+./gradlew assembleDebug          # 调试版（排错用，未优化，手机上会偏慢）
+./gradlew assembleFullRelease    # 完整版：四款本机识别模型随包打进 APK
+./gradlew assembleLiteRelease    # 精简版：不打识别模型，体积约为完整版的三成
 ```
 
-产物分别在 `app/build/outputs/apk/debug/app-debug.apk` 与
-`app/build/outputs/apk/release/app-release.apk`。正式版沿用调试签名，方便直接覆盖安装测试。
+产物分别在 `app/build/outputs/apk/full/release/app-full-release.apk` 与
+`app/build/outputs/apk/lite/release/app-lite-release.apk`（调试版在 `apk/debug/`）。
+两个 flavor 沿用同一调试签名，方便直接互相覆盖安装测试。
 
 > 国内网络如遇 `maven.google.com` 不可达，`settings.gradle.kts` 已把 `https://dl.google.com/dl/android/maven2` 放在仓库列表首位作为可达镜像。
 

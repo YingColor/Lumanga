@@ -1,5 +1,7 @@
 package com.yingcolor.lumanga.data
 
+import com.yingcolor.lumanga.BuildConfig
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -66,6 +68,9 @@ object MangaOcr {
      * the original column-joined text, so a broken new model can never blank out a page.
      */
     fun readIfSelected(bitmap: Bitmap?, box: Rect): String? {
+        // No recognisers in the lite build, and its settings cannot select this model anyway;
+        // returning early keeps it from trying to copy files that are not in the APK.
+        if (!BuildConfig.HAS_LOCAL_OCR) return null
         val context = app ?: return null
         if (bitmap == null) return null
         if (OcrModel.from(Prefs(context).ocrModel) != OcrModel.MANGA) return null

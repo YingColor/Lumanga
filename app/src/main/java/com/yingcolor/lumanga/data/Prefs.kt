@@ -1,6 +1,7 @@
 package com.yingcolor.lumanga.data
 
 import android.content.Context
+import com.yingcolor.lumanga.BuildConfig
 import org.json.JSONArray
 
 class Prefs(context: Context) {
@@ -273,7 +274,10 @@ class Prefs(context: Context) {
      * translates text.
      */
     var ocrOnline: Boolean
-        get() = sp.getBoolean(KEY_OCR_ONLINE, false)
+        // The lite build ships no recognisers, so there is nothing local to fall back to. Forcing
+        // this true also covers a lite build installed over a full one: the stored value says
+        // "local", the routes and the settings screen still have to say "online".
+        get() = if (BuildConfig.HAS_LOCAL_OCR) sp.getBoolean(KEY_OCR_ONLINE, false) else true
         set(value) = sp.edit().putBoolean(KEY_OCR_ONLINE, value).apply()
 
     var ocrApi: String
