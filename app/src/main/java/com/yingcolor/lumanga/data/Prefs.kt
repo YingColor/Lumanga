@@ -161,8 +161,13 @@ class Prefs(context: Context) {
 
     
     var translateEnabled: Boolean
-        get() = sp.getBoolean(KEY_TRANSLATE, false)
-        set(value) = sp.edit().putBoolean(KEY_TRANSLATE, value).apply()
+        // The reader build has no translation, so the toggle is pinned off. Reading it through
+        // the gate also covers a reader install on top of a full one, where the stored value is
+        // still "true" from before: nothing may start translating behind the user's back.
+        get() = BuildConfig.HAS_TRANSLATION && sp.getBoolean(KEY_TRANSLATE, false)
+        set(value) = sp.edit()
+            .putBoolean(KEY_TRANSLATE, BuildConfig.HAS_TRANSLATION && value)
+            .apply()
 
     var translateApi: String
         get() = sp.getString(KEY_TRANSLATE_API, TranslationConfig.DEFAULT_API)

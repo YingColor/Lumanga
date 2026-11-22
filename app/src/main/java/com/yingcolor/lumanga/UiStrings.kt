@@ -8,7 +8,6 @@ object S {
     const val gb = "GB"
     const val mb = "MB"
     const val unknownSize = "未知大小"
-    const val appName = "光漫堂"
     const val shelf = "书架"
     const val shelfSubtitle = "享受看漫画的时光吧~"
     const val search = "搜索漫画"

@@ -225,8 +225,10 @@ class UiSettings(private val prefs: Prefs) {
     }
 
     fun setTranslateEnabled(value: Boolean) {
-        stateTranslateEnabled = value
-        prefs.translateEnabled = value
+        // No translation in the reader build, so this is never allowed to become true there.
+        val allowed = value && BuildConfig.HAS_TRANSLATION
+        stateTranslateEnabled = allowed
+        prefs.translateEnabled = allowed
     }
 
     fun setTranslateApi(value: String) {

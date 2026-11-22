@@ -100,7 +100,12 @@ The settings window is a translucent floating card, so a change can be judged
 against the page behind it instead of a full-screen panel.
 
 
-Build with `./gradlew assembleFullRelease` (bundled on-device recognisers) or
-`./gradlew assembleLiteRelease` (no recognisers, about a third of the size, every page is read
-at the endpoint configured in OCR settings). Both flavours share the same applicationId and
-signing key, so they replace each other in place. `assembleDebug` is for debugging only.
+Three flavours, same app, different translation setup:
+
+- `assembleFullRelease` — recognisers bundled, translates offline (~200 MB).
+- `assembleLiteRelease` — no recognisers, every page is read at the endpoint configured in OCR
+  settings (~62 MB).
+- `assembleReaderRelease` — no translation at all, reading only (~2 MB).
+
+All three share the same applicationId and signing key, so they replace each other in place:
+books, progress and saved translations survive the swap. `assembleDebug` is for debugging only.

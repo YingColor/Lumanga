@@ -24,8 +24,8 @@ android {
         // only this counter has to keep rising. The release notes must repeat the same number on
         // their first line, or the in-app update check either misses a build or offers one that
         // is already installed.
-        versionCode = 136
-        versionName = "1.1.2"
+        versionCode = 137
+        versionName = "1.1.3"
         vectorDrawables { useSupportLibrary = true }
         // Both OCR backends ship native libs for four ABIs. Only real phones matter here;
         // dropping the emulator-only x86 ones keeps the APK from growing by another ~40 MB.
@@ -51,23 +51,47 @@ android {
         }
     }
 
-    // Two builds of the same app. `full` bundles the on-device recognisers (160 MB of assets);
-    // `lite` ships none of them and recognises every page at the endpoint configured in OCR
-    // settings, which brings the download down to the size of a normal reader. Both keep the
-    // same applicationId and the same signing key, so they replace each other in place and the
-    // books, progress and saved translations survive the swap.
+    // Three builds of the same app, one per way of using it. All three keep the same
+    // applicationId and the same signing key, so they replace each other in place and the books,
+    // progress and saved translations survive the swap.
+    //
+    //   full   - bundles the on-device recognisers (160 MB of assets), works offline
+    //   lite   - no recognisers, recognises every page at the endpoint from OCR settings
+    //   reader - no translation at all: no recognisers and no balloon segmenter (21 MB), the
+    //            cheapest package for someone who only wants to read
+    //
+    // HAS_TRANSLATION is the switch the code reads: false removes every translate entry point
+    // (book menu, drawer, reader toolbar, config dialog) and forces the stored toggle off, so
+    // installing reader over full cannot leave it translating in the background.
     flavorDimensions += "ocr"
     productFlavors {
         create("full") {
             dimension = "ocr"
             buildConfigField("boolean", "HAS_LOCAL_OCR", "true")
+            buildConfigField("boolean", "HAS_TRANSLATION", "true")
             resValue("string", "app_name", "光漫堂")
         }
         create("lite") {
             dimension = "ocr"
             buildConfigField("boolean", "HAS_LOCAL_OCR", "false")
+            buildConfigField("boolean", "HAS_TRANSLATION", "true")
             resValue("string", "app_name", "光漫堂 精简版")
         }
+        create("reader") {
+            dimension = "ocr"
+            buildConfigField("boolean", "HAS_LOCAL_OCR", "false")
+            buildConfigField("boolean", "HAS_TRANSLATION", "false")
+            resValue("string", "app_name", "光漫堂 阅读版")
+        }
+    }
+
+    sourceSets {
+        // assets/detect is the balloon segmenter. It exists only to give translated text the
+        // shape of the bubble behind it, so it is dead weight in a build with no translation.
+        // It lives outside every flavour directory and is added to the two translating ones
+        // explicitly, which keeps a single 21 MB copy in git instead of one per flavour.
+        getByName("full").assets.srcDir("src/shared-assets")
+        getByName("lite").assets.srcDir("src/shared-assets")
     }
 
     compileOptions {
@@ -99,6 +123,24 @@ android {
                 "META-INF/NOTICE*"
             )
         }
+    }
+}
+
+// The reader build carries no recognisers, so the two inference runtimes and their JNI shims are
+// dead weight there: 38 MB across the two ABIs, most of the package. Nothing in that build loads
+// them — the OCR engine, the segmenter and the recogniser init are all behind HAS_TRANSLATION —
+// so dropping the shared libraries only removes bytes. The classes stay in the dex (they cost a
+// couple of hundred KB) because their keep rules are shared with the other flavours.
+androidComponents {
+    onVariants(selector().withFlavor("ocr" to "reader")) { variant ->
+        variant.packaging.jniLibs.excludes.addAll(
+            listOf(
+                "**/libonnxruntime.so",
+                "**/libonnxruntime4j_jni.so",
+                "**/libtensorflowlite_jni.so",
+                "**/libtensorflowlite_gpu_jni.so"
+            )
+        )
     }
 }
 

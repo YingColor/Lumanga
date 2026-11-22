@@ -97,10 +97,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        TranslationEngine.ocr = RoutingOcrEngine(this)
-        MangaOcr.init(this)
-        BubbleSegmenter.attach(this)
-        BatchPreTranslate.attach(this)
+        // The reader build never translates, so none of the recognition machinery is wired up:
+        // no OCR engine, no recogniser init, no segmenter, no pre-translate receiver. Keeping
+        // these out also lets the shrinker drop the whole pipeline from that APK.
+        if (BuildConfig.HAS_TRANSLATION) {
+            TranslationEngine.ocr = RoutingOcrEngine(this)
+            MangaOcr.init(this)
+            BubbleSegmenter.attach(this)
+            BatchPreTranslate.attach(this)
+        }
         enableEdgeToEdge()
         setContent { ComicApp() }
     }
@@ -383,7 +388,7 @@ private fun ComicApp() {
                 }
             )
 
-            if (translateConfigOpen) {
+            if (BuildConfig.HAS_TRANSLATION && translateConfigOpen) {
                 TranslateConfigDialog(
                     settings = settings,
                     onDismiss = { translateConfigOpen = false },
@@ -398,7 +403,7 @@ private fun ComicApp() {
                 )
             }
 
-            preTranslateBook?.let { volume ->
+            if (BuildConfig.HAS_TRANSLATION) preTranslateBook?.let { volume ->
                 PreTranslateDialog(
                     book = volume,
                     settings = settings,

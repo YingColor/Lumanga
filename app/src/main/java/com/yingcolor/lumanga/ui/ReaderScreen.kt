@@ -103,6 +103,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.yingcolor.lumanga.BuildConfig
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.ArchiveException
 import com.yingcolor.lumanga.data.ApiClient
@@ -217,8 +218,9 @@ private const val YIELD_BUDGET_MS = 3_000L
 
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = Prefs(app)
-    /** Bundled comic face for the translation; null falls back to the system one. */
-    private val lettering = LetteringFont.of(app)
+    /** Bundled comic face for the translation; null falls back to the system one. The reader
+     *  build ships no font, so it stays null instead of logging a missing asset. */
+    private val lettering = if (BuildConfig.HAS_TRANSLATION) LetteringFont.of(app) else null
     private val mediumOcr: Boolean get() = prefs.ocrModel == OcrModel.MEDIUM.id
     private val onlineOcr: Boolean get() = prefs.ocrOnline
 
@@ -2030,95 +2032,98 @@ private fun ReaderContent(
                         Spacer(Modifier.weight(1f))
                         val iconBox = if (compactBar) Modifier.size(30.dp) else Modifier
                         val iconSize = if (compactBar) 18.dp else 24.dp
-                        // Translation on/off without leaving the page: filled when on, hollow when
-                        // off, so the current state reads at a glance. Sits just left of the gear.
-                        val translateOn = settings.translateEnabled
-                        // Throw away the page being read and start it over, so a page that came
-                        // out wrong can be redone without leaving the book. Dimmed while
-                        // translation is off: there is nothing to redo then.
-                        IconButton(
-                            onClick = {
-                                vm.restartTranslation()
-                                // The page stays as it was until OCR and the request finish, so
-                                // without this the tap looks like it did nothing.
-                                Toast.makeText(
-                                    context, S.retranslateStarted, Toast.LENGTH_SHORT
-                                ).show()
-                            },
-                            enabled = translateOn,
-                            modifier = iconBox
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Refresh,
-                                contentDescription = S.retranslate,
-                                tint = if (translateOn) {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                        // Reader build: no translation, so the retranslate icon and the 译 toggle
+                        // are both inside this gate.
+                        if (BuildConfig.HAS_TRANSLATION) {
+                            // Filled when on, hollow when off, so the state reads at a glance.
+                            val translateOn = settings.translateEnabled
+                            // Throw away the page being read and start it over, so a page that came
+                            // out wrong can be redone without leaving the book. Dimmed while
+                            // translation is off: there is nothing to redo then.
+                            IconButton(
+                                onClick = {
+                                    vm.restartTranslation()
+                                    // The page stays as it was until OCR and the request finish, so
+                                    // without this the tap looks like it did nothing.
+                                    Toast.makeText(
+                                        context, S.retranslateStarted, Toast.LENGTH_SHORT
+                                    ).show()
                                 },
-                                modifier = Modifier.size(iconSize)
-                            )
-                        }
-                        // Short tap toggles translation; holding for half a second opens the
-                        // translate config. The system long-press is also 500 ms, so this stays a
-                        // custom timer: a cancelled press can never be mistaken for a long one.
-                        // UpdatedState keeps the callbacks fresh without restarting pointerInput
-                        // (which would reset the timer).
-                        val tapToggle = rememberUpdatedState<() -> Unit> {
-                            if (!translateOn && settings.translateApi.isBlank()) onTranslateConfig()
-                            else settings.setTranslateEnabled(!translateOn)
-                        }
-                        val openConfig = rememberUpdatedState(onTranslateConfig)
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = (if (compactBar) Modifier.size(30.dp) else Modifier.size(48.dp))
-                                .clip(CircleShape)
-                                .pointerInput(Unit) {
-                                    coroutineScope {
-                                        awaitEachGesture {
-                                            val down = awaitFirstDown(requireUnconsumed = false)
-                                            down.consume()
-                                            var longFired = false
-                                            // A separate timer means "finger left the button"
-                                            // (a cancelled press) can never be mistaken for a
-                                            // long press, and the release is still consumed.
-                                            val timer = launch {
-                                                delay(500L)
-                                                longFired = true
-                                                openConfig.value()
-                                            }
-                                            try {
-                                                val up = waitForUpOrCancellation()
-                                                if (up != null) {
-                                                    up.consume()
-                                                    if (!longFired) tapToggle.value()
+                                enabled = translateOn,
+                                modifier = iconBox
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Refresh,
+                                    contentDescription = S.retranslate,
+                                    tint = if (translateOn) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                    },
+                                    modifier = Modifier.size(iconSize)
+                                )
+                            }
+                            // Short tap toggles translation; holding for half a second opens the
+                            // translate config. The system long-press is also 500 ms, so this stays a
+                            // custom timer: a cancelled press can never be mistaken for a long one.
+                            // UpdatedState keeps the callbacks fresh without restarting pointerInput
+                            // (which would reset the timer).
+                            val tapToggle = rememberUpdatedState<() -> Unit> {
+                                if (!translateOn && settings.translateApi.isBlank()) onTranslateConfig()
+                                else settings.setTranslateEnabled(!translateOn)
+                            }
+                            val openConfig = rememberUpdatedState(onTranslateConfig)
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = (if (compactBar) Modifier.size(30.dp) else Modifier.size(48.dp))
+                                    .clip(CircleShape)
+                                    .pointerInput(Unit) {
+                                        coroutineScope {
+                                            awaitEachGesture {
+                                                val down = awaitFirstDown(requireUnconsumed = false)
+                                                down.consume()
+                                                var longFired = false
+                                                // A separate timer means "finger left the button"
+                                                // (a cancelled press) can never be mistaken for a
+                                                // long press, and the release is still consumed.
+                                                val timer = launch {
+                                                    delay(500L)
+                                                    longFired = true
+                                                    openConfig.value()
                                                 }
-                                            } finally {
-                                                timer.cancel()
+                                                try {
+                                                    val up = waitForUpOrCancellation()
+                                                    if (up != null) {
+                                                        up.consume()
+                                                        if (!longFired) tapToggle.value()
+                                                    }
+                                                } finally {
+                                                    timer.cancel()
+                                                }
                                             }
                                         }
                                     }
-                                }
-                        ) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .size(iconSize)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (translateOn) MaterialTheme.colorScheme.primary
-                                        else Color.Transparent
-                                    )
                             ) {
-                                Text(
-                                    text = S.translateToggleMark,
-                                    style = if (compactBar) {
-                                        MaterialTheme.typography.labelMedium
-                                    } else MaterialTheme.typography.labelLarge,
-                                    color = if (translateOn) {
-                                        MaterialTheme.colorScheme.onPrimary
-                                    } else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(iconSize)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (translateOn) MaterialTheme.colorScheme.primary
+                                            else Color.Transparent
+                                        )
+                                ) {
+                                    Text(
+                                        text = S.translateToggleMark,
+                                        style = if (compactBar) {
+                                            MaterialTheme.typography.labelMedium
+                                        } else MaterialTheme.typography.labelLarge,
+                                        color = if (translateOn) {
+                                            MaterialTheme.colorScheme.onPrimary
+                                        } else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                         IconButton(onClick = onSettings, modifier = iconBox) {

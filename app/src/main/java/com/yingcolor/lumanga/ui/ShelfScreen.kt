@@ -102,11 +102,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yingcolor.lumanga.BuildConfig
+import com.yingcolor.lumanga.R
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.BatchPreTranslate
 import com.yingcolor.lumanga.data.BatchState
@@ -750,7 +752,8 @@ fun ShelfScreen(
                     .padding(horizontal = 20.dp, vertical = 20.dp)
             ) {
                 Text(
-                    text = S.appName,
+                    // Per-flavour name so the drawer says which build is installed.
+                    text = stringResource(R.string.app_name),
                     style = MaterialTheme.typography.headlineSmall
                 )
                 Spacer(Modifier.height(4.dp))
@@ -771,22 +774,25 @@ fun ShelfScreen(
                         onSettings()
                     }
                 )
-                DrawerRow(
-                    icon = Icons.Filled.Edit,
-                    label = S.translateConfig,
-                    onClick = {
-                        drawerOpen = false
-                        onTranslateConfig()
-                    }
-                )
-                DrawerRow(
-                    icon = Icons.Filled.PlayArrow,
-                    label = S.batchPreTranslate,
-                    onClick = {
-                        drawerOpen = false
-                        batchOpen = true
-                    }
-                )
+                // No translation in the reader build, so these two rows are not there at all.
+                if (BuildConfig.HAS_TRANSLATION) {
+                    DrawerRow(
+                        icon = Icons.Filled.Edit,
+                        label = S.translateConfig,
+                        onClick = {
+                            drawerOpen = false
+                            onTranslateConfig()
+                        }
+                    )
+                    DrawerRow(
+                        icon = Icons.Filled.PlayArrow,
+                        label = S.batchPreTranslate,
+                        onClick = {
+                            drawerOpen = false
+                            batchOpen = true
+                        }
+                    )
+                }
                 DrawerRow(
                     icon = Icons.Filled.Info,
                     label = S.about,
@@ -807,7 +813,7 @@ fun ShelfScreen(
         )
     }
 
-    preTarget?.let { target ->
+    if (BuildConfig.HAS_TRANSLATION) preTarget?.let { target ->
         PreTranslateDialog(
             book = target,
             settings = settings,
@@ -815,7 +821,7 @@ fun ShelfScreen(
         )
     }
 
-    if (batchOpen) {
+    if (BuildConfig.HAS_TRANSLATION && batchOpen) {
         BatchPreTranslateDialog(
             books = sorted,
             settings = settings,
@@ -1128,7 +1134,7 @@ private fun BookCard(
     val appContext = LocalContext.current.applicationContext
     val completedRev by TranslationStore.completedRev.collectAsState()
     val translated = remember(book.id, completedRev) {
-        TranslationStore.isComplete(appContext, book.id)
+        BuildConfig.HAS_TRANSLATION && TranslationStore.isComplete(appContext, book.id)
     }
     val compact = columns >= 4
     val pad = when {
@@ -1275,36 +1281,38 @@ private fun BookCard(
                             onToggleFavorite()
                         }
                     )
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Text(
-                                text = S.translateToggleMark,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.width(20.dp)
-                            )
-                        },
-                        text = { Text(S.preTranslate) },
-                        onClick = {
-                            coverMenu = false
-                            onPreTranslate()
-                        }
-                    )
-                    DropdownMenuItem(
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Filled.Delete,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        text = { Text(S.preTranslateDelete) },
-                        onClick = {
-                            coverMenu = false
-                            onDeletePreTranslate()
-                        }
-                    )
+                    if (BuildConfig.HAS_TRANSLATION) {
+                        DropdownMenuItem(
+                            leadingIcon = {
+                                Text(
+                                    text = S.translateToggleMark,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.width(20.dp)
+                                )
+                            },
+                            text = { Text(S.preTranslate) },
+                            onClick = {
+                                coverMenu = false
+                                onPreTranslate()
+                            }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            text = { Text(S.preTranslateDelete) },
+                            onClick = {
+                                coverMenu = false
+                                onDeletePreTranslate()
+                            }
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(if (compact) 6.dp else 10.dp))
