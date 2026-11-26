@@ -24,8 +24,8 @@ android {
         // only this counter has to keep rising. The release notes must repeat the same number on
         // their first line, or the in-app update check either misses a build or offers one that
         // is already installed.
-        versionCode = 137
-        versionName = "1.1.3"
+        versionCode = 138
+        versionName = "1.1.4"
         vectorDrawables { useSupportLibrary = true }
         // Both OCR backends ship native libs for four ABIs. Only real phones matter here;
         // dropping the emulator-only x86 ones keeps the APK from growing by another ~40 MB.

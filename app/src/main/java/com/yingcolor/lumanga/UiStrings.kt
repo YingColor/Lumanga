@@ -1,372 +1,426 @@
 package com.yingcolor.lumanga
 
-
+/**
+ * All interface text, looked up in whichever language is active.
+ *
+ * Every entry is a property rather than a `const` because the language can change at runtime: the
+ * activity is recreated on a switch, so a plain lookup is enough and nothing here has to be
+ * observable. Names are unchanged from the single-language days, which is why call sites still
+ * read `S.shelf` and friends.
+ */
 object S {
-    const val modePage = "翻页"
-    const val modeScroll = "卷轴"
-    const val modeScrollH = "横向卷轴"
-    const val gb = "GB"
-    const val mb = "MB"
-    const val unknownSize = "未知大小"
-    const val shelf = "书架"
-    const val shelfSubtitle = "享受看漫画的时光吧~"
-    const val search = "搜索漫画"
-    const val searchClose = "收起搜索"
-    const val chooseFolder = "选择漫画文件夹"
-    const val manageFolders = "管理文件夹"
-    const val emptyTitle = "还没有漫画"
-    const val emptyBody = "选中存放漫画的文件夹，点一下就能看。压缩包（zip / cbz）和已经解压出来的图片文件夹都能读，混在一起也没关系。"
-    const val emptyTip = "支持手机内部存储和 SD 卡，几个 GB 的大包和图片文件夹都能直接读"
-    const val noResult = "没有找到匹配的漫画"
-    const val loading = "正在整理书架…"
-    const val refresh = "刷新"
-    const val backToTop = "回到顶部"
-    const val settings = "阅读设置"
-    const val settingsRoot = "设置"
-    const val translateToggleMark = "译"
-    const val retranslate = "重新翻译这一页"
-    const val retranslateStarted = "已重新开始翻译本页"
-    const val settingsReadingSummary = "阅读模式、缩放方式、翻页方向与动画、屏幕方向、亮度等"
-    const val back = "返回"
-    const val previous = "上一页"
-    const val next = "下一页"
-    const val firstPage = "首页"
-    const val lastPage = "末页"
-    const val closeBar = "收起工具条"
-    const val directionLtrShort = "左 → 右"
-    const val directionRtlShort = "右 → 左"
-    const val direction = "翻页方向"
-    const val ltr = "左 → 右"
-    const val rtl = "右 → 左（日漫）"
-    const val pageMode = "页面模式"
-    const val single = "单页"
-    const val double = "双页"
-    const val appearance = "明暗模式"
-    const val themeSystem = "跟随系统"
-    const val themeLight = "浅色"
-    const val themeDark = "深色"
-    const val keepAwake = "阅读时屏幕常亮"
-    const val tapToTurn = "点击屏幕两侧翻页"
-    const val tapToTurnTip = "关掉后只能靠滑动翻页，点两侧不再翻页"
-    const val gridColumns = "书架列数"
-    const val sort = "排序"
-    const val clearProgress = "清除所有阅读进度"
-    const val cleared = "阅读进度已清除"
-    const val clearProgressHint = "防误触：需连续点 3 次，弹出警告后再看完 3 秒才能确认"
-    fun clearProgressTapHint(remaining: Int) = "清除所有阅读进度（再点 $remaining 次）"
-    const val clearWarningTitle = "确定清除所有阅读进度？"
-    const val clearWarningBody = "这会清空全部漫画的阅读进度、在读记录和最近阅读时间，且无法撤销。收藏不会被清除。请确认后再继续。"
-    const val clearConfirm = "确认清除"
-    fun clearConfirmCount(seconds: Int) = "请看完警告（$seconds 秒）"
+    private var current: Lang = Lang.ZH
+    private var table: Texts = tableOf(Lang.ZH)
 
-    const val favorite = "收藏"
-    const val unfavorite = "取消收藏"
-    const val favoriteLabel = "已收藏"
-    val readFilterOptions = listOf("全部", "未读", "正在读", "已读完", "收藏")
-    const val errorTitle = "这一本打不开"
-    const val errorCorrupt = "这个文件可能损坏，或者使用了加密 / 不支持的压缩方式。"
-    const val errorUnsupported = "这个位置暂时不能直接跳着读取。把漫画移到手机内部存储的普通文件夹里再试。"
-    const val errorBig = "单张图片太大，手机内存不够。"
-    const val retry = "重试"
-    const val booksUnit = "本"
-    const val resume = "继续阅读"
-    const val aboutTitle = "关于这个应用"
-    const val aboutRepo = "GitHub 仓库 · github.com/YingColor/Lumanga"
-    const val about = "关于软件"
-    const val menu = "菜单"
-    const val aboutBody = "本地漫画阅读器 · 漫画只从你选的文件夹读取，不上传任何内容\n" +
-        "只有点「检测更新」和你自己开启翻译时才会联网\n" +
-        "支持 ZIP / CBZ / RAR / 7Z，单页 / 双页 / 卷轴"
-    fun versionLabel(name: String, code: Int) = "版本 $name（构建 $code）"
-    const val checkUpdate = "检测更新"
-    const val checkingUpdate = "检测中…"
-    const val upToDate = "已是最新版本"
-    const val updateFailed = "暂时连不上 GitHub"
-    const val openUpdatePage = "在浏览器中打开发布页"
-    const val updateFound = "检测到新版本"
-    fun updateFoundBody(name: String, code: Int) =
-        "最新版本 $name（构建 $code）\n是否现在更新？"
-    const val goUpdate = "去更新"
-    const val later = "稍后"
-    const val refreshDone = "刷新完成了 喵~"
-    const val close = "关闭"
-    const val zoomHint = "轻点左右边缘可连续翻页 · 画面超出屏幕时可拖动查看 · 点中间显示/收起工具条 · 双指放大 · 放大后双击复原"
-    const val scrollHint = "上下滑动连续阅读 · 点中间显示/收起工具条 · 点左右侧滚动一屏"
-    const val scrollHintH = "左右滑动连续阅读 · 点中间显示/收起工具条 · 点左右侧滚动一屏"
-    const val readMode = "阅读模式"
-    const val readModeTip = "卷轴：上下连续滚动，适合超长条漫。横向卷轴：所有页接成一条横向长卷，左右自由拖动、不按页吸附。翻页：一页一页翻，可双页摊开。"
-    const val fitMode = "缩放方式"
-    const val alignMode = "原点设置（卷轴模式）"
-    const val zoomPercent = "固定缩放比例"
-    const val zoomTip = "除「伸展」会把画面拉满变形外，其余六种都按原比例缩放，不会把画面拉长或压扁。超长条漫建议卷轴模式配符合宽度或固定缩放。"
-    const val screenOrientation = "屏幕方向"
-    const val orientationTip = "这里是全局默认方向。每部漫画可以在阅读器里用右上角「切横屏/切竖屏」单独记住自己的方向，没单独设过的书就跟随这里的设置；离开阅读器会自动回到全局方向（跟随系统就回跟随系统，平板不会被硬拧成竖屏）。"
-    const val rotateToLandscape = "切横屏"
-    const val rotateToPortrait = "切竖屏"
-    const val resetOrientationMemory = "让所有漫画恢复跟随全局方向"
-    const val smoothing = "图像平滑方式"
-    const val brightness = "背光控制"
-    const val brightnessSystem = "跟随系统亮度"
-    const val webtoonLoading = "正在准备长图…"
-    val fitOptions = listOf("原始尺寸", "符合屏幕", "符合宽度", "符合高度", "固定缩放", "伸展", "覆盖")
-    val alignOptions = listOf("水平置中", "靠左", "靠右")
-    
-    
-    val orientationOptions = listOf("直立", "横屏", "跟随系统")
-    val orientationValues = listOf(1, 2, 0)
-    val smoothOptions = listOf("平滑", "锐利")
-    val readModeOptions = listOf(modePage, modeScroll, modeScrollH)
-    const val folderError = "文件夹授权失效了，请重新选一次"
-    const val noImages = "这里没有找到图片"
-    const val done = "完成"
-    const val cancel = "取消"
-    const val folderType = "文件夹"
-    const val category = "分类"
-    const val categoryAll = "全部分类"
-    const val libraries = "漫画文件夹"
-    const val addFolder = "添加文件夹"
-    const val removeFolder = "移除"
-    const val lastFolderTip = "至少要保留一个文件夹"
-    const val librariesHint = "可以添加多个文件夹：不同作者、不同类型、机身存储和 SD 卡分开放的漫画都会出现在同一个书架上。分类自动取每个文件夹下的第一层目录名。"
+    /** The language in use, with "follow system" already resolved. */
+    val lang: Lang get() = current
 
-    const val personalize = "个性化"
-    const val personalizeSummary = "主题颜色、明暗模式、书架布局"
-    const val themeColor = "主题颜色"
-    const val themeColorTip = "清新低饱和的六套配色，按钮、进度条、选中态都跟着换色；明暗模式各有一套对应配色"
-    const val shelfStatus = "阅读状态怎么显示"
-    const val shelfStatusMenu = "工具栏下拉"
-    const val shelfStatusTabs = "书架顶部"
-    const val shelfStatusTip = "工具栏下拉：占一行工具栏，点开在菜单里选。书架顶部：书架上排一行「全部 / 未读 / 正在读 / 已读完 / 收藏」，一眼看到全部，点一下就切换。"
-    const val pageAnim = "翻页动画"
-    const val pageAnimTip = "只影响单页翻页；卷轴模式是连续滚动，没有翻页动画"
-    const val pageAnimPreview = "点两侧翻页试试效果"
-
-    val themeColors = listOf("抹茶绿", "湖水青", "晴空蓝", "薰衣草", "樱花粉", "蜜桔橙")
-
-    val pageAnimOptions = listOf("滑动", "淡入淡出", "翻书", "缩放")
-
-    val sortOptions = listOf(
-        "名称 A → Z",
-        "名称 Z → A",
-        "最近修改",
-        "最早修改",
-        "体积最大",
-        "体积最小",
-        "最近阅读"
-    )
-    val columnOptions = listOf("2 列", "3 列", "4 列", "5 列")
-
-    fun foldersCount(count: Int) = "$count 个文件夹"
-
-    fun pageProgress(page: Int, total: Int): String {
-        if (total <= 0) return "已读过"
-        return "第 ${(page + 1).coerceIn(1, total)} / $total 页"
+    /**
+     * Switch language. The caller recreates the activity afterwards; text already on screen keeps
+     * the old language until then, which is why switching goes through a recreate instead of a
+     * state flag.
+     */
+    fun setLang(lang: Lang) {
+        current = lang
+        table = tableOf(lang)
     }
 
-    
-    const val translateConfig = "翻译配置"
-    const val translateConfigTip = "预翻译整本默认也用这套配置，但预翻译面板里可以单独改。阅读时点「译」开启实时翻译。"
-    const val translateConfigOcr = "OCR 配置"
-    const val translateConfigModel = "翻译大模型配置"
-    const val translateModelEmpty = "还没填模型"
-    const val translate = "漫画实时翻译"
-    const val translateSummary = "把画面里的外文认出来，译好再贴回页面。开关在阅读页的「译」按钮上，这里只放识别和翻译服务的设置。"
-    const val translateApi = "翻译服务地址"
-    const val translateModel = "模型名称"
-    const val translateProtocol = "接口类型"
-    const val translateProtocolTip = "不同服务商的接口格式不一样，选错了会一直失败。自建的 llama.cpp / LM Studio / vLLM 选「OpenAI 兼容」。"
-    const val translateProtocolOpenAi = "官方接口、中转站、本地 llama.cpp / LM Studio / vLLM"
-    const val translateProtocolAnthropic = "Claude 官方接口（api.anthropic.com）"
-    const val translateProtocolGemini = "Gemini 官方接口（generativelanguage.googleapis.com）"
-    const val translateProtocolOllama = "Ollama 自带的 /api/chat 接口（不是 /v1 那个）"
-    const val translateModeGroup = "逐组翻译（每个气泡单独发）"
-    const val translateModeGroupTip = "每个气泡单独发一次请求：阅读时译好一组就先贴一组，页面一组一组变成译文，某一组失败也只留那一组原文。关掉是整页一次发送，整体更快，但要等整页译完才显示。"
-    const val preTranslateMode = "翻译方式"
-    const val translateModePageShort = "整页一次"
-    const val translateModeGroupShort = "逐组（每个气泡单独发）"
-    const val concurrencyOcr = "OCR 并发数"
-    const val concurrencyTranslate = "翻译并发数"
-    const val concurrencyOcrUnavailable = "当前 OCR 模型不支持多页并行，此项固定为 1。"
-    const val translateSourceLanguage = "漫画原文语言"
-    const val translateSourceLanguageTip = "默认用「自动识别」：按每页认出的字判断是日文、中文还是英文，一本里混着不同语言的页也能各按各的规则处理。内置的 PP-OCRv6 本来就能认中文、英文等文字，不用换模型；韩文还认不出来。选非日文时请用 PP-OCRv6_small / medium，MangaOCR_mobile 只学过日文。"
-    const val translateSourceLanguageAutoShort = "自动（按页识别）"
-    const val translateTargetLanguage = "译文语言"
-    const val translateTargetLanguageTip = "译成哪种语言取决于你填的翻译模型：日译中专用的小模型只会输出中文，要译成英/日/韩请换通用翻译模型。已译好的页按语言分开保存，切换不会删掉原来的中文译文。"
-    const val preTranslateLanguage = "翻译语言"
+    /** Apply the stored preference ("" / "en" / "zh-TW" …), resolving "follow system" first. */
+    fun applyStoredLanguage(stored: String) {
+        val chosen = Lang.fromTag(stored)
+        setLang(if (chosen == Lang.SYSTEM) systemLang() else chosen)
+    }
+    val modePage: String get() = table.modePage
+    val modeScroll: String get() = table.modeScroll
+    val modeScrollH: String get() = table.modeScrollH
+    val gb: String get() = table.gb
+    val mb: String get() = table.mb
+    val unknownSize: String get() = table.unknownSize
+    val shelf: String get() = table.shelf
+    val shelfSubtitle: String get() = table.shelfSubtitle
+    val search: String get() = table.search
+    val searchClose: String get() = table.searchClose
+    val chooseFolder: String get() = table.chooseFolder
+    val manageFolders: String get() = table.manageFolders
+    val emptyTitle: String get() = table.emptyTitle
+    val emptyBody: String get() = table.emptyBody
+    val emptyTip: String get() = table.emptyTip
+    val noResult: String get() = table.noResult
+    val loading: String get() = table.loading
+    val refresh: String get() = table.refresh
+    val backToTop: String get() = table.backToTop
+    val settings: String get() = table.settings
+    val settingsRoot: String get() = table.settingsRoot
+    val translateToggleMark: String get() = table.translateToggleMark
+    val retranslate: String get() = table.retranslate
+    val retranslateStarted: String get() = table.retranslateStarted
+    val settingsReadingSummary: String get() = table.settingsReadingSummary
+    val back: String get() = table.back
+    val previous: String get() = table.previous
+    val next: String get() = table.next
+    val firstPage: String get() = table.firstPage
+    val lastPage: String get() = table.lastPage
+    val closeBar: String get() = table.closeBar
+    val directionLtrShort: String get() = table.directionLtrShort
+    val directionRtlShort: String get() = table.directionRtlShort
+    val direction: String get() = table.direction
+    val ltr: String get() = table.ltr
+    val rtl: String get() = table.rtl
+    val pageMode: String get() = table.pageMode
+    val single: String get() = table.single
+    val double: String get() = table.double
+    val appearance: String get() = table.appearance
+    val themeSystem: String get() = table.themeSystem
+    val themeLight: String get() = table.themeLight
+    val themeDark: String get() = table.themeDark
+    val keepAwake: String get() = table.keepAwake
+    val tapToTurn: String get() = table.tapToTurn
+    val tapToTurnTip: String get() = table.tapToTurnTip
+    val gridColumns: String get() = table.gridColumns
+    val sort: String get() = table.sort
+    val clearProgress: String get() = table.clearProgress
+    val cleared: String get() = table.cleared
+    val clearProgressHint: String get() = table.clearProgressHint
+    val clearWarningTitle: String get() = table.clearWarningTitle
+    val clearWarningBody: String get() = table.clearWarningBody
+    val clearConfirm: String get() = table.clearConfirm
+    val favorite: String get() = table.favorite
+    val unfavorite: String get() = table.unfavorite
+    val favoriteLabel: String get() = table.favoriteLabel
+    val readFilterOptions: List<String> get() = table.readFilterOptions
+    val errorTitle: String get() = table.errorTitle
+    val errorCorrupt: String get() = table.errorCorrupt
+    val errorUnsupported: String get() = table.errorUnsupported
+    val errorBig: String get() = table.errorBig
+    val retry: String get() = table.retry
+    val booksUnit: String get() = table.booksUnit
+    val resume: String get() = table.resume
+    val aboutTitle: String get() = table.aboutTitle
+    val aboutRepo: String get() = table.aboutRepo
+    val about: String get() = table.about
+    val menu: String get() = table.menu
+    val aboutBody: String get() = table.aboutBody
+    val checkUpdate: String get() = table.checkUpdate
+    val checkingUpdate: String get() = table.checkingUpdate
+    val upToDate: String get() = table.upToDate
+    val updateFailed: String get() = table.updateFailed
+    val openUpdatePage: String get() = table.openUpdatePage
+    val updateFound: String get() = table.updateFound
+    val goUpdate: String get() = table.goUpdate
+    val later: String get() = table.later
+    val refreshDone: String get() = table.refreshDone
+    val close: String get() = table.close
+    val zoomHint: String get() = table.zoomHint
+    val scrollHint: String get() = table.scrollHint
+    val scrollHintH: String get() = table.scrollHintH
+    val readMode: String get() = table.readMode
+    val readModeTip: String get() = table.readModeTip
+    val fitMode: String get() = table.fitMode
+    val alignMode: String get() = table.alignMode
+    val zoomPercent: String get() = table.zoomPercent
+    val zoomTip: String get() = table.zoomTip
+    val screenOrientation: String get() = table.screenOrientation
+    val orientationTip: String get() = table.orientationTip
+    val rotateToLandscape: String get() = table.rotateToLandscape
+    val rotateToPortrait: String get() = table.rotateToPortrait
+    val resetOrientationMemory: String get() = table.resetOrientationMemory
+    val smoothing: String get() = table.smoothing
+    val brightness: String get() = table.brightness
+    val brightnessSystem: String get() = table.brightnessSystem
+    val webtoonLoading: String get() = table.webtoonLoading
+    val fitOptions: List<String> get() = table.fitOptions
+    val alignOptions: List<String> get() = table.alignOptions
+    val orientationOptions: List<String> get() = table.orientationOptions
+    val smoothOptions: List<String> get() = table.smoothOptions
+    val readModeOptions: List<String> get() = table.readModeOptions
+    val folderError: String get() = table.folderError
+    val noImages: String get() = table.noImages
+    val done: String get() = table.done
+    val cancel: String get() = table.cancel
+    val folderType: String get() = table.folderType
+    val libraries: String get() = table.libraries
+    val addFolder: String get() = table.addFolder
+    val removeFolder: String get() = table.removeFolder
+    val lastFolderTip: String get() = table.lastFolderTip
+    val librariesHint: String get() = table.librariesHint
+    val personalize: String get() = table.personalize
+    val personalizeSummary: String get() = table.personalizeSummary
+    val themeColor: String get() = table.themeColor
+    val themeColorTip: String get() = table.themeColorTip
+    val shelfStatus: String get() = table.shelfStatus
+    val shelfStatusMenu: String get() = table.shelfStatusMenu
+    val shelfStatusTabs: String get() = table.shelfStatusTabs
+    val shelfStatusTip: String get() = table.shelfStatusTip
+    val pageAnim: String get() = table.pageAnim
+    val pageAnimTip: String get() = table.pageAnimTip
+    val pageAnimPreview: String get() = table.pageAnimPreview
+    val themeColors: List<String> get() = table.themeColors
+    val pageAnimOptions: List<String> get() = table.pageAnimOptions
+    val sortOptions: List<String> get() = table.sortOptions
+    val columnOptions: List<String> get() = table.columnOptions
+    val language: String get() = table.language
+    val languageSystem: String get() = table.languageSystem
+    val languageTip: String get() = table.languageTip
+
+    // ---- Endpoint names and failure reasons ----
+    val protocolOpenAi: String get() = table.protocolOpenAi
+    val langAuto: String get() = table.langAuto
+    val langJapanese: String get() = table.langJapanese
+    val langChinese: String get() = table.langChinese
+    val langEnglish: String get() = table.langEnglish
+    val errNoEndpoint: String get() = table.errNoEndpoint
+    val errNoModel: String get() = table.errNoModel
+    val errRequestFailed: String get() = table.errRequestFailed
+    val errStopped: String get() = table.errStopped
+    val errNoTranslation: String get() = table.errNoTranslation
+    val errHttpRejected: String get() = table.errHttpRejected
+    val errHttpPath: String get() = table.errHttpPath
+    val errHttpTooLarge: String get() = table.errHttpTooLarge
+    val errHttpRate: String get() = table.errHttpRate
+    val errBadUrl: String get() = table.errBadUrl
+    val errCleartext: String get() = table.errCleartext
+    val errHostNotFound: String get() = table.errHostNotFound
+    val errConnect: String get() = table.errConnect
+    val errTimeout: String get() = table.errTimeout
+    val errSocket: String get() = table.errSocket
+    val errSsl: String get() = table.errSsl
+    val errNoRelease: String get() = table.errNoRelease
+
+    fun errHttpAuth(code: Int) = table.errHttpAuthFormat.format(code)
+    fun errHttpServer(code: Int) = table.errHttpServerFormat.format(code)
+    fun errIo(name: String) = table.errIoFormat.format(name)
+    fun errUnknown(name: String) = table.errUnknownFormat.format(name)
+    val translateConfig: String get() = table.translateConfig
+    val translateConfigTip: String get() = table.translateConfigTip
+    val translateConfigOcr: String get() = table.translateConfigOcr
+    val translateConfigModel: String get() = table.translateConfigModel
+    val translateModelEmpty: String get() = table.translateModelEmpty
+    val translate: String get() = table.translate
+    val translateSummary: String get() = table.translateSummary
+    val translateApi: String get() = table.translateApi
+    val translateModel: String get() = table.translateModel
+    val translateProtocol: String get() = table.translateProtocol
+    val translateProtocolTip: String get() = table.translateProtocolTip
+    val translateProtocolOpenAi: String get() = table.translateProtocolOpenAi
+    val translateProtocolAnthropic: String get() = table.translateProtocolAnthropic
+    val translateProtocolGemini: String get() = table.translateProtocolGemini
+    val translateProtocolOllama: String get() = table.translateProtocolOllama
+    val translateModeGroup: String get() = table.translateModeGroup
+    val translateModeGroupTip: String get() = table.translateModeGroupTip
+    val preTranslateMode: String get() = table.preTranslateMode
+    val translateModePageShort: String get() = table.translateModePageShort
+    val translateModeGroupShort: String get() = table.translateModeGroupShort
+    val concurrencyOcr: String get() = table.concurrencyOcr
+    val concurrencyTranslate: String get() = table.concurrencyTranslate
+    val concurrencyOcrUnavailable: String get() = table.concurrencyOcrUnavailable
+    val translateSourceLanguage: String get() = table.translateSourceLanguage
+    val translateSourceLanguageTip: String get() = table.translateSourceLanguageTip
+    val translateSourceLanguageAutoShort: String get() = table.translateSourceLanguageAutoShort
+    val translateTargetLanguage: String get() = table.translateTargetLanguage
+    val translateTargetLanguageTip: String get() = table.translateTargetLanguageTip
+    val preTranslateLanguage: String get() = table.preTranslateLanguage
+    val fetchModels: String get() = table.fetchModels
+    val fetchingModels: String get() = table.fetchingModels
+    val fetchModelsReason: String get() = table.fetchModelsReason
+    val fetchModelsEmpty: String get() = table.fetchModelsEmpty
+    val modelPickerTitle: String get() = table.modelPickerTitle
+    val translateApiTip: String get() = table.translateApiTip
+    val translateOnlyText: String get() = table.translateOnlyText
+    val translateLayoutHorizontal: String get() = table.translateLayoutHorizontal
+    val translateLayoutVerticalShort: String get() = table.translateLayoutVerticalShort
+    val translateLayoutHorizontalShort: String get() = table.translateLayoutHorizontalShort
+    val preTranslateLayout: String get() = table.preTranslateLayout
+    val translateLayoutHorizontalTip: String get() = table.translateLayoutHorizontalTip
+    val coverWholeBalloon: String get() = table.coverWholeBalloon
+    val coverWholeBalloonTip: String get() = table.coverWholeBalloonTip
+    val translateWorking: String get() = table.translateWorking
+    val translateReading: String get() = table.translateReading
+    val translateNoText: String get() = table.translateNoText
+    val translateNotJapanese: String get() = table.translateNotJapanese
+    val translateFailed: String get() = table.translateFailed
+    val preTranslate: String get() = table.preTranslate
+    val preTranslateDelete: String get() = table.preTranslateDelete
+    val preTranslateDeleteConfirm: String get() = table.preTranslateDeleteConfirm
+    val preTranslateDeleted: String get() = table.preTranslateDeleted
+    val preTranslateDeleteHint: String get() = table.preTranslateDeleteHint
+    val preTranslateDeleteEmpty: String get() = table.preTranslateDeleteEmpty
+    val preTranslateTitle: String get() = table.preTranslateTitle
+    val preTranslateIntro: String get() = table.preTranslateIntro
+    val preTranslateApiKey: String get() = table.preTranslateApiKey
+    val preTranslateApiKeyTip: String get() = table.preTranslateApiKeyTip
+    val preTranslateOcr: String get() = table.preTranslateOcr
+    val ocrModelSharedHint: String get() = table.ocrModelSharedHint
+    val translatedMark: String get() = table.translatedMark
+    val ocrLiteNotice: String get() = table.ocrLiteNotice
+    val ocrEngineTitle: String get() = table.ocrEngineTitle
+    val ocrLocalModel: String get() = table.ocrLocalModel
+    val ocrOnlineModel: String get() = table.ocrOnlineModel
+    val ocrLocalModelDesc: String get() = table.ocrLocalModelDesc
+    val ocrOnlineModelDesc: String get() = table.ocrOnlineModelDesc
+    val ocrInUseTitle: String get() = table.ocrInUseTitle
+    val ocrCurrentTag: String get() = table.ocrCurrentTag
+    val ocrOnlineTag: String get() = table.ocrOnlineTag
+    val ocrInUseLocalNote: String get() = table.ocrInUseLocalNote
+    val ocrInUseOnlineHostOff: String get() = table.ocrInUseOnlineHostOff
+    val ocrNoEndpoint: String get() = table.ocrNoEndpoint
+    val ocrFillEndpoint: String get() = table.ocrFillEndpoint
+    val onlineOcrTip: String get() = table.onlineOcrTip
+    val ocrModelTitle: String get() = table.ocrModelTitle
+    val ocrModelTip: String get() = table.ocrModelTip
+    val ocrModelDefault: String get() = table.ocrModelDefault
+    val ocrModelSmallTip: String get() = table.ocrModelSmallTip
+    val ocrModelMediumTip: String get() = table.ocrModelMediumTip
+    val ocrModelHybridTip: String get() = table.ocrModelHybridTip
+    val ocrModelMangaTip: String get() = table.ocrModelMangaTip
+    val ocrBlankRefill: String get() = table.ocrBlankRefill
+    val ocrBlankRefillTip: String get() = table.ocrBlankRefillTip
+    val preTranslatePages: String get() = table.preTranslatePages
+    val preTranslateSelectAll: String get() = table.preTranslateSelectAll
+    val preTranslateSelectNone: String get() = table.preTranslateSelectNone
+    val preTranslateStart: String get() = table.preTranslateStart
+    val preTranslateStop: String get() = table.preTranslateStop
+    val preTranslateKeepOpen: String get() = table.preTranslateKeepOpen
+    val preTranslateNeedEndpoint: String get() = table.preTranslateNeedEndpoint
+    val preTranslateNeedPages: String get() = table.preTranslateNeedPages
+    val preTranslateCancelled: String get() = table.preTranslateCancelled
+    val preTranslateResumeToggle: String get() = table.preTranslateResumeToggle
+    val preTranslateResumeHint: String get() = table.preTranslateResumeHint
+    val preTranslateBusy: String get() = table.preTranslateBusy
+    val preTranslateConfigTip: String get() = table.preTranslateConfigTip
+    val preTranslateFollowGlobal: String get() = table.preTranslateFollowGlobal
+    val preTranslateFollowing: String get() = table.preTranslateFollowing
+    val translatedBadge: String get() = table.translatedBadge
+    val translateTest: String get() = table.translateTest
+    val translateTesting: String get() = table.translateTesting
+    val translateTestOk: String get() = table.translateTestOk
+    val translateTestFail: String get() = table.translateTestFail
+    val batchPreTranslate: String get() = table.batchPreTranslate
+    val batchTitle: String get() = table.batchTitle
+    val batchIntro: String get() = table.batchIntro
+    val batchScope: String get() = table.batchScope
+    val batchScopeAll: String get() = table.batchScopeAll
+    val batchSkipDone: String get() = table.batchSkipDone
+    val batchResume: String get() = table.batchResume
+    val batchStart: String get() = table.batchStart
+    val batchStop: String get() = table.batchStop
+    val batchClose: String get() = table.batchClose
+    val batchKeepOpen: String get() = table.batchKeepOpen
+    val batchNeedEndpoint: String get() = table.batchNeedEndpoint
+    val batchNoBooks: String get() = table.batchNoBooks
+    val batchAllDone: String get() = table.batchAllDone
+    val batchStopped: String get() = table.batchStopped
+    val batchDiscard: String get() = table.batchDiscard
+    val batchDiscardTitle: String get() = table.batchDiscardTitle
+    val batchDiscardBody: String get() = table.batchDiscardBody
+    val batchDiscardConfirm: String get() = table.batchDiscardConfirm
+    val batchConfirmTitle: String get() = table.batchConfirmTitle
+    val batchConfirmStart: String get() = table.batchConfirmStart
+    val batchBannerRunning: String get() = table.batchBannerRunning
+    val batchBannerPending: String get() = table.batchBannerPending
+    val batchBannerOpen: String get() = table.batchBannerOpen
+
+    fun clearProgressTapHint(remaining: Int) = table.clearProgressTapHintFormat.format(remaining)
+
+    fun clearConfirmCount(seconds: Int) = table.clearConfirmCountFormat.format(seconds)
+
+    fun versionLabel(name: String, code: Int) = table.versionLabelFormat.format(name, code)
+
+    fun updateFoundBody(name: String, code: Int) = table.updateFoundBodyFormat.format(name, code)
+
+    fun foldersCount(count: Int) = table.foldersCountFormat.format(count)
+
+    fun pageProgress(page: Int, total: Int): String {
+        if (total <= 0) return table.readAlready
+        return table.pageProgressFormat.format((page + 1).coerceIn(1, total), total)
+    }
+
+    /** An arrow between two language names; the names themselves come from the language lists. */
     fun preTranslateLanguageValue(from: String, to: String) = "$from → $to"
-    const val fetchModels = "获取模型"
-    const val fetchingModels = "获取中…"
-    const val fetchModelsReason = "获取失败："
-    const val fetchModelsEmpty = "接口没有返回任何模型"
-    const val modelPickerTitle = "选择模型"
-    const val translateApiTip = "填你自建或购买的翻译服务地址。只填 IP 和端口也行（会自动当成 http:// 并补 /v1），例如 192.168.1.10:8080。应用不内置任何翻译服务，不填就无法翻译。"
-    const val translateOnlyText = "只发送识别出的文字，不上传图片"
-    const val translateLayoutHorizontal = "译文横排（从左到右）"
-    const val translateLayoutVerticalShort = "竖排"
-    const val translateLayoutHorizontalShort = "横排（从左到右）"
-    const val preTranslateLayout = "译文排版"
-    const val translateLayoutHorizontalTip = "打开后译文像普通中文书一样横着排、从左往右读；关掉是竖排（默认）。已译好的页和预翻译的页都按这个显示，改了立刻生效，不用重译。"
-    const val coverWholeBalloon = "气球内整圈涂白"
-    const val coverWholeBalloonTip = "打开（默认）：沿气球本身的轮廓涂白，形状跟气泡一致，不会像方块那样把圆角切进画面；描边会往内收一点保留下来。关掉：只在原文和译文附近盖一块圆角矩形（仍裁在气球内），气泡里的空白和网点会露出来。"
-    const val translateWorking = "正在翻译…"
-    const val translateReading = "正在识别文字…"
-    const val translateNoText = "这一页没认出文字"
-    const val translateNotJapanese = "这一页没找到可翻译的文字，已跳过"
-    const val translateFailed = "翻译失败 · 点这里重试"
-    const val preTranslate = "预翻译"
-    const val preTranslateDelete = "删除预翻译"
-    const val preTranslateDeleteConfirm = "删除"
-    const val preTranslateDeleted = "已删除这本的预翻译"
-    const val preTranslateDeleteHint = "防误触：下面的「删除」要连点 3 次才生效（中间停超过 2 秒就重新数）"
-    const val preTranslateDeleteEmpty = "这本还没存过译文，没有可删的。"
-    const val preTranslateTitle = "预翻译整本"
-    const val preTranslateIntro = "一次性把整本译好存到手机，之后翻页不用再等；没网也能看已经译好的页。"
-    const val preTranslateApiKey = "API Key"
-    const val preTranslateApiKeyTip = "接口需要鉴权时填，不需要就留空。只保存在本机。"
-    const val preTranslateOcr = "文字识别模型"
-    const val ocrModelSharedHint = "和阅读模式共用这一个模型"
-    const val translatedMark = "译"
-    const val ocrLiteNotice = "这个版本不含内置识别模型：每一页的图片都会发到下面填写的地址去识别。想在本机识别，请装完整版。"
-    const val ocrEngineTitle = "识别方式"
-    const val ocrLocalModel = "本机模型"
-    const val ocrOnlineModel = "在线 OCR"
-    const val ocrLocalModelDesc = "在手机里识别，不联网；四款模型随时换"
-    const val ocrOnlineModelDesc = "整页发给服务器识别，手机上不跑模型"
-    const val ocrInUseTitle = "当前使用"
-    const val ocrCurrentTag = "当前"
-    const val ocrOnlineTag = "在线"
-    const val ocrInUseLocalNote = "手机里跑，没网也能用；下面的模型立即生效"
-    const val ocrInUseOnlineHostOff = "在线 OCR 已选，但还没填地址，现在用不了"
-    const val ocrNoEndpoint = "还没填地址"
-    const val ocrFillEndpoint = "在下面填上服务地址就能用"
-    fun ocrInUseLocal(model: String): String = "本机模型 · $model"
-    fun ocrInUseOnline(host: String): String = "在线 OCR · $host"
+
+    fun ocrInUseLocal(model: String) = table.ocrInUseLocalFormat.format(model)
+
+    fun ocrInUseOnline(host: String) = table.ocrInUseOnlineFormat.format(host)
+
     fun ocrOnlineModelLine(model: String): String =
-        if (model.isBlank()) "服务器上的模型：没填" else "服务器上的模型：$model"
-    /** 摘要只用 host:port，长路径会把一行撑爆。 */
+        if (model.isBlank()) table.ocrOnlineModelNone else table.ocrOnlineModelLineFormat.format(model)
+
+    /** Shows only host:port; a long path would push the line out of shape. */
     fun ocrEndpointHost(api: String): String {
         var text = api.trim()
         if (text.startsWith("http://", true)) text = text.substring(7)
         if (text.startsWith("https://", true)) text = text.substring(8)
         return text.substringBefore('/')
     }
-    fun onlineOcrTestOk(count: Int): String = "连接成功，服务上有 $count 个模型"
-    fun onlineOcrTestFail(reason: String): String = "连接失败：$reason"
-    const val onlineOcrTip = "在线 OCR 把整页图片发给视觉模型，由它返回文字和位置，手机上不跑模型。需要模型支持图片输入，例如 GPT-4o、Qwen-VL、Gemini、llava；一张图一次请求，速度取决于服务。"
+
+    fun onlineOcrTestOk(count: Int) = table.onlineOcrTestOkFormat.format(count)
+
+    fun onlineOcrTestFail(reason: String) = table.onlineOcrTestFailFormat.format(reason)
+
     fun onlineOcrRowHint(host: String): String =
-        if (host.isBlank()) "在线 OCR · 地址还没填，去「OCR 配置」里填" else "在线 OCR · 服务器 $host"
-    const val ocrModelTitle = "文字识别模型"
-    const val ocrModelTip = "四款都内置在手机里，不用下载。默认用 PP-OCRv6_small（速度最快、最省电）；切换后从下一页开始生效，预翻译整本和批量预翻译都跟着用这一款。"
-    const val ocrModelDefault = "默认"
-    const val ocrModelSmallTip = "逐列识别，速度最快、最省电，日常看最稳"
-    const val ocrModelMediumTip = "逐列识别、小字更稳，但明显更慢更耗电，只建议整本预翻译时用"
-    const val ocrModelHybridTip = "用 medium 的检测器找气泡（能补上 small 整块漏掉的），配上 small 的快速识别；单页大约慢 2–3 倍，仍比完整 medium 快"
-    const val ocrModelMangaTip = "漫画专用：整个气泡一次读出一句，语序自然，但个别字和速度不如 small 稳"
-    const val ocrBlankRefill = "用 medium 补读读不准的地方"
-    const val ocrBlankRefillTip = "整页模型读成空白的框、末尾被截断的竖列，以及读得含糊（置信度低）的列，会单独用 medium 再读一次（每页最多 3 列）。一页通常多花 1~3 秒；关掉就完全只用上面的模型。"
-    fun preTranslateOcrValue(name: String): String = "$name · 在「翻译配置」里可切换"
-    const val preTranslatePages = "要翻译的页 · 点缩略图勾选"
-    const val preTranslateSelectAll = "全选"
-    const val preTranslateSelectNone = "全不选"
-    const val preTranslateStart = "开始预翻译"
-    const val preTranslateStop = "停止"
-    const val preTranslateKeepOpen = "翻译时请让这个窗口保持打开；关掉会停止，但译好的页会留着"
-    const val preTranslateNeedEndpoint = "先填翻译服务地址"
-    const val preTranslateNeedPages = "至少选一页"
-    const val preTranslateCancelled = "已停止，译好的页已经保存"
-    const val preTranslateResumeToggle = "跳过已译好的页（断点续传）"
-    const val preTranslateResumeHint = "中断后再开始，只补没译完的页；关掉这个开关会全部重译。"
-    const val preTranslateBusy = "批量预翻译正在进行，请先到批量窗口里停止或查看"
-    const val preTranslateConfigTip = "这里的地址、Key、模型和接口类型只用于预翻译，不会改动「翻译配置」里的全局设置。没单独改过的项跟随全局设置；识别模型、原文/译文语言、译文排版和翻译方式始终跟随全局。"
-    const val preTranslateFollowGlobal = "恢复跟随全局"
-    const val preTranslateFollowing = "已恢复为跟随全局设置"
-    const val translatedBadge = "已翻译"
-    const val translateTest = "测试连接"
-    const val translateTesting = "测试中…"
-    const val translateTestOk = "连接成功，翻译可用"
-    const val translateTestFail = "连不上。请检查手机是否允许本应用联网，以及地址是否正确"
+        if (host.isBlank()) table.onlineOcrRowHintEmpty
+        else table.onlineOcrRowHintFormat.format(host)
 
-    fun modelPickerCount(count: Int): String = "共 $count 个 · 点一下填入"
+    fun preTranslateOcrValue(name: String) = table.preTranslateOcrValueFormat.format(name)
 
-    fun preTranslateDeleteBody(count: Int): String =
-        "这本已经存了 $count 页译文。删除后这些译文会一起没掉，翻到这些页又得重新识别和联网。"
+    fun modelPickerCount(count: Int) = table.modelPickerCountFormat.format(count)
 
-    fun preTranslateDeleteTapHint(remaining: Int): String = "删除（再点 $remaining 次）"
+    fun preTranslateDeleteBody(count: Int) = table.preTranslateDeleteBodyFormat.format(count)
 
-    fun preTranslateSelected(selected: Int, total: Int): String = "已选 $selected / $total 页"
+    fun preTranslateDeleteTapHint(remaining: Int) =
+        table.preTranslateDeleteTapHintFormat.format(remaining)
 
-    fun preTranslateRunning(done: Int, total: Int): String = "正在翻译 $done / $total…"
+    fun preTranslateSelected(selected: Int, total: Int) =
+        table.preTranslateSelectedFormat.format(selected, total)
 
-    fun preTranslateDone(count: Int): String = "完成，这本共译好 $count 页"
+    fun preTranslateRunning(done: Int, total: Int) =
+        table.preTranslateRunningFormat.format(done, total)
 
-    fun preTranslateDoneResume(newPages: Int, skipped: Int): String =
-        "完成，新译 $newPages 页、沿用 $skipped 页"
+    fun preTranslateDone(count: Int) = table.preTranslateDoneFormat.format(count)
 
-    fun preTranslateFailed(page: Int): String = "第 ${page + 1} 页失败，已译好的页已经保存"
+    fun preTranslateDoneResume(newPages: Int, skipped: Int) =
+        table.preTranslateDoneResumeFormat.format(newPages, skipped)
 
-    fun preTranslateDoneWithFailures(count: Int, failed: Int): String =
-        "完成，这本已存 $count 页；有 $failed 页没成功，再点一次「开始」只会补这几页"
+    fun preTranslateFailed(page: Int) = table.preTranslateFailedFormat.format(page + 1)
 
-    fun preTranslateStored(count: Int): String = "这本已经存了 $count 页译文 · 长按封面可删除"
+    fun preTranslateDoneWithFailures(count: Int, failed: Int) =
+        table.preTranslateDoneWithFailuresFormat.format(count, failed)
 
-    // ---- Folder batch pre-translate ----
-    const val batchPreTranslate = "批量预翻译"
-    const val batchTitle = "按文件夹批量预翻译"
-    const val batchIntro = "把整个文件夹里的书一次译完，封面会打上「已翻译」角标。窗口可以关掉，任务会继续；中途停了或断网，下次点「继续上次」从没译完的那一页接着来。"
-    const val batchScope = "选择文件夹"
-    const val batchScopeAll = "全部书籍"
-    const val batchSkipDone = "跳过已经标了「已翻译」的书"
-    const val batchResume = "继续上次"
-    const val batchStart = "开始批量预翻译"
-    const val batchStop = "停止批量"
-    const val batchClose = "关闭窗口"
-    const val batchKeepOpen = "关掉窗口不会中断，书架顶部会一直显示进度"
-    const val batchNeedEndpoint = "先填翻译服务地址"
-    const val batchNoBooks = "这个文件夹里没有可翻译的书"
-    const val batchAllDone = "这些书都已经标了「已翻译」；想全部重译，把上面的开关关掉"
-    const val batchStopped = "已停止，译好的页都保存了，点「继续上次」接着译"
-    const val batchDiscard = "放弃未完成"
-    const val batchDiscardTitle = "放弃这次批量预翻译？"
-    const val batchDiscardBody = "只会清掉「还剩几本」的待办清单，已经译好的页全部保留，随时可以重新批量。"
-    const val batchDiscardConfirm = "放弃清单"
-    const val batchConfirmTitle = "开始批量预翻译？"
-    const val batchConfirmStart = "开始"
-    fun batchConfirmBody(count: Int): String =
-        "这次要译 $count 本，每页要十几秒，全部译完可能要很久。可以关掉窗口去做别的事，也可以随时停止，译好的页都会留着，下次接着译。"
-    const val batchBannerRunning = "批量预翻译进行中"
-    const val batchBannerPending = "上次的批量预翻译还没做完"
-    const val batchBannerOpen = "点这里查看"
+    fun preTranslateStored(count: Int) = table.preTranslateStoredFormat.format(count)
 
-    fun batchBookCount(count: Int, done: Int): String =
-        "共 $count 本 · 其中 $done 本已标「已翻译」"
+    fun batchConfirmBody(count: Int) = table.batchConfirmBodyFormat.format(count)
 
-    fun batchPending(count: Int): String = "上次未完成，还剩 $count 本"
+    fun batchBookCount(count: Int, done: Int) =
+        table.batchBookCountFormat.format(count, done)
 
-    fun batchRunning(book: Int, total: Int, name: String, page: Int, pages: Int): String =
-        "第 $book / $total 本：$name · $page / $pages 页"
+    fun batchPending(count: Int) = table.batchPendingFormat.format(count)
 
-    fun batchDone(count: Int, failed: Int): String =
-        if (failed > 0) "完成 $count 本，$failed 本没译完（已留在队列里）" else "完成，共译好 $count 本"
+    fun batchRunning(book: Int, total: Int, name: String, page: Int, pages: Int) =
+        table.batchRunningFormat.format(book, total, name, page, pages)
 
-    fun batchDoneWithFailures(count: Int, pages: Int): String =
-        "完成 $count 本；有 $pages 页没成功，再点「继续上次」会只补这些页"
+    fun batchDone(count: Int, failed: Int) =
+        if (failed > 0) table.batchDoneWithFailFormat.format(count, failed)
+        else table.batchDoneFormat.format(count)
 
-    fun batchFailed(name: String, page: Int): String =
-        "《$name》第 ${page + 1} 页失败，已译好的页都留着，点「继续上次」重试"
+    fun batchDoneWithFailures(count: Int, pages: Int) =
+        table.batchDoneWithFailuresFormat.format(count, pages)
 
-    fun batchBannerDetail(book: Int, total: Int, page: Int, pages: Int): String =
-        "第 $book/$total 本 · $page/$pages 页"
+    fun batchFailed(name: String, page: Int) = table.batchFailedFormat.format(name, page + 1)
 
-    fun batchBannerPendingDetail(count: Int): String = "还剩 $count 本"
+    fun batchBannerDetail(book: Int, total: Int, page: Int, pages: Int) =
+        table.batchBannerDetailFormat.format(book, total, page, pages)
+
+    fun batchBannerPendingDetail(count: Int) = table.batchBannerPendingDetailFormat.format(count)
 
     fun pageProgressCompact(page: Int, total: Int): String {
-        if (total <= 0) return "已读"
+        if (total <= 0) return table.readShort
         return "${(page + 1).coerceIn(1, total)}/$total"
     }
 
+    val orientationValues: List<Int> get() = listOf(1, 2, 0)
+
     fun sizeText(bytes: Long): String = when {
-        bytes <= 0L -> unknownSize
-        bytes >= 1024L * 1024 * 1024 -> "%.1f %s".format(bytes / 1024f / 1024f / 1024f, gb)
-        else -> "%.0f %s".format(bytes / 1024f / 1024f, mb)
+        bytes <= 0L -> table.unknownSize
+        bytes >= 1024L * 1024 * 1024 -> "%.1f %s".format(bytes / 1024f / 1024f / 1024f, table.gb)
+        else -> "%.0f %s".format(bytes / 1024f / 1024f, table.mb)
     }
 }

@@ -1,5 +1,7 @@
 package com.yingcolor.lumanga.data
 
+import com.yingcolor.lumanga.S
+
 /**
  * Wire format of the endpoint the user configured.
  *
@@ -9,11 +11,19 @@ package com.yingcolor.lumanga.data
  * its own `/api/chat` path. Reading is not a place to force a single vendor on people, so the
  * choice is explicit and remembered.
  */
-enum class ApiProtocol(val id: Int, val label: String) {
-    OPENAI(0, "OpenAI 兼容"),
-    ANTHROPIC(1, "Anthropic Claude"),
-    GEMINI(2, "Google Gemini"),
-    OLLAMA(3, "Ollama");
+enum class ApiProtocol(val id: Int) {
+    OPENAI(0),
+    ANTHROPIC(1),
+    GEMINI(2),
+    OLLAMA(3);
+
+    /** Product names stay as they are; only the "compatible" wording needs translating. */
+    val label: String get() = when (this) {
+        OPENAI -> S.protocolOpenAi
+        ANTHROPIC -> "Anthropic Claude"
+        GEMINI -> "Google Gemini"
+        OLLAMA -> "Ollama"
+    }
 
     companion object {
         /** Anything unknown falls back here: it covers official APIs, relay services and locals. */

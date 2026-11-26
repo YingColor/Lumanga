@@ -1,6 +1,7 @@
 package com.yingcolor.lumanga.data
 
 import com.yingcolor.lumanga.BuildConfig
+import com.yingcolor.lumanga.Lang
 
 import com.yingcolor.lumanga.theme.Palettes
 
@@ -223,6 +224,9 @@ class UiSettings(private val prefs: Prefs) {
         stateCoverStyle = safe
         prefs.coverStyle = safe
     }
+
+    /** What the picker shows: the stored choice, which may be "follow system". */
+    val langSelection: Lang get() = Lang.fromTag(prefs.langKey)
 
     fun setTranslateEnabled(value: Boolean) {
         // No translation in the reader build, so this is never allowed to become true there.

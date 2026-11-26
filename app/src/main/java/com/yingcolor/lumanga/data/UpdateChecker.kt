@@ -1,5 +1,7 @@
 package com.yingcolor.lumanga.data
 
+import com.yingcolor.lumanga.S
+
 import com.yingcolor.lumanga.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -54,7 +56,7 @@ object UpdateChecker {
                 connection.inputStream.bufferedReader().use { it.readText() }
             )
             if (releases.length() == 0) {
-                return@withContext UpdateResult.Failed("没有找到发布")
+                return@withContext UpdateResult.Failed(S.errNoRelease)
             }
             // Newest first, pre-releases included: the current line is still a beta.
             val json = releases.getJSONObject(0)

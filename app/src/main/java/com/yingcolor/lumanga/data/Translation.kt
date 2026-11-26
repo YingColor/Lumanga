@@ -1,5 +1,6 @@
 package com.yingcolor.lumanga.data
 
+import com.yingcolor.lumanga.S
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -1542,7 +1543,7 @@ object TranslationEngine {
         apiKey: String,
         protocol: ApiProtocol = ApiProtocol.DEFAULT
     ): ApiClient.ModelsResult = withContext(Dispatchers.IO) {
-        if (api.isBlank()) return@withContext ApiClient.ModelsResult.Fail("没填服务地址")
+        if (api.isBlank()) return@withContext ApiClient.ModelsResult.Fail(S.errNoEndpoint)
         ApiClient.listModels(protocol, api, apiKey)
     }
 

@@ -1,5 +1,7 @@
 package com.yingcolor.lumanga.data
 
+import com.yingcolor.lumanga.S
+
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
@@ -156,17 +158,17 @@ object ApiClient {
         token: CancelToken? = null
     ): ChatResult {
         val base = baseOf(api)
-        if (base.isEmpty()) return ChatResult.Fail("没填服务地址")
-        if (model.isBlank()) return ChatResult.Fail("没填模型名称")
-        var last = "请求失败"
+        if (base.isEmpty()) return ChatResult.Fail(S.errNoEndpoint)
+        if (model.isBlank()) return ChatResult.Fail(S.errNoModel)
+        var last = S.errRequestFailed
         for (endpoint in chatEndpoints(protocol, base, model)) {
-            if (token?.cancelled == true) return ChatResult.Fail("已停止")
+            if (token?.cancelled == true) return ChatResult.Fail(S.errStopped)
             when (val raw = request(protocol, endpoint, "POST", apiKey, body, timeout, token)) {
                 is Raw.Ok -> {
                     val content = extractContent(protocol, raw.body)
                     if (content.isNullOrBlank()) {
                         Log.w(TAG, "empty content $endpoint ${raw.body.take(300)}")
-                        return ChatResult.Fail("接口返回里没有译文")
+                        return ChatResult.Fail(S.errNoTranslation)
                     }
                     return ChatResult.Ok(content)
                 }
@@ -183,8 +185,8 @@ object ApiClient {
 
     fun listModels(protocol: ApiProtocol, api: String, apiKey: String): ModelsResult {
         val base = baseOf(api)
-        if (base.isEmpty()) return ModelsResult.Fail("没填服务地址")
-        var last = "请求失败"
+        if (base.isEmpty()) return ModelsResult.Fail(S.errNoEndpoint)
+        var last = S.errRequestFailed
         for (endpoint in modelEndpoints(protocol, base)) {
             when (val raw = request(protocol, endpoint, "GET", apiKey, null, LIST_TIMEOUT)) {
                 is Raw.Ok -> {
@@ -344,25 +346,25 @@ object ApiClient {
     }
 
     private fun httpReason(code: Int): String = when (code) {
-        400 -> "HTTP 400：请求被拒绝，可能是模型名不对"
-        401, 403 -> "HTTP $code：Key 不对或没有权限"
-        404 -> "HTTP 404：地址路径不对"
-        413 -> "HTTP 413：本页文字太多，超出服务的请求上限"
-        429 -> "HTTP 429：请求太频繁，被限流"
-        in 500..599 -> "HTTP $code：服务端错误"
+        400 -> S.errHttpRejected
+        401, 403 -> S.errHttpAuth(code)
+        404 -> S.errHttpPath
+        413 -> S.errHttpTooLarge
+        429 -> S.errHttpRate
+        in 500..599 -> S.errHttpServer(code)
         else -> "HTTP $code"
     }
 
     private fun explain(t: Throwable): String = when (t) {
-        is MalformedURLException -> "地址格式不对"
-        is UnknownServiceException -> "系统禁止了明文 HTTP 请求"
-        is UnknownHostException -> "找不到主机，检查地址写对没有"
-        is ConnectException -> "连不上：端口没开，或者服务没启动"
-        is SocketTimeoutException -> "超时：服务没有在限定时间内回复"
-        is SocketException -> "连接被服务端断开了（本地服务常见，可重试）"
-        is SSLException -> "HTTPS 握手失败，证书可能有问题"
-        is IOException -> "网络错误（${t.javaClass.simpleName}）"
-        else -> "请求失败（${t.javaClass.simpleName}）"
+        is MalformedURLException -> S.errBadUrl
+        is UnknownServiceException -> S.errCleartext
+        is UnknownHostException -> S.errHostNotFound
+        is ConnectException -> S.errConnect
+        is SocketTimeoutException -> S.errTimeout
+        is SocketException -> S.errSocket
+        is SSLException -> S.errSsl
+        is IOException -> S.errIo(t.javaClass.simpleName)
+        else -> S.errUnknown(t.javaClass.simpleName)
     }
 
     // ---------------------------------------------------------------- payloads

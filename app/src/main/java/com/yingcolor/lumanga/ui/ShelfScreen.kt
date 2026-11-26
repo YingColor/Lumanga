@@ -42,6 +42,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
@@ -105,6 +106,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.BackHandler
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yingcolor.lumanga.BuildConfig
@@ -119,6 +121,7 @@ import com.yingcolor.lumanga.data.Prefs
 import com.yingcolor.lumanga.data.TranslationStore
 import com.yingcolor.lumanga.data.ShelfIndex
 import com.yingcolor.lumanga.data.UiSettings
+import com.yingcolor.lumanga.util.folderLabel
 import com.yingcolor.lumanga.util.naturalCompare
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -151,7 +154,8 @@ class ShelfViewModel(app: Application) : AndroidViewModel(app) {
     var error by mutableStateOf<String?>(null)
         private set
 
-    var filterGroup by mutableStateOf("")
+    /** The library the shelf is showing, "" for the top level. Survives going into a book. */
+    var openRoot by mutableStateOf("")
 
     var readFilter by mutableStateOf(0)
 
@@ -300,6 +304,7 @@ fun ShelfScreen(
     loading: Boolean,
     restoring: Boolean,
     error: String?,
+    roots: List<String>,
     settings: UiSettings,
     prefs: Prefs,
     vm: ShelfViewModel,
@@ -321,7 +326,6 @@ fun ShelfScreen(
         if (searchExpanded) runCatching { searchFocus.requestFocus() }
     }
     var sortMenu by remember { mutableStateOf(false) }
-    var groupMenu by remember { mutableStateOf(false) }
     var columnMenu by remember { mutableStateOf(false) }
     var readFilterMenu by remember { mutableStateOf(false) }
     var preTarget by remember { mutableStateOf<Book?>(null) }
@@ -336,23 +340,20 @@ fun ShelfScreen(
         sortBooks(books, settings.sortMode, prefs)
     }
     
-    val groups = remember(sorted) {
-        sorted.asSequence()
-            .map { it.group }
-            .filter { it.isNotEmpty() }
-            .distinct()
-            .sortedWith { a, b -> naturalCompare(a, b) }
-            .toList()
-    }
-    
-    val groupFilter = vm.filterGroup.takeIf { it in groups } ?: ""
+    // Which library is open, "" for the top of the shelf. A library removed in settings drops
+    // the view back to the top rather than leaving an empty page with no way out.
+    val openRoot = vm.openRoot.takeIf { it in roots } ?: ""
+    val inRoot = openRoot.isNotEmpty()
     val readFilter = vm.readFilter
     val favorites = settings.favorites
-    val displayed = remember(sorted, query, groupFilter, readFilter, favorites, refreshKey) {
-        val base = if (groupFilter.isEmpty()) sorted else sorted.filter { it.group == groupFilter }
+
+    // Filters run over every book first, then the result is split by library. That order keeps
+    // the read-state row useful on the top level: "Unread" leaves only the libraries that still
+    // hold an unread book, and the badge counts what survived the filter.
+    val filtered = remember(sorted, query, readFilter, favorites, refreshKey) {
         val q = query.trim()
-        val searched = if (q.isEmpty()) base else base.filter { it.name.contains(q, ignoreCase = true) }
-        
+        val searched =
+            if (q.isEmpty()) sorted else sorted.filter { it.name.contains(q, ignoreCase = true) }
         if (readFilter == 0) searched
         else if (readFilter == 4) searched.filter { it.id in favorites }
         else searched.filter { book ->
@@ -366,6 +367,27 @@ fun ShelfScreen(
             }
         }
     }
+
+    // One card per added folder, in the order they were added. With no filter and no search every
+    // library is listed even when it holds nothing yet, so a folder just added is visible.
+    val rootCards = remember(filtered, roots, readFilter, query) {
+        val unfiltered = readFilter == 0 && query.isBlank()
+        roots.map { uri -> uri to filtered.filter { it.rootId == uri } }
+            .filter { unfiltered || it.second.isNotEmpty() }
+    }
+
+    // Inside a library its own card is pointless, and a search that came back as cards would hide
+    // the very book being looked for, so both cases list books flat instead.
+    val searching = query.isNotBlank()
+    val visibleRoots = if (inRoot || searching) emptyList() else rootCards
+    val visibleBooks = remember(filtered, openRoot, searching) {
+        when {
+            inRoot -> filtered.filter { it.rootId == openRoot }
+            searching -> filtered
+            else -> emptyList()
+        }
+    }
+
     val scheme = MaterialTheme.colorScheme
     val columns = settings.gridColumns
     val batchState by BatchPreTranslate.state.collectAsState()
@@ -393,6 +415,13 @@ fun ShelfScreen(
         }
     }
 
+    // System back leaves the library before it leaves the app.
+    BackHandler(enabled = inRoot) {
+        vm.openRoot = ""
+        collapseState.floatValue = 0f
+        gridScope.launch { gridState.scrollToItem(0) }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
     Box(
         modifier = Modifier
@@ -409,7 +438,14 @@ fun ShelfScreen(
                 collapse = collapseState,
                 loading = loading,
                 restoring = restoring,
-                count = displayed.size
+                title = if (inRoot) folderLabel(openRoot) else S.shelf,
+                // Top level counts folders, inside a folder counts books: "7 books" under a
+                // single card would read as if the shelf were showing seven of them.
+                countText = if (visibleRoots.isNotEmpty()) {
+                    S.foldersCount(visibleRoots.size)
+                } else {
+                    "${visibleBooks.size} ${S.booksUnit}"
+                }
             )
 
             Row(
@@ -419,10 +455,20 @@ fun ShelfScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 
-                IconButton(onClick = { drawerOpen = true }) {
+                // One level down the drawer is not what you need, and the way out has to be
+                // obvious, so the menu button turns into "back" while a library is open.
+                IconButton(onClick = {
+                    if (inRoot) {
+                        vm.openRoot = ""
+                        collapseState.floatValue = 0f
+                        gridScope.launch { gridState.scrollToItem(0) }
+                    } else {
+                        drawerOpen = true
+                    }
+                }) {
                     Icon(
-                        imageVector = Icons.Filled.Menu,
-                        contentDescription = S.menu,
+                        imageVector = if (inRoot) Icons.Filled.ArrowBack else Icons.Filled.Menu,
+                        contentDescription = if (inRoot) S.back else S.menu,
                         tint = scheme.onSurfaceVariant
                     )
                 }
@@ -445,46 +491,6 @@ fun ShelfScreen(
                 // Search replaces every chip to its left; while it is open only the menu button,
                 // the field, the search toggle and Refresh remain.
                 if (!searchExpanded) {
-                if (groups.isNotEmpty()) {
-                    Spacer(Modifier.width(6.dp))
-                    Box {
-                        MiniChip(
-                            text = groupFilter.ifEmpty { S.category },
-                            active = groupFilter.isNotEmpty(),
-                            onClick = { groupMenu = true }
-                        )
-                        DropdownMenu(expanded = groupMenu, onDismissRequest = { groupMenu = false }) {
-                            DropdownMenuItem(
-                                leadingIcon = {
-                                    Text(
-                                        text = if (groupFilter.isEmpty()) "✓" else " ",
-                                        color = scheme.primary
-                                    )
-                                },
-                                text = { Text(S.categoryAll) },
-                                onClick = {
-                                    vm.filterGroup = ""
-                                    groupMenu = false
-                                }
-                            )
-                            groups.forEach { name ->
-                                DropdownMenuItem(
-                                    leadingIcon = {
-                                        Text(
-                                            text = if (groupFilter == name) "✓" else " ",
-                                            color = scheme.primary
-                                        )
-                                    },
-                                    text = { Text(name) },
-                                    onClick = {
-                                        vm.filterGroup = name
-                                        groupMenu = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
                 Spacer(Modifier.width(6.dp))
                 Box {
                     MiniChip(text = S.sort, onClick = { sortMenu = true })
@@ -636,7 +642,7 @@ fun ShelfScreen(
                     tip = S.emptyTip,
                     onPickFolder = onPickFolder
                 )
-                displayed.isEmpty() && !loading -> EmptyState(
+                visibleBooks.isEmpty() && visibleRoots.isEmpty() && !loading -> EmptyState(
                     title = S.noResult,
                     body = S.search,
                     onPickFolder = onPickFolder,
@@ -664,7 +670,20 @@ fun ShelfScreen(
                         ),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        items(displayed, key = { it.id }) { book ->
+                        items(visibleRoots, key = { "root:" + it.first }) { entry ->
+                            RootCard(
+                                name = folderLabel(entry.first),
+                                books = entry.second,
+                                columns = columns,
+                                vm = vm,
+                                onClick = {
+                                    vm.openRoot = entry.first
+                                    collapseState.floatValue = 0f
+                                    gridScope.launch { gridState.scrollToItem(0) }
+                                }
+                            )
+                        }
+                        items(visibleBooks, key = { it.id }) { book ->
                             BookCard(
                                 book = book,
                                 columns = columns,
@@ -825,7 +844,7 @@ fun ShelfScreen(
         BatchPreTranslateDialog(
             books = sorted,
             settings = settings,
-            initialGroup = groupFilter,
+            initialScope = if (openRoot.isEmpty()) "" else "root:$openRoot",
             onDismiss = { batchOpen = false }
         )
     }
@@ -975,7 +994,8 @@ private fun CollapsingHeader(
     collapse: State<Float>,
     loading: Boolean,
     restoring: Boolean,
-    count: Int
+    title: String,
+    countText: String
 ) {
     val scheme = MaterialTheme.colorScheme
     val c = collapse.value.coerceIn(0f, 1f)
@@ -993,7 +1013,7 @@ private fun CollapsingHeader(
                 .padding(start = 20.dp, end = 20.dp, top = 14.dp)
         ) {
             Text(
-                text = S.shelf,
+                text = title,
                 fontSize = (28f - 8f * c).sp,
                 fontWeight = FontWeight((700f - 200f * c).toInt()),
                 color = scheme.onSurface,
@@ -1011,7 +1031,7 @@ private fun CollapsingHeader(
                 text = when {
                     loading -> S.loading
                     restoring -> ""
-                    else -> "$count ${S.booksUnit}"
+                    else -> countText
                 },
                 style = MaterialTheme.typography.labelLarge,
                 color = scheme.onSurfaceVariant
@@ -1111,6 +1131,140 @@ private fun StatusTab(
             contentAlignment = Alignment.Center
         ) {
             Text(text = text, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        }
+    }
+}
+
+/**
+ * One added folder, drawn as a card so the shelf opens on the libraries instead of on a wall of
+ * books from everywhere at once.
+ *
+ * The cover is the first page of the first book by name, not of the shelf's current sort: a card
+ * is meant to look the same tomorrow, and switching to newest-first should not shuffle the faces
+ * on the shelf. [books] arrives already filtered, so the badge reports what is left after the
+ * current filter rather than the folder's total.
+ */
+@Composable
+private fun RootCard(
+    name: String,
+    books: List<Book>,
+    columns: Int,
+    vm: ShelfViewModel,
+    onClick: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    val compact = columns >= 4
+    val pad = when {
+        columns >= 5 -> 5.dp
+        columns == 4 -> 6.dp
+        columns == 3 -> 8.dp
+        else -> 10.dp
+    }
+    val coverPx = when (columns) {
+        5 -> 160
+        4 -> 200
+        3 -> 260
+        else -> 360
+    }
+    val coverBook = remember(books) {
+        books.minWithOrNull { a, b -> naturalCompare(a.name, b.name) }
+    }
+    val cover by produceState<Bitmap?>(
+        initialValue = coverBook?.let { vm.peekCover(it, coverPx) },
+        key1 = coverBook?.id,
+        key2 = coverPx
+    ) {
+        value = coverBook?.let { vm.cover(it, coverPx) }
+    }
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.95f else 1f,
+        animationSpec = motionTween(MotionSpec.SHORT, MotionSpec.EaseOutCubic),
+        label = "rootPress"
+    )
+
+    Card(
+        onClick = onClick,
+        interactionSource = interaction,
+        shape = RoundedCornerShape((if (compact) 18f else 24f).dp),
+        colors = CardDefaults.cardColors(containerColor = scheme.surfaceContainerLow),
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+    ) {
+        Column(modifier = Modifier.padding(pad)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(0.72f)
+                    .clip(RoundedCornerShape(if (compact) 12.dp else 18.dp))
+                    .background(scheme.secondaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                val bitmap = cover
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text(
+                        text = name.take(1).ifEmpty { "#" },
+                        style = MaterialTheme.typography.displayLarge,
+                        color = scheme.onSecondaryContainer
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(if (compact) 5.dp else 8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = if (compact) 5.dp else 7.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = "${books.size} ${S.booksUnit}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = if (compact) 9.sp else 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+                // Says "this opens another shelf, not a book" without a second row of text.
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(if (compact) 5.dp else 8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(scheme.primary.copy(alpha = 0.92f))
+                        .padding(horizontal = if (compact) 5.dp else 7.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = S.folderType,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = if (compact) 9.sp else 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.onPrimary
+                    )
+                }
+            }
+            Spacer(Modifier.height(if (compact) 6.dp else 10.dp))
+            Text(
+                text = name,
+                style = if (compact) MaterialTheme.typography.labelSmall
+                else MaterialTheme.typography.titleSmall,
+                color = scheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = if (compact) 2.dp else 4.dp)
+            )
+            Spacer(Modifier.height(if (compact) 4.dp else 6.dp))
         }
     }
 }

@@ -160,6 +160,14 @@ class Prefs(context: Context) {
         set(value) = sp.edit().putBoolean(KEY_TAP_TURN, value).apply()
 
     
+    /**
+     * Interface language: "" follows the phone, anything else is a [Lang] tag. Stored as the tag
+     * rather than the enum so renaming the enum never resets anyone's choice.
+     */
+    var langKey: String
+        get() = sp.getString(KEY_LANG, "") ?: ""
+        set(value) = sp.edit().putString(KEY_LANG, value).apply()
+
     var translateEnabled: Boolean
         // The reader build has no translation, so the toggle is pinned off. Reading it through
         // the gate also covers a reader install on top of a full one, where the stored value is
@@ -446,6 +454,7 @@ class Prefs(context: Context) {
         const val KEY_SMOOTHING = "smoothing"
         const val KEY_BRIGHTNESS = "brightness"
         const val KEY_TRANSLATE = "translate_enabled"
+        const val KEY_LANG = "ui_lang"
         const val KEY_TRANSLATE_API = "translate_api"
         const val KEY_TRANSLATE_PROTOCOL = "translate_protocol"
         const val KEY_TRANSLATE_MODE = "translate_mode"

@@ -125,11 +125,15 @@ class MainActivity : ComponentActivity() {
  * branch in the pager body, and the bar reappears on its own.
  */
 private enum class HomePage(
-    val label: String,
     val icon: ImageVector,
     val activeIcon: ImageVector
 ) {
-    SHELF(S.shelf, Icons.Outlined.Home, Icons.Filled.Home)
+    SHELF(Icons.Outlined.Home, Icons.Filled.Home);
+
+    /** Read when drawn, not when the enum loads: the language is applied in onCreate. */
+    val label: String get() = when (this) {
+        SHELF -> S.shelf
+    }
 }
 
 private val HOME_PAGES = listOf(HomePage.SHELF)
@@ -139,6 +143,9 @@ private fun ComicApp() {
     val context = LocalContext.current
     val activity = context as? Activity
     val prefs = remember { Prefs(context) }
+    // Language first: everything below reads its text through [S], and switching language
+    // recreates the activity so this runs again with the new choice.
+    remember(prefs) { S.applyStoredLanguage(prefs.langKey) }
     val settings = remember { UiSettings(prefs) }
 
     LaunchedEffect(settings.brightness) {
@@ -325,6 +332,7 @@ private fun ComicApp() {
                                     loading = shelfVm.loading,
                                     restoring = shelfVm.restoring,
                                     error = shelfVm.error,
+                                    roots = folders,
                                     settings = settings,
                                     prefs = prefs,
                                     vm = shelfVm,
@@ -385,6 +393,12 @@ private fun ComicApp() {
                         folders = next
                         shelfVm.load(next.mapNotNull { runCatching { Uri.parse(it) }.getOrNull() })
                     }
+                },
+                onLanguageChange = { lang ->
+                    prefs.langKey = lang.tag
+                    // Nothing on screen is reactive to the language, so the cleanest switch is a
+                    // recreate: every composable is rebuilt with the new table.
+                    activity?.recreate()
                 }
             )
 

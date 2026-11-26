@@ -59,7 +59,7 @@ enum class OcrModel(
      */
     HYBRID(
         3,
-        "PP-OCRv6_small · 精确检测",
+        "PP-OCRv6_small + medium",
         "ppocrv6_medium_det_640_fp16.onnx",
         "ppocrv6_small_rec_640_fp32.tflite",
         true,

@@ -35,6 +35,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -69,6 +71,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.round
+import com.yingcolor.lumanga.Lang
 import com.yingcolor.lumanga.S
 import com.yingcolor.lumanga.data.UiSettings
 import com.yingcolor.lumanga.theme.Palettes
@@ -99,7 +102,8 @@ internal fun SettingsDialog(
     onBackToRoot: () -> Unit,
     onClearProgress: () -> Unit,
     onAddFolder: () -> Unit,
-    onRemoveFolder: (String) -> Unit
+    onRemoveFolder: (String) -> Unit,
+    onLanguageChange: (Lang) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
 
@@ -212,7 +216,8 @@ internal fun SettingsDialog(
                             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                                 when (page) {
                                     SettingsRoute.READING -> ReadingSettings(settings)
-                                    SettingsRoute.PERSONALIZE -> PersonalizeSettings(settings)
+                                    SettingsRoute.PERSONALIZE ->
+                                        PersonalizeSettings(settings, onLanguageChange)
                                     SettingsRoute.LIBRARIES -> LibrarySettings(
                                         folders = folders,
                                         rowAlpha = rowAlpha,
@@ -425,7 +430,7 @@ private fun LibrarySettings(
 }
 
 @Composable
-private fun PersonalizeSettings(settings: UiSettings) {
+private fun PersonalizeSettings(settings: UiSettings, onLanguageChange: (Lang) -> Unit) {
     val scheme = MaterialTheme.colorScheme
 
     SectionLabel(S.appearance)
@@ -467,6 +472,71 @@ private fun PersonalizeSettings(settings: UiSettings) {
         style = MaterialTheme.typography.bodySmall,
         color = scheme.onSurfaceVariant
     )
+    Spacer(Modifier.height(20.dp))
+
+    // Language sits with the rest of the app-wide preferences rather than in reading settings:
+    // it is about the interface, not about how a page is drawn.
+    LanguageRow(selected = settings.langSelection, onSelect = onLanguageChange)
+}
+
+/**
+ * Language picker. A dropdown rather than a segmented row: seven options do not fit side by side,
+ * and the labels are written in their own language, so they vary a lot in width.
+ */
+@Composable
+private fun LanguageRow(selected: Lang, onSelect: (Lang) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val scheme = MaterialTheme.colorScheme
+    Box {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = scheme.surfaceContainerHigh,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { open = true }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = S.language,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = S.languageTip,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = selected.displayName(),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = scheme.primary
+                )
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Lang.entries.forEach { lang ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = lang.displayName(),
+                            fontWeight = if (lang == selected) FontWeight.SemiBold else null
+                        )
+                    },
+                    onClick = {
+                        open = false
+                        if (lang != selected) onSelect(lang)
+                    }
+                )
+            }
+        }
+    }
 }
 
 @Composable

@@ -58,7 +58,8 @@ import com.yingcolor.lumanga.util.folderLabel
 fun BatchPreTranslateDialog(
     books: List<Book>,
     settings: UiSettings,
-    initialGroup: String = "",
+    /** Preselected scope, "" for the whole shelf or "root:<uri>" for one library. */
+    initialScope: String = "",
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -68,9 +69,7 @@ fun BatchPreTranslateDialog(
     var api by remember { mutableStateOf(settings.preApi) }
     var apiKey by remember { mutableStateOf(settings.preApiKey) }
     var model by remember { mutableStateOf(settings.preModel) }
-    var scope by remember {
-        mutableStateOf(if (initialGroup.isEmpty()) "" else "group:$initialGroup")
-    }
+    var scope by remember { mutableStateOf(initialScope) }
     var skipDone by remember { mutableStateOf(true) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmDiscard by remember { mutableStateOf(false) }
@@ -80,15 +79,12 @@ fun BatchPreTranslateDialog(
     val state by BatchPreTranslate.state.collectAsState()
     val completedRev by TranslationStore.completedRev.collectAsState()
 
-    // A library often keeps every volume directly under an added folder, so the group name is
-    // empty. Offering the added folders alongside real sub-groups keeps "by folder" useful in
-    // both layouts.
+    // One entry per added folder, in name order: the shelf is browsed by library, so this list
+    // matches it.
     val scopes = remember(books) {
-        val groups = books.mapNotNull { it.group.takeIf { g -> g.isNotEmpty() } }
-            .distinct().sorted().map { "group:$it" to it }
         val roots = books.mapNotNull { it.rootId.takeIf { r -> r.isNotEmpty() } }
             .distinct().sorted().map { "root:$it" to folderLabel(it) }
-        listOf("" to S.batchScopeAll) + groups + roots
+        listOf("" to S.batchScopeAll) + roots.sortedBy { it.second }
     }
     val scopeLabel = remember(scope, scopes) {
         scopes.firstOrNull { it.first == scope }?.second ?: S.batchScopeAll
@@ -96,8 +92,6 @@ fun BatchPreTranslateDialog(
     val scoped = remember(books, scope) {
         when {
             scope.isEmpty() -> books
-            scope.startsWith("group:") ->
-                books.filter { it.group == scope.removePrefix("group:") }
             scope.startsWith("root:") ->
                 books.filter { it.rootId == scope.removePrefix("root:") }
             else -> books
